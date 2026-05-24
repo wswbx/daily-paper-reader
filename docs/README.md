@@ -6,134 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-04-25 ~ 2026-05-24
-- 运行时间：2026-05-24 06:17:16 UTC
+- 最新运行日期：2026-05-24
+- 运行时间：2026-05-24 20:38:39 UTC
 - 运行状态：成功
-- 本次总论文数：38
-- 精读区：26
+- 本次总论文数：19
+- 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-本期精读了两篇满分论文：揭示星系与暗晕光度/质量函数的函数形式，以及机器集体智能在科学发现中的可解释性探索；速读则关注AI就绪数据评估与声明式实验框架。最值得关注的方向是“星系形成模型”与“可解释科学AI”，两者均给出了具体函数与集体智能机制。若想快速跟进，建议先读《Machine Collective Intelligence》以理解AI如何辅助科学家，再读《The functional form》获取天体物理关键函数。
-- 详情：[/20260425-20260524/README](/20260425-20260524/README)
+今日处理19篇论文（7精读12速读），重点聚焦AI驱动的科学发现与数据可视化。精读最高分9.0的两篇分别提出图自动发现简洁土壤水力函数和端到端AI协同科学家的可视化解决方案；速读8.0高分关注代码智能体记忆策略及离散分布符号密度估计。建议优先探索AI协同科学家框架与数据驱动建模方法，以提升复杂科学问题的自动化分析效率。
+- 详情：[/202605/24/README](/202605/24/README)
 
 ### 精读区论文标签
-1. [The functional form of galaxy and halo luminosity and mass functions](/20260425-20260524/2604.23236v1-the-functional-form-of-galaxy-and-halo-luminosity-and-mass-functions)  
-   标签：评分：10.0/10、query:sr
-   evidence：符号回归应用于天体物理函数
-2. [Machine Collective Intelligence for Explainable Scientific Discovery](/20260425-20260524/2604.27297v1-machine-collective-intelligence-for-explainable-scientific-discovery)  
-   标签：评分：10.0/10、query:sr
-   evidence：符号假设演化发现控制方程
-3. [Why Architecture Choice Matters in Symbolic Regression](/20260425-20260524/2604.23256v1-why-architecture-choice-matters-in-symbolic-regression)  
+1. [Graph-based automated discovery of concise soil hydraulic functions from data: beyond the Mualem - van Genuchten model](/202605/24/2605.19379v1-graph-based-automated-discovery-of-concise-soil-hydraulic-functions-from-data-beyond-the-mualem---van-genuchten-model)  
    标签：评分：9.0/10、query:sr
-   evidence：符号回归架构的比较
-4. [AutoResearchBench: Benchmarking AI Agents on Complex Scientific Literature Discovery](/20260425-20260524/2604.25256v1-autoresearchbench-benchmarking-ai-agents-on-complex-scientific-literature-discovery)  
+   evidence：基于图的自动发现简洁土壤水力函数，类似于符号回归
+2. [Toward AI VIS Co-Scientists: A General and End-to-End Agent Harness for Solving Complex Data Visualization Tasks](/202605/24/2605.21825v1-toward-ai-vis-co-scientists-a-general-and-end-to-end-agent-harness-for-solving-complex-data-visualization-tasks)  
    标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：AI智能体科学文献发现基准
-5. [End-to-end autonomous scientific discovery on a real optical platform](/20260425-20260524/2604.27092v1-end-to-end-autonomous-scientific-discovery-on-a-real-optical-platform)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：真实光学平台上的端到端自主发现
-6. [Deep Variational Inference Symbolic Regression](/20260425-20260524/2605.01067v1-deep-variational-inference-symbolic-regression)  
-   标签：评分：9.0/10、query:sr
-   evidence：提出DVISR，一种深度符号回归的变分贝叶斯扩展
-7. [SciResearcher: Scaling Deep Research Agents for Frontier Scientific Reasoning](/20260425-20260524/2605.01489v1-sciresearcher-scaling-deep-research-agents-for-frontier-scientific-reasoning)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：面向前沿科学推理的自动化代理框架
-8. [Composition-Weighted Symbolic Regression for General-Purpose Property Prediction](/20260425-20260524/2605.02267v1-composition-weighted-symbolic-regression-for-general-purpose-property-prediction)  
-   标签：评分：9.0/10、query:sr
-   evidence：符号回归用于材料性质预测
-9. [Programmatic Context Augmentation for LLM-based Symbolic Regression](/20260425-20260524/2605.03101v1-programmatic-context-augmentation-for-llm-based-symbolic-regression)  
-   标签：评分：9.0/10、query:sr
-   evidence：通过LLM增强的符号回归
-10. [Complex Equation Learner: Rational Symbolic Regression with Gradient Descent in Complex Domain](/20260425-20260524/2605.03841v1-complex-equation-learner-rational-symbolic-regression-with-gradient-descent-in-complex-domain)  
-   标签：评分：9.0/10、query:sr
-   evidence：有理符号回归与梯度下降
-11. [Symbolic Regression via Neural Networks](/20260425-20260524/2605.04337v1-symbolic-regression-via-neural-networks)  
-   标签：评分：9.0/10、query:sr
-   evidence：使用神经网络的符号回归
-12. [Hypothesis-Driven Deep Research with Large Language Models: A Structured Methodology for Automated Knowledge Discovery](/20260425-20260524/2605.10224v1-hypothesis-driven-deep-research-with-large-language-models-a-structured-methodology-for-automated-knowledge-discovery)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：使用LLM进行假设驱动的知识发现
-13. [A Comparative Study of Model Selection Criteria for Symbolic Regression](/20260425-20260524/2605.11233v1-a-comparative-study-of-model-selection-criteria-for-symbolic-regression)  
-   标签：评分：9.0/10、query:sr
-   evidence：符号回归模型选择标准的系统比较
-14. [FePySR: A Neural Feature Extraction Framework for Efficient and Scalable Symbolic Regression](/20260425-20260524/2605.12704v1-fepysr-a-neural-feature-extraction-framework-for-efficient-and-scalable-symbolic-regression)  
-   标签：评分：9.0/10、query:sr
-   evidence：用于符号回归的神经特征提取
-15. [Beyond AI as Assistants: Toward Autonomous Discovery in Cosmology](/20260425-20260524/2605.14791v1-beyond-ai-as-assistants-toward-autonomous-discovery-in-cosmology)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：使用AI智能体进行宇宙学自主发现
-16. [The Scientific Contribution Graph: Automated Literature-based Technological Roadmapping at Scale](/20260425-20260524/2605.15011v1-the-scientific-contribution-graph-automated-literature-based-technological-roadmapping-at-scale)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：通过先决条件预测图实现自动化科学发现
-17. [SMCEvolve: Principled Scientific Discovery via Sequential Monte Carlo Evolution](/20260425-20260524/2605.15308v1-smcevolve-principled-scientific-discovery-via-sequential-monte-carlo-evolution)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：基于LLM的程序进化和SMC的规范化科学发现
-18. [Diversified Residual Symbolic Regression](/20260425-20260524/2605.15809v1-diversified-residual-symbolic-regression)  
-   标签：评分：9.0/10、query:sr
-   evidence：通过多样化残差处理异常值的符号回归方法
-19. [Guiding Multi-Objective Genetic Programming with Description Length Improves Symbolic Regression Solutions](/20260425-20260524/2605.22374v1-guiding-multi-objective-genetic-programming-with-description-length-improves-symbolic-regression-solutions)  
-   标签：评分：9.0/10、query:sr
-   evidence：使用遗传编程和描述长度的符号回归
-20. [Discovering data-driven microbial growth models with symbolic regression](/20260425-20260524/biorxiv-10-1101-2025-06-02-657040-v4-discovering-data-driven-microbial-growth-models-with-symbolic-regression)  
-   标签：评分：9.0/10、query:sr
-   evidence：应用符号回归从数据中发现微生物生长模型
-21. [Symbolic regression for empirically realistic population dynamic time series](/20260425-20260524/biorxiv-10-64898-2026-02-16-706224-v2-symbolic-regression-for-empirically-realistic-population-dynamic-time-series)  
-   标签：评分：9.0/10、query:sr
-   evidence：符号回归用于生态种群动态
-22. [AI predictions and the expansion of scientific frontiers: Evidence from structural biology](/20260425-20260524/biorxiv-10-64898-2026-04-06-716821-v2-ai-predictions-and-the-expansion-of-scientific-frontiers-evidence-from-structural-biology)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：AlphaFold2对结构生物学科学发现的影响
-23. [AI predictions and the expansion of scientific frontiers: Evidence from structural biology](/20260425-20260524/biorxiv-10-64898-2026-04-06-716821-v3-ai-predictions-and-the-expansion-of-scientific-frontiers-evidence-from-structural-biology)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：AI预测扩展结构生物学科学前沿
-24. [Harnessing AI to Build Virtual Cells](/20260425-20260524/biorxiv-10-64898-2026-04-11-717183-v2-harnessing-ai-to-build-virtual-cells)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：自主AI系统构建虚拟细胞用于科学发现
-25. [TxConformal: Controlling False Discoveries in AI-Driven Therapeutic Discovery](/20260425-20260524/biorxiv-10-64898-2026-04-27-721076-v1-txconformal-controlling-false-discoveries-in-ai-driven-therapeutic-discovery)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：AI驱动治疗发现，控制错误发现
-26. [Benchmarking and behavioral characterization of LLM agents for protein design](/20260425-20260524/biorxiv-10-64898-2026-05-06-723381-v1-benchmarking-and-behavioral-characterization-of-llm-agents-for-protein-design)  
-   标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：LLM智能体用于蛋白质设计这一科学发现任务
+   evidence：AI合作科学家通过可视化数据分析助力科学发现
+3. [Discovery of Interpretable Surrogates via Agentic AI: Application to Gravitational Waves](/202605/24/2605.11280v1-discovery-of-interpretable-surrogates-via-agentic-ai-application-to-gravitational-waves)  
+   标签：评分：8.0/10、query:ai-scientific-discovery
+   evidence：AI代理在物理学中可解释代理模型发现
+4. [CVEvolve: Autonomous Algorithm Discovery for Unstructured Scientific Data Processing](/202605/24/2605.11359v1-cvevolve-autonomous-algorithm-discovery-for-unstructured-scientific-data-processing)  
+   标签：评分：8.0/10、query:ai-scientific-discovery
+   evidence：针对科学数据处理的自主算法发现
+5. [Discovering interpretable low-dimensional dynamics using maximum entropy](/202605/24/2605.16724v1-discovering-interpretable-low-dimensional-dynamics-using-maximum-entropy)  
+   标签：评分：8.0/10、query:sr
+   evidence：发现可解释的符号动力学
+6. [LABO: LLM-Accelerated Bayesian Optimization through Broad Exploration and Selective Experimentation](/202605/24/2605.22054v1-labo-llm-accelerated-bayesian-optimization-through-broad-exploration-and-selective-experimentation)  
+   标签：评分：8.0/10、query:ai-scientific-discovery
+   evidence：LLM加速贝叶斯优化用于科学探索
+7. [SciCore-Mol: Augmenting Large Language Models with Pluggable Molecular Cognition Modules](/202605/24/2605.22287v1-scicore-mol-augmenting-large-language-models-with-pluggable-molecular-cognition-modules)  
+   标签：评分：8.0/10、query:ai-scientific-discovery
+   evidence：人工智能用于分子科学发现
 
 ### 速读区论文标签
-1. [SciHorizon-DataEVA: An Agentic System for AI-Readiness Evaluation of Heterogeneous Scientific Data](/20260425-20260524/2604.26645v1-scihorizon-dataeva-an-agentic-system-for-ai-readiness-evaluation-of-heterogeneous-scientific-data)  
+1. [Evaluating Memory Condensation Strategies for Coding Agents in Data-Driven Scientific Discovery](/202605/24/2605.18854v1-evaluating-memory-condensation-strategies-for-coding-agents-in-data-driven-scientific-discovery)  
    标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：评估科学数据AI就绪性的智能体系统
-2. [Experiment-as-Code Labs: A Declarative Stack for AI-Driven Scientific Discovery](/20260425-20260524/2605.04375v1-experiment-as-code-labs-a-declarative-stack-for-ai-driven-scientific-discovery)  
-   标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：用于物理实验室中AI驱动科学发现的平台
-3. [Intentmaking and Sensemaking: Human Interaction with AI-Guided Mathematical Discovery](/20260425-20260524/2605.05921v1-intentmaking-and-sensemaking-human-interaction-with-ai-guided-mathematical-discovery)  
-   标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：数学发现中人机交互的研究
-4. [Discovery of Nonlinear Dynamics with Automated Basis Function Generation](/20260425-20260524/2605.09696v1-discovery-of-nonlinear-dynamics-with-automated-basis-function-generation)  
+   evidence：评估科学发现中编码代理的记忆策略
+2. [Symbolic Density Estimation for Discrete Distributions](/202605/24/2605.21813v1-symbolic-density-estimation-for-discrete-distributions)  
    标签：评分：8.0/10、query:sr
-   evidence：结合符号回归的混合方法用于发现控制方程
-5. [GRAFT-ATHENA: Self-Improving Agentic Teams for Autonomous Discovery and Evolutionary Numerical Algorithms](/20260425-20260524/2605.11117v1-graft-athena-self-improving-agentic-teams-for-autonomous-discovery-and-evolutionary-numerical-algorithms)  
+   evidence：符号密度估计类似于符号回归
+3. [TogoMCP: Natural Language Querying of Life-Science Knowledge Graphs via Schema-Guided LLMs and the Model Context Protocol](/202605/24/biorxiv-10-64898-2026-03-19-713030-v2-togomcp-natural-language-querying-of-life-science-knowledge-graphs-via-schema-guided-llms-and-the-model-context-protocol)  
    标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：自主智能体系统进行科学发现
-6. [Automating Categorization of Scientific Texts with In-Context Learning and Prompt-Chaining in Large Language Models](/20260425-20260524/2604.23430v1-automating-categorization-of-scientific-texts-with-in-context-learning-and-prompt-chaining-in-large-language-models)  
+   evidence：基于LLM的知识图谱查询用于生命科学发现
+4. [Discriminative Site-Directed Protein Engineering via Lightweight CASPE Platform](/202605/24/biorxiv-10-64898-2026-04-24-720551-v2-discriminative-site-directed-protein-engineering-via-lightweight-caspe-platform)  
+   标签：评分：8.0/10、query:ai-scientific-discovery
+   evidence：使用蛋白质语言模型的轻量级蛋白质工程平台
+5. [SEMA-RAG: A Self-Evolving Multi-Agent Retrieval-Augmented Generation Framework for Medical Reasoning](/202605/24/2605.17101v1-sema-rag-a-self-evolving-multi-agent-retrieval-augmented-generation-framework-for-medical-reasoning)  
    标签：评分：7.0/10、query:ai-scientific-discovery
-   evidence：使用LLM通过文本分类实现自动化知识发现
-7. [Can Current Agents Close the Discovery-to-Application Gap? A Case Study in Minecraft](/20260425-20260524/2604.24697v1-can-current-agents-close-the-discovery-to-application-gap-a-case-study-in-minecraft)  
+   evidence：多智能体RAG用于医学推理，从临床数据中实现知识发现
+6. [Learning Causal Orderings for In-Context Tabular Prediction](/202605/24/2605.22335v1-learning-causal-orderings-for-in-context-tabular-prediction)  
    标签：评分：7.0/10、query:ai-scientific-discovery
-   evidence：评估AI智能体在Minecraft中完成发现到应用循环的基准
-8. [Causal Discovery via Statistical Power (CDSP)](/20260425-20260524/2605.13550v1-causal-discovery-via-statistical-power-cdsp)  
+   evidence：因果发现用于科学发现
+7. [IDEAL-Age: an interpretable deep learning framework for single-cell resolution profiling of immunological aging](/202605/24/biorxiv-10-64898-2025-12-25-696528-v2-ideal-age-an-interpretable-deep-learning-framework-for-single-cell-resolution-profiling-of-immunological-aging)  
    标签：评分：7.0/10、query:ai-scientific-discovery
-   evidence：基于统计功效的因果发现框架
-9. [Keeping SCORE enables interpretable uncertainty-aware classification from diffusion models for genomics](/20260425-20260524/biorxiv-10-1101-2025-11-26-690838-v2-keeping-score-enables-interpretable-uncertainty-aware-classification-from-diffusion-models-for-genomics)  
+   evidence：可解释深度学习用于单细胞分辨率的免疫老化发现
+8. [ChatDIA: A zero-shot large language model workflow for targeted analysis of data-independent acquisition mass spectrometry data](/202605/24/biorxiv-10-64898-2026-02-11-705360-v2-chatdia-a-zero-shot-large-language-model-workflow-for-targeted-analysis-of-data-independent-acquisition-mass-spectrometry-data)  
    标签：评分：7.0/10、query:ai-scientific-discovery
-   evidence：AI在基因组学分类中的可解释应用
-10. [Multivariate Bayesian Inversion for Classification and Regression](/20260425-20260524/biorxiv-10-1101-2025-05-09-653015-v2-multivariate-bayesian-inversion-for-classification-and-regression)  
+   evidence：零样本大模型工作流用于靶向DIA蛋白质组学分析
+9. [Automated Kernel Discovery Towards Understanding High-dimensional Bayesian Optimization](/202605/24/2605.20249v1-automated-kernel-discovery-towards-understanding-high-dimensional-bayesian-optimization)  
    标签：评分：6.0/10、query:ai-scientific-discovery
-   evidence：统计方法可用于科学发现中的分类回归任务
-11. [Are Current AI Virtual Cell Models Useful for Scientific Discovery?](/20260425-20260524/biorxiv-10-64898-2026-04-23-719015-v1-are-current-ai-virtual-cell-models-useful-for-scientific-discovery)  
+   evidence：大语言模型驱动的高维贝叶斯优化核发现
+10. [Divide-Prompt-Refine: a Training-Free, Structure-Aware Framework for Biomedical Abstract Generation](/202605/24/2605.20628v1-divide-prompt-refine-a-training-free-structure-aware-framework-for-biomedical-abstract-generation)  
    标签：评分：6.0/10、query:ai-scientific-discovery
-   evidence：评估AI虚拟细胞模型对科学发现是否有用
-12. [ClaroAI-Bench: Evaluating Agentic Scientific Reproducibility on Real Biomedical Papers](/20260425-20260524/biorxiv-10-64898-2026-05-08-723611-v1-claroai-bench-evaluating-agentic-scientific-reproducibility-on-real-biomedical-papers)  
+   evidence：生物医学摘要生成，支持知识发现
+11. [Learning the Language of the Microbiome with Transformers](/202605/24/biorxiv-10-64898-2026-05-02-722381-v2-learning-the-language-of-the-microbiome-with-transformers)  
    标签：评分：6.0/10、query:ai-scientific-discovery
-   evidence：评估AI代理复现科学发现的基准
+   evidence：微生物组科学中的自监督预训练
+12. [A unified benchmark of synthetic data generation for clinical transcriptomic cancer cohorts](/202605/24/biorxiv-10-64898-2026-05-13-724858-v1-a-unified-benchmark-of-synthetic-data-generation-for-clinical-transcriptomic-cancer-cohorts)  
+   标签：评分：6.0/10、query:ai-scientific-discovery
+   evidence：临床转录组学合成数据基准，AI用于精准肿瘤学
 
 
 <div class="dpr-home-promo-card">

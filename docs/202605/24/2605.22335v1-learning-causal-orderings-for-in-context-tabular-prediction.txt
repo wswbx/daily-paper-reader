@@ -1,0 +1,1772 @@
+Title: Learning Causal Orderings for In-Context Tabular Prediction
+
+URL Source: https://arxiv.org/pdf/2605.22335v1
+
+Published Time: Fri, 22 May 2026 01:16:37 GMT
+
+Number of Pages: 28
+
+Markdown Content:
+# Learning Causal Orderings for In-Context Tabular Prediction 
+
+Sascha Xu ◦
+
+CISPA Helmholtz Center 
+
+sascha.xu@cispa.de 
+
+Sarah Mameche ◦
+
+CISPA Helmholtz Center 
+
+sarah.mameche@cispa.de 
+
+Jilles Vreeken 
+
+CISPA Helmholtz Center 
+
+jv@cispa.de 
+
+## Abstract 
+
+In-context learning for tabular data sets strong predictive standards in observational settings; it however primarily relies on correlational structure, which becomes unreliable under distribution shift or intervention. While established methods to discover causal structure exist, they are often focused on structure identifiability and decoupled from the predictive architectures that could benefit from them. To bridge these perspectives, we study how to simultaneously infer and enforce causal structure in the form of topological variable orderings into tabular prediction. Unlike standard architectures, our model T AB ORDER uses causal order-constrained attention, basing predictions only on features that precede a target under a learned causal order. Similar to causal discovery methods, T AB ORDER learns the optimal variable ordering in an unsupervised manner through a likelihood-based objective. We justify this choice under standard functional model classes and also study how sample missingness, a common challenge in tabular data, interacts with causal direction identification. Empirically, we confirm that T AB ORDER recovers accurate variable orderings while addressing prediction and imputation tasks, as well as gives insight into real-world biological data under intervention. 
+
+## 1 Introduction 
+
+In-context learning architectures such as Tabular foundation models (TFMs) achieve strong per-formance in predictive learning from tabular data through large-scale pre-training [Müller et al., 2022, Hollmann et al., 2023]. However, these models are primarily associative and do not explicitly account for causal directionality [Pearl, 2009] among features, such that their predictions could rely on non-causal associations sensitive to distribution shifts. We illustrate this effect in Figure 1 in a three-variable chain X → Y → Z, comparing an observational regime (green) to an intervention on the mechanism generating Z (orange). This affects the predictive performance of a state-of-the art TFM (Figure 1a), suggesting that it relies on the non-causal statistical association between Z and Y .In contrast, predictions with our proposed architecture remain robust (Figure 1b) as the model relies only on the direct causal relationship between X and Y .Identifying such directional relationships is the primary aim of causal discovery [Pearl, 2009], usually with focus on recovering the underlying directed acyclic graph (DAG) from observational data. However, classical methods [Spirtes et al., 2001] are typically dataset-specific and detached from large-scale predictive architectures. Recent amortized approaches to causal discovery [Lorch et al., 2022, Ke et al., 2023] apply an in-context learning paradigm to causal discovery, relying on supervised training over large collections of known causal graphs. However, these works focus on a different question of whether causal structure recovery can be improved by supervised learning over large synthetic samples [cf. Montagna et al., 2025], whereas the question of how to systematically use causal structure in predictive architectures is relatively underexplored. 
+
+> ◦Equal contribution. Preprint.
+> arXiv:2605.22335v1 [cs.LG] 21 May 2026
+
+−2 0 2
+
+−1
+
+0
+
+1
+
+2
+
+X
+
+> Y
+
+ˆY (non-intervened) ˆY (intervened) f (X)
+
+> (a) Prediction with T AB PFN.
+
+−2 0 2
+
+−1
+
+0
+
+1
+
+2
+
+3
+
+X
+
+> (b) Prediction with T AB ORDER .
+
+Figure 1: Prediction under Intervention with and without Order Constrained Attention . For prediction of a mediator Y in a chain X → Y → Z, we measure test error without resp. with intervention on Y → Z. The generating mechanism f (X) is shown in black. T AB PFN (a) accurately models X → Y when no intervention is present (green), but fails under intervention (orange). TAB ORDER (b) remains accurate in both settings by learning and leveraging the causal order. In this work, we propose to connect the research perspectives behind predictive tabular models on the one hand, and causal structure discovery on the other hand, within a transformer-based framework. Unlike standard architectures, our model T AB ORDER uses causal order-constrained attention, modeling the joint distribution as an ordered factorization under a learned causal ordering. In contrast to classical causal discovery, T AB ORDER infers this order efficiently within a single forward pass; in addition, most existing causal discovery methods address a fully observed regime, while we allow for missing samples with direct mechanisms for imputation. Finally, different from amortized causal discovery, we maintain an unsupervised approach without requiring ground-truth causal orders during training. Given that recovering causal structure from purely observational data is impossible without further assumptions, we design our architecture around a likelihood-based objective that we justify in Additive Noise Model (ANM) regimes under standard assumptions [Bühlmann et al., 2014]. We study how the prediction of arbitrary missing values can be used to learn causal orderings, and show that the presence of missing samples can actually facilitate causal direction identification (Section 3). Experiments across different classes of generating processes (Section 5) confirm that T AB ORDER 
+
+reliably infers accurate causal orderings, while maintaining competitive predictive performance downstream tasks such as missing value imputation. 
+
+## 2 Causal Order-Constrained Prediction 
+
+We begin by introducing the problem setting, then explain the features of our architecture. Let X = ( X1, . . . , X d) denote a collection of d real-valued random variables drawn from an unknown joint distribution P (X). We observe a dataset D = {x(r)}nr=1 over n samples, where each row 
+
+x(r) = ( x(r)1 , . . . , x (r) 
+
+> d
+
+) ∈ Rd is an independent realization of X, and where some entries x(r) 
+
+> i
+
+are missing, indicated by a binary mask M = {m(r) 
+
+> i
+
+}nr=1 with m(r) 
+
+> i
+
+∈ { 0, 1}. Our objective is to learn the structured conditional dependencies between variables in X to enable accurate and robust cell-wise predictions. We base the architecture design on tabular foundation models (TFMs) [Hollmann et al., 2023], which model the posterior predictive distribution of a target variable x(r) 
+
+> i
+
+in row r as pθ (xi | x(r) 
+
+> i∗
+
+, D),where x(r) 
+
+> i∗
+
+denotes all entries in row r except x(r) 
+
+> i
+
+.This approach however allows the use of all available features as predictors for x(r) 
+
+> i
+
+without accounting for causal directionalities. To address this, we propose modeling the joint distribution of a row x(r)
+
+2?
+
+?
+
+? ?       
+
+> X1X2X3
+> Original Dataset D
+> 0.8 1.3 -0.5
+> s1s2s3
+
+?
+
+?
+
+? ?   
+
+> X3X1X2
+> Sorted by si
+
+?
+
+?
+
+? ?  
+
+> Hidden state for prediction
+> ˆσ23ˆσ21ˆσ22
+> fσ
+
+ˆμ(4) 2
+
+ˆσ22 + δ2,3                               
+
+> Decode μand σ2
+> for missing x(4) 2
+> fμ
+> Increase σ2
+> for missing predecessors
+> 101
+> 111
+> 001
+> Forward:
+> Aij =1[si≥sj]
+> 0.50 0.38 0.79
+> 0.62 0.50 0.86
+> 0.21 0.14 0.50
+> Backward:
+> ˆAij =σ(si−sj)
+> Row attention
+> unrestricted
+> Col attention
+> following order (right →left)
+> Repeat
+> mtimes
+> Order Inference Order-Constrained Prediction
+
+Figure 2: Overview over T AB ORDER . For a dataset D we map each column i to an order score si.From these scores, we construct a hard/soft attention mask to constrain attention according to the learned order (left). To predict missing entries in D, we alternate row-wise attention (unrestricted) and column-wise causal attention (order-constrained). From the resulting cell embeddings, we decode the conditional mean and a variance term accounting for missing potential causes (right). using an ordered factorization of the form 
+
+pθ (x(r) | D , π ) = 
+
+> d
+
+Y
+
+> k=1
+
+pθ
+
+
+
+x(r) 
+
+> π(k)
+
+| x(r) 
+
+> π(1: k−1)
+
+, D
+
+
+
+. (1) Under this factorization, the prediction for an entry x(r) 
+
+> π(k)
+
+is conditioned strictly on the variables preceding it in the order π ∈ Sd, where Sd is the set of all possible variable permutations and 
+
+π(k) denotes the index of the variable at position k. This induces an asymmetric dependency structure, where each variable is predicted only from its predecessors. If the learned order aligns with the underlying causal structure, the model is prevented from exploiting anti-causal or spurious correlations that do not generalize under intervention. We are specifically interested in causal orders where π is compatible with the underlying cause-effect relationships of the data-generating process, i.e., corresponds to a topological sorting of an underlying Directed Acyclic Graph (DAG) [Pearl, 2009]. However, ground-truth causal orders 
+
+π are often unknown or only partially observed in real-world settings [e.g., Sachs et al., 2005]. Therefore, we design the architecture to learn an optimal ordering ˆπ end-to-end, without requiring ground-truth causal labels during training. We explain this approach in the following, then explain its correspondence with inferring causal orders in Section 3. 
+
+2.1 TAB ORDER Architecture 
+
+TAB ORDER is a dual-transformer architecture that infers causal orders and performs order-constrained predictions in a single end-to-end pass. The model operates through two primary stages. Given a table D ∈ Rn×d with missing entries indicated by M ∈ { 0, 1}n×d, each cell x(r) 
+
+> i
+
+and its missingness indicator m(r) 
+
+> i
+
+are embedded through a learned linear map 
+
+e(r) 
+
+> i
+
+= Wemb 
+
+"
+
+x(r)
+
+> i
+
+m(r)
+
+> i
+
+#
+
++ bemb , W ∈ Rh×2 . (2) These embeddings are processed by alternating row-wise and column-wise self-attention layers in two specialized transformer branches: an unconstrained branch that induces a variable ordering ˆπ via scalar scores s (Order Inference ), and a masked branch that models the conditional distribution of each cell, using a mask constructed from the learned scores s (Order-Constrained Prediction ). We provide a high-level overview of T AB ORDER in Fig. 2 and explain its components in detail below. 3Order Inference. To infer the ordering ˆπ, we apply a standard multi-head self-attention transformer [Vaswani et al., 2017] to the initial cell embeddings, alternating between row- and column-wise attention for m steps. This results in a hidden state Hord ∈ Rn×d×h.We model each variable’s Xi position in the order via a scalar score si ∈ R, where lower scores indicate an earlier position. We decode these scores from the hidden state Hord by applying a two-layer MLP ford : Rh → R to each cell representation, and averaging across rows as per 
+
+si(D) = 1
+
+n
+
+> n
+
+X
+
+> r=1
+
+ford 
+
+ Hord 
+
+> r,i
+
+ . (3) To enforce the order imposed by the scores s in the Order-Constrained Prediction branch, we construct a causal attention mask As, where As 
+
+> i,j
+
+= 1(sj ≤ si), meaning that column i may only attend to columns with lower score. To maintain differentiability, we use a straight-through relaxation in the backward pass as 
+
+ˆAs 
+
+> i,j
+
+= sigmoid 
+
+ si − sj
+
+τ
+
+
+
+, (4) where the temperature τ controls the sharpness of the ranking. The Order Inference transformer thus produces a differentiable ordering that controls the information flow in the Order-Constrained Prediction branch. Since both components are trained jointly, the model is encouraged to place variables earlier in the order when they improve prediction of downstream variables. For causal mechanisms with lower prediction error in the causal direction [Blöbaum et al., 2018], incorrect orderings incur systematically higher error and are therefore suboptimal. 
+
+Order-Constrained Prediction. We now model the structured conditional dependencies using the causal mask As. We apply a second transformer to the initial cell embeddings, alternating row-and column-wise attention for m steps. While row-wise attention remains unconstrained to allow for in-context information sharing across samples, column-wise attention is strictly restricted by As,ensuring that the hidden state in column i depends only on its predecessors in the learned order ˆπ.This yields predictive hidden states Hpred ∈ Rn×d×h that parameterize the conditional factorization of Eq. (1). We model each variable’s conditional distribution using additive noise models (ANMs) 
+
+Xi = f (Xpa (i)) + Ni, N i ⊥⊥ Xpa (i) , (5) with Gaussian noise Ni ∼ N (0 , σ 2 
+
+> i
+
+). To that end, we decode the conditional mean and the variance, averaged per variable, via two MLPs fμ and fσ as 
+
+ˆμ(r) 
+
+> i
+
+= fμ
+
+
+
+Hpred 
+
+> r,i
+
+
+
+, ˆσ2 
+
+> i
+
+= 1
+
+n
+
+> n
+
+X
+
+> r=1
+
+fσ
+
+
+
+Hpred 
+
+> r,i
+
+
+
+. (6)                       
+
+> X1X2X3=X1+ ( X2)2+N
+> 12ˆμ(1) 3= 5 ,ˆσ2(1) 3= 1
+> 0?ˆμ(2) 3= 0 ,ˆσ2(2) 3= 1 + 2
+> ?-1 ˆμ(3) 3= 1 ,ˆσ2(3) 3= 1 + 1
+
+Figure 3: Effect of Missingness. In an addi-tive noise model, X3 = X1 + ( X2)2 + N
+
+where N, X 1, X 2 ∼ N (0 , 1) , when either parent of X3 is missing, the model increments the variance ˆσ2 (Eq. (7) ) by a learned amount (blue for X1, green for X2) that reflects the effect of missingness of causal parents. 
+
+Prediction under Partial Observation. Since the model predicts potentially multiple missing entries per row, missing causal parents affect the estimation of the functional relationships in Eq. (5) , leading to increased uncertainty when relevant inputs are unob-served. We capture this effect via a learnable variance increment δi,j ∈ R+, decoded from Hpred , such that the point-wise variance for a cell x(r) 
+
+> i
+
+is given by 
+
+ˆσ2( r) 
+
+> i
+
+= ˆ σ2 
+
+> i
+
++ X
+
+> j∈[d]
+
+δi,j · 1(sj < s i) · m(r) 
+
+> j
+
+. (7) Intuitively, the model increases predictive uncertainty when variables that precede Xi in the learned order are missing. For example, in a collider structure 
+
+X1 → X3 ← X2, missing either parent increases the uncertainty in predicting X3 (Fig. 3). Moreover, we show that this mechanism amplifies the likelihood gap between correct and incorrect orderings, thus facilitating the learning of accurate causal orders (Section 3). 4Training. To train our model, we optimize all components jointly by maximizing the log-likelihood of masked entries under the ordered conditional model. We assume access to a distribution over datasets D ∼ P , from which training instances are sampled. For each dataset, we generate a prediction task by masking entries completely at random with probability q = 20% .Given a masked dataset (D, M ), we first infer an attention mask As via the order induction module. Conditioned on this mask, the predictive transformer produces cell-wise mean ˆμ(r) 
+
+> i
+
+and variance estimates ˆσ2( r) 
+
+> i
+
+. The training objective is then to maximize the average log-likelihood L of the masked entries, 
+
+L = 1
+
+|M |
+
+X 
+
+> m(r)
+> i=1
+
+log 
+
+h
+
+pN
+
+
+
+x∗(r) 
+
+> i
+
+ˆμ(r) 
+
+> i
+
+, ˆσ2( r)
+
+> i
+
+i 
+
+. (8) Maximizing Eq. (8) couples order learning and prediction: orderings that better explain masked entries receive higher likelihood. Together, the architecture and objective of T AB ORDER provide an in-context learning framework for inferring variable orderings and structured conditional dependencies. We describe our exact implementation including relevant hyperparameter choices in Appendix B. 
+
+## 3 Causal Order Inference 
+
+In this section, we provide a theoretical perspective on T AB ORDER and examine under which conditions its architecture and likelihood-based training objective are aligned with recovering causal structure. In particular, we focus on learning variable orderings without requiring ground-truth causal graphs during training. As is standard, we assume the data to be generated by a Structural Causal Model (SCM) [Pearl, 2009] with structural equations Xi = fi(pa i, N i), where pa i denotes the set of direct causes (parents) of 
+
+Xi, and Ni is an exogenous noise variable. The causal structure of the entire system is captured by a directed acyclic graph (DAG). A topological ordering of a DAG is any order in which all causal parents precede their children; for such an ordering π, the joint density factorizes as 
+
+p(x) = 
+
+> d
+
+Y
+
+> i=1
+
+p xπ(i) | xπ(1: i−1) 
+
+ =
+
+> d
+
+Y
+
+> i=1
+
+p xi | xpa i
+
+ . (9) Hence we refer to π ∈ Sd as a causal order for X if it corresponds with a topological ordering of the underlying causal DAG. We make standard assumptions of the causal Markov Condition, faithfulness, and causal sufficiency, listed in detail in Appendix A.1. 
+
+Order Inference via Likelihood-Based Objectives. Identifying the causal graph and thereby a topological ordering is feasible for certain classes of functional mechanisms [Shimizu et al., 2006, Hoyer et al., 2008, Zhang and Hyvärinen, 2009]. As our learning objective is based on minimizing conditional error variance, we focus on causal additive models (CAM) [Bühlmann et al., 2014], 
+
+Xi = X
+
+> j∈pa i
+
+fij (Xj ) + Ni, (10) with smooth functions fij and independent noise Ni ⊥⊥ Xi. For this class, the likelihood-optimal order is consistent with the topological orders of the true DAG, such that scoring criteria based on residual variances consistently recover valid causal orders [Bühlmann et al., 2014]. As T AB ORDER 
+
+jointly predicts a variable order ˆπ as well as models conditional expectations under the order-constrained SCM (Eq. 5) via likelihood maximization, this steers training toward orderings that are consistent with the underlying causal structure, without requiring ground-truth graphs. 
+
+Order Inference under Partial Observation. In the presence of missing values, T AB ORDER 
+
+includes an explicit mechanism to capture the effect on the predictive uncertainty in the additive noise model in Eq. (5) (see Figure 3). We now show that in certain cases, we can leverage an asymmetry in the effect of missingness to further increase likelihood terms in the causal direction. To illustrate, consider the bivariate cause effect pair X → Y . Let M ∼ Bernoulli( q) indicate missingness of the parent, and for direction τ , define v0,τ as the residual variance when the parent is observed ( M = 0 ) and v1,τ when it is missing ( M = 1 ). 5A Gaussian model with a single variance parameter in direction τ must match the mask-averaged residual variance ¯σ2 
+
+> τ
+
+= (1 −q) v0,τ +q v 1,τ , yielding population log-likelihood L⋆τ, fix = − 12 log ¯ σ2 
+
+> τ
+
++
+
+const . A missingness-aware model fits separate variances for M = 0 and M = 1 , giving L⋆τ, inc =
+
+− 12
+
+(1 − q) log v0,τ + q log v1,τ 
+
+ + const . Since − log is strictly convex, if v0,τ ̸ = v1,τ then Jensen’s inequality implies L⋆τ, inc > L⋆τ, fix , that is accounting for missingness strictly improves the likelihood in either direction. The above suggests that the variance increment in Eq. (7) helps the model distinguish cause from effect. We now examine conditions under which this is the case. To that end, we compare 
+
+∆fix := L⋆ 
+
+> fwd ,fix
+
+− L ⋆ 
+
+> bwd ,fix
+
+and ∆inc := L⋆ 
+
+> fwd ,inc
+
+− L ⋆ 
+
+> bwd ,inc
+
+. (11) Then, we can show the following. 
+
+Theorem 1 (Effect of Missingness on Likelihood Asymmetry) . Consider an additive noise model 
+
+Y = f (X)+ N with N ⊥⊥ X and Var( N ) > 0 and missingness indicator MX , M Y ∼ Bernoulli( q)
+
+with q ∈ (0 , 1) . Then, the difference in likelihood is amplified iff the forward signal-to-noise ratio 
+
+Var( f (X)) / Var( N ) exceeds the backwards ratio Var( E[X | Y ]) /E[Var( X | Y )] , i.e., 
+
+∆inc > ∆fix ⇐⇒ Var( f (X)) Var( N ) > Var( E[X | Y ]) 
+
+E[Var( X | Y )] . (12) We defer the proof to Appendix A.3. The result shows that optimizing the likelihood with the variance increment in Eq. (7) further increases the likelihood gap, facilitating learning of causally aligned orders in identifiable settings such as CAMs. More generally, in settings where causal structure and likelihood-optimal factorizations coincide [Wendong et al., 2025], likelihood maximization provides a principled approach to learning variable orderings without requiring ground-truth graphs. TAB ORDER instantiates this principle in an in-context learning framework. 
+
+## 4 Related Work 
+
+Tabular Foundation Models. Recent deep learning approaches for tabular data adopt an in-context learning paradigm using transformer-based models trained on large collections of tables [Müller et al., 2022]. T AB PFN introduced a transformer pre-trained on synthetic tasks drawn from a prior over structural mechanisms, achieving state-of-the-art performance without finetuning [Hollmann et al., 2023, 2025]. Subsequent work improves scalability [Qu et al., 2025] and retrieval [Ma et al., 2026]. Existing TFMs primarily focus on predicting a single target variable and do not impose structural constraints on feature–feature relationships. Work on causality in TFMs has so far focused on treatment effect estimation [Robertson et al., 2025, Balazadeh et al., 2026], typically relying on amortized learning over a synthetic SCM prior rather than inferring dataset-specific causal structure. 
+
+Missing Value Imputation. Classical imputation methods include mean imputation, k-nearest neighbors, and Multiple Imputation by Chained Equations (MICE) [Van Buuren and Groothuis-Oudshoorn, 2011], which iteratively fits conditional models. MIRACLE [Kyono et al., 2021] explicitly models structured missingness by conditioning on estimated causes of missingness, improving robustness under non-random missingness. This is complementary to our approach, which focuses on learning causal relationships between features to improve imputations. Deep generative models such as GAIN [Yoon et al., 2018] and MIWAE [Mattei and Frellsen, 2019] learn joint feature distributions, while transformer-based approaches such as NAIM [Caruso et al., 2024] model conditional distributions directly. T AB IMPUTE [Feitelberg et al., 2025] leverages pretraining on synthetic missingness tasks but does not impose structural constraints. 
+
+Causal Discovery. Identifying causal structure from observational data requires assumptions on functional forms or noise distributions [Shimizu et al., 2006, Hoyer et al., 2008, Zhang and Hyvärinen, 2009]. T AB ORDER is conceptually related to order-based discovery methods [Bühlmann et al., 2014, Rolland et al., 2022, Montagna et al., 2023a,b, Xu et al., 2025] and gradient-based DAG learners [Zheng et al., 2018, Lachapelle et al., 2020]. However, these methods solve dataset-specific optimization problems to infer causal structure from a single dataset. In contrast, amortized approaches like AVICI [Lorch et al., 2022] learn to infer graphs across datasets through supervised training on ground-truth graphs [Ke et al., 2023], although it has been suggested that this supervised approach may be sensitive to synthetic priors [Montagna et al., 2025]. T AB ORDER uniquely combines amortized learning with unsupervised, likelihood-based order discovery for downstream prediction. 6TOPIC 
+
+> CAM
+> TAB ORDER
+> AVICI
+> NOGAM
+> SCORE
+> DAS
+> NOTEARS
+> R2S RT
+
+0
+
+0.5
+
+1
+
+> dTOP
+
+Top. Divergence (↓)
+
+> (a) Synthetic Data (ANM).
+> TAB ORDER
+> R2S RT
+> TOPIC
+> CAM
+> SCORE
+> NOGAM
+> AVICI
+> DAS
+> NOTEARS
+
+0
+
+0.5
+
+1
+
+Top. Divergence (↓)
+
+> (b) Real-World Data [Sachs et al., 2005].
+
+Figure 4: Causal Order Inference. Shown is the topological divergence ( dTOP , lower is better) of estimated causal orders on synthetic datasets generated from nonlinear Gaussian process ANMs ( a)and on the real-world causal discovery benchmark by Sachs et al. [2005] ( b). 
+
+## 5 Experiments 
+
+We evaluate whether T AB ORDER achieves a favorable trade-off between I. causal order learning and II. tabular prediction and imputation tasks. We consider both synthetic data with known causal structure, and real-world datasets with and without ground-truth graphs. Synthetic experiments assess the accuracy of learned orders under a range of nonlinear mechanisms (additive and non-additive), noise levels, and sample sizes (Appendix C.1). Real-world experiments evaluate predictive performance in missing value imputation and downstream tasks, including robustness under distribution shift and intervention. 
+
+Causal Order Inference (Trade Off I). We first evaluate the quality of the causal orders discovered by T AB ORDER . Given a learned order ˆπ and ground-truth DAG G, we measure topological divergence 
+
+dTOP (ˆ π, G ) = Pdi=1 
+
+P 
+
+> j:ˆ π(i)≥ˆπ(j)
+
+I[( i, j ) ∈ G], where lower values indicate fewer edge direction disagreements of ˆπ with G. For comparison, we consider a selection of recent topological-ordering based causal structure learning algorithms, C AM [Bühlmann et al., 2014], S CORE [Rolland et al., 2022], DAS [Montagna et al., 2023a], N OGAM [Montagna et al., 2023b], N OTEARS [Zheng et al., 2018] and T OPIC [Xu et al., 2025], as well as the amortized learner AVICI [Lorch et al., 2022] and the simple sorting baseline R2S RT [Reisach et al., 2023]. Figure 4 shows the topological divergence dTOP across methods. On synthetic data (Figure 4 (a)), TAB ORDER discovers causal orderings of matching quality compared to the outputs of structure learning algorithms tailored to this task. It discovers such orders without relying on explicit regression and graph learning (C AM , T OPIC ) and accompanying scalability constraints (E.2), but allows order inference in near-instant time; and without relying on ground truth graphs during training (AVICI). 
+
+> Correct Order
+> TAB ORDER
+> Incorrect Orders
+
+0
+
+0.1
+
+0.2
+
+0.3
+
+> NLL  (↓)
+> (a) Replacing the order with correct vs. incorrect orders.
+
+0 0.2 0.4
+
+0
+
+0.1
+
+0.2
+
+0.3
+
+dTOP (↓)
+
+> NLL  (↓)
+> (b) NLL vs. divergence be-tween used and true order.
+
+Figure 5: Order Impact. Shown is the effect of replacing learned orders at test time. Incorrect orders degrade prediction (NLL) as the considered order diverges from the true causal order ( dTOP ). 
+
+Order Impact. Next we assess predictive performance in relation to the quality of the learned causal order. We impose different orders when evaluating T AB ORDER , includ-ing a correct causal order, the learned order, and multiple sampled incorrect orders. To show the effect on missing value imputation, we report the Negative Log-Likelihood (NLL, smaller is better). As Figure 5a shows, the NLL of the correct and learned order is close and much smaller than for incorrect orders. For these incorrect orders, we show in Fig-ure 5b how the NLL behaves as the divergence 
+
+dTOP of corrupted orders from the true order increases, showing it worsens monotonically. We also evaluate order discovery on a common standard real-world benchmark consisting of multiparameter single-cell data Sachs et al. [2005] where 70.10.20.30.40.5
+
+2
+
+4
+
+6
+
+8
+
+Missing rate 
+
+> Avg. Rank
+
+TAB ORDER HYPER IMPUTE MISS FOREST ICE 
+
+GAIN MICE SOFT IMPUTE KNN 
+
+> (a) CTR23: Imputation
+
+0.10.20.30.40.5
+
+2
+
+4
+
+6
+
+8
+
+Missing rate 
+
+> (b) CTR23: Prediction
+
+0.10.20.30.40.5
+
+2
+
+4
+
+6
+
+8
+
+Missing rate 
+
+> Avg. Rank
+> (c) CC18: Imputation
+
+0.10.20.30.40.5
+
+2
+
+4
+
+6
+
+8
+
+Missing rate 
+
+> (d) CC18: Prediction
+
+Figure 6: Predictive Performance (Trade Off II) . Shown is the average rank of imputation (a, c) and downstream prediction (b, d) performance on the CTR23 (left) and CC18 (right) datasets. TAB ORDER is the most accurate imputation method for ≥ 40% missingness. a given causal DAG reflects causal cell signaling pathways among 11 variables. The main results (Figure 4 (b)) show that T AB ORDER is the only method to discover causal order with dTOP ≈ 0.21 
+
+divergence. We show the divergence for the main reference dataset (condition cd3cd28 ) but besides this, multiple interventional datasets are available, for which T AB ORDER consistently achieves topological divergences of 0.12 − 0.29 , with the exception of one condition where a perturbation on the hub node PKC was applied (condition g0076 ). All results are shown in detail in Appendix D.2. 
+
+Predictive Performance (Trade Off II). We now evaluate the predictive performance of T AB OR- 
+
+> DER
+
+on real-world data, measuring both imputation accuracy and downstream predictive performance. We use the OpenML CC18 classification and CTR23 regression benchmarks [Bischl et al., 2021, Fischer et al., 2023]. We consider the datasets with at least 80% real-valued inputs, yielding 33 CC18 and 23 CTR23 datasets, listed in Appendix C.2. We apply a split into 80% train and 20% test data as well as mask 10–50% of entries uniformly at random. We compare against standard imputers KNN, ICE, MICE [Van Buuren and Groothuis-Oudshoorn, 2011], M ISS FOREST [Stekhoven and Bühlmann, 2012]), neural methods (GAIN [Yoon et al., 2018]), and H YPER IMPUTE [Jarrett et al., 2022]; additional baselines are reported in Appendix D.3. For the trained T AB ORDER , we perform fine-tuning on the training data only. For downstream evaluation, we train an XGB OOST model [Chen and Guestrin, 2016] on imputed data (classification and regression), except that for CTR23 we directly impute missing targets with T AB ORDER at test time. i.i.d. Intervened 
+
+0
+
+0.5
+
+1
+
+> MSE
+
+TAB ORDER XGBoost TAB PFN Figure 7: Intervention-Robust Prediction. 
+
+Shown is the MSE for predicting Y in the three-variable chain on an i.i.d. and an intervened sample Y → Z (mechanism shift). T AB OR- 
+
+> DER
+
+remains accurate under the intervention via the learned causal order, while T AB PFN and XGB OOST degrade in performance. Figure 6 reports average ranks across missingness levels. TAB ORDER achieves the best imputation performance at higher missingness (CTR23 for q ≥
+
+30% , CC18 for q ≥ 40% ), H YPER IMPUTE at lower missingness. For downstream tasks, T AB ORDER is competitive on CC18 and outperforming on CTR23 at q ≥ 40% , benefiting from directly imputing val-ues without retraining. 
+
+Intervention-Robust Prediction. We continue in-vestigating the predictive performance but move to an interventional setting. We revisit the chain SCM 
+
+X → Y → Z introduced in Figure 1 with focus on predicting the mediator Y given X and Z. We sample observations from an SCM with nonlinear mechanisms and on the test set, change the mecha-nism of Z for 50% of the samples. Figure 7 shows that while all methods perform well on datapoints drawn from the same distribution (i.i.d.), T AB PFN and XGB OOST suffer under the mechanism change (Intervened) to which T AB ORDER remains reasonably robust. This provides empirical evidence for our motivating idea that using causal order use is beneficial for intervention-robust predictive performance. 8PKC           
+
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 4
+> 8
+> (a) Interventional Condition cd3cd28_g0076 .
+> PKC
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 4
+> 8
+> (b) Interventional Condition cd3cd28_psitect .
+
+Figure 8: Changes in Inferred Orders under Intervention. In the Sachs et al. [2005] data, we compare two interventional conditions (a, b) to the reference condition, and count flips in node positions in the order by T AB ORDER (darker for more flips). An upstream intervention (a) leads to global changes in the order; a downstream one (b) to a local change of one target. 
+
+Unknown Biological Interventions. Last, to study the effects of interventions outside the synthetic setting, we revisit the real-world data by Sachs et al. [2005]. We take the causal order inferred for the near-observational dataset ( cd3cd28 ) as a reference, and compare it to the orders inferred by TAB ORDER for two interventional datasets ( g0076 , psitect ). To allow for a qualitative analysis that shows how the position of each of the nodes in the order changes, we use a simple metric over pairwise position flips of the nodes (Appendix D.2). In Figure 8, we depict the 11 observed variables (solid nodes), the fixed consensus graph (edges), the biological background knowledge on intervention effects (dashed nodes) and the position flips that occurred for each node (color, dark blue indicates more position flips compared to cd3cd28 ). The results contrast the effect of an intervention on an upstream hub node PKC (a), which leads to changes in the order for almost all nodes, against the effect of a downstream intervention on PIP2 and PIP3 (b), which leads to a localized change at the intervention target while leaving the remaining system unaffected. Analyzing such perturbations in biological systems can be useful given that intervention effects are often not a priori known. 
+
+## 6 Conclusion 
+
+Towards addressing the disconnect between associative in-context learning and causal structure learning, we integrate causal order learning within a transformer-based framework for tabular data. Our architecture T AB ORDER jointly infers and uses causal orderings to constrain predictive attention. While the model is not limited to specific functional forms during training or inference, causal structure identification is not generally possible from observational data without further assumptions, such that we provided theoretical justification for our approach within the class of additive noise models Our experiments cover both causal order discovery and predictive tasks, where T AB ORDER 
+
+achieved reasonable performance across both dimensions. On real-world data, the inferred topological orderings align very closely with domain knowledge, and the discovered orders across interventional conditions give insights into the localized effects of the perturbations. Regarding current limitations, the implementation focuses primarily on learning topological order-ings rather than full directed acyclic graphs as we consider this sufficient for the predictive and interventional tasks under consideration. The refinement of these orders into sparse graph structures is well explored using pruning via sparse regression, but future work could address this aspect more directly within the transformer architecture. Furthermore, investigating broader training priors and systematically studying their effect on amortized learners is not the focus of this work, but an important consideration for improving the quality of pretraining. In this context, the use of explicitly interventional data during training is likely particularly promising given the aim to learn causal structure, although this requires access to richer training data where such interventions are present. These research efforts could better connect the areas of structure learning and predictive modeling toward more interpretable and intervention-robust in-context learning. 9References 
+
+Vahid Meresht Balazadeh, Hamidreza Kamkari, Valentin Thomas, Junwei Ma, Bingru Li, Jesse Cresswell, and Rahul Krishnan. Causalpfn: Amortized causal effect estimation via in-context learning. Advances in Neural Information Processing Systems , 38:154945–154984, 2026. Bernd Bischl, Giuseppe Casalicchio, Matthias Feurer, Pieter Gijsbers, Frank Hutter, Michel Lang, Rafael Gomes Mantovani, Jan N. van Rijn, and Joaquin Vanschoren. OpenML benchmarking suites. In Thirty-fifth Conference on Neural Information Processing Systems Datasets and Benchmarks Track (Round 2) , 2021. URL https://openreview.net/forum?id=OCrD8ycKjG .Patrick Blöbaum, Dominik Janzing, Takashi Washio, Shohei Shimizu, and Bernhard Schölkopf. Cause-effect inference by comparing regression errors. In International Conference on Artificial Intelligence and Statistics , pages 900–909. PMLR, 2018. Peter Bühlmann, Jonas Peters, and Jan Ernest. Cam: Causal additive models, high-dimensional order search and penalized regression. The Annals of Statistics , 42(6):2526–2556, 2014. Camillo Maria Caruso, Paolo Soda, and Valerio Guarrasi. Not another imputation method: A transformer-based model for missing values in tabular datasets. arXiv preprint arXiv:2407.11540 ,2024. Tianqi Chen and Carlos Guestrin. Xgboost: A scalable tree boosting system. In Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining , KDD ’16, page 785–794, New York, NY, USA, 2016. Association for Computing Machinery. ISBN 9781450342322. doi: 10.1145/2939672.2939785. URL https://doi.org/10.1145/2939672. 2939785 .Jacob Feitelberg, Dwaipayan Saha, Kyuseong Choi, Zaid Ahmad, Anish Agarwal, and Raaz Dwivedi. Tabimpute: Accurate and fast zero-shot missing-data imputation with a pre-trained transformer. 
+
+arXiv preprint arXiv:2510.02625 , 2025. Sebastian Felix Fischer, Matthias Feurer, and Bernd Bischl. Openml-ctr23–a curated tabular regres-sion benchmarking suite. In AutoML Conference 2023 (Workshop) , 2023. Trevor Hastie, Rahul Mazumder, Jason D Lee, and Reza Zadeh. Matrix completion and low-rank svd via fast alternating least squares. The Journal of Machine Learning Research , 16(1):3367–3402, 2015. Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. Tabpfn: A transformer that solves small tabular classification problems in a second. In The Eleventh International Conference on Learning Representations , 2023. Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo, Robin Tibor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular foundation model. Nature , 637(8045):319–326, 2025. Patrik Hoyer, Dominik Janzing, Joris M Mooij, Jonas Peters, and Bernhard Schölkopf. Nonlinear causal discovery with additive noise models. Advances in neural information processing systems ,21, 2008. Noah Isakov and Amnon Altman. Protein kinase c in t cell activation. Annual Review of Immunology ,2002. URL https://api.semanticscholar.org/CorpusID:82352757 .Daniel Jarrett, Bogdan C Cebere, Tennison Liu, Alicia Curth, and Mihaela van der Schaar. Hyperim-pute: Generalized iterative imputation with automatic model selection. In International Conference on Machine Learning , pages 9916–9937. PMLR, 2022. Nan Rosemary Ke, Silvia Chiappa, Jane Wang, Anirudh Goyal, Jorg Bornschein, Melanie Rey, Theophane Weber, Matthew Botvinic, Michael Mozer, and Danilo Jimenez Rezende. Learning to induce causal structure. In International Conference on Learning Representations , 2023. URL 
+
+https://openreview.net/forum?id=hp_RwhKDJ5 .10 Trent Kyono, Yao Zhang, Alexis Bellot, and Mihaela van der Schaar. Miracle: Causally-aware imputation via learning missing data mechanisms. Advances in Neural Information Processing Systems , 34:23806–23817, 2021. Sébastien Lachapelle, Philippe Brouillard, Tristan Deleu, and Simon Lacoste-Julien. Gradient-based neural dag learning. In International Conference on Learning Representations , 2020. David Lake, Sonia Corrêa, and Jurgen Muller. Negative feedback regulation of the erk1/2 mapk pathway. Cellular and Molecular Life Sciences , 73, 12 2016. doi: 10.1007/s00018-016-2297-8. Lars Lorch, Scott Sussex, Jonas Rothfuss, Andreas Krause, and Bernhard Schölkopf. Amortized inference for causal structure learning. Advances in Neural Information Processing Systems , 35: 13104–13118, 2022. Junwei Ma, Valentin Thomas, Rasa Hosseinzadeh, Alex Labach, Jesse Cresswell, Keyvan Golestan, Guangwei Yu, Anthony L Caterini, and Maks Volkovs. Tabdpt: Scaling tabular foundation models on real data. Advances in Neural Information Processing Systems , 38:172692–172722, 2026. Pierre-Alexandre Mattei and Jes Frellsen. Miwae: Deep generative modelling and imputation of incomplete data sets. In International conference on machine learning , pages 4413–4423. PMLR, 2019. Francesco Montagna, Nicoletta Noceti, Lorenzo Rosasco, Kun Zhang, and Francesco Locatello. Scalable causal discovery with score matching. In Conference on Causal Learning and Reasoning ,pages 752–771. PMLR, 2023a. Francesco Montagna, Nicoletta Noceti, Lorenzo Rosasco, Kun Zhang, and Francesco Locatello. Causal discovery with score matching on additive models with arbitrary noise. In Conference on Causal Learning and Reasoning , pages 726–751. PMLR, 2023b. Francesco Montagna et al. Demystifying amortized causal discovery with transformers. Transactions on Machine Learning Research , 2025. Joris M Mooij, Sara Magliacane, and Tom Claassen. Joint causal inference from multiple contexts. 
+
+Journal of Machine Learning Research , 21:1–108, 2020. Samuel Müller, Noah Hollmann, Sebastian Pineda Arango, Josif Grabocka, and Frank Hutter. Transformers can do bayesian inference. In International Conference on Learning Representations ,2022. Judea Pearl. Causality: Models, Reasoning and Inference . Cambridge University Press, 2009. Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. Tabicl: A tabular foundation model for in-context learning on large data. In ICML 2025-Forty-Second International Conference on Machine Learning , 2025. Alexander Reisach, Myriam Tami, Christof Seiler, Antoine Chambaz, and Sebastian Weichwald. A scale-invariant sorting criterion to find a causal order in additive noise models. Advances in Neural Information Processing Systems , 36:785–807, 2023. Jake Robertson, Arik Reuter, Siyuan Guo, Noah Hollmann, Frank Hutter, and Bernhard Schölkopf. Do-PFN: In-context learning for causal effect estimation. In The Thirty-ninth Annual Conference on Neural Information Processing Systems , 2025. URL https://openreview.net/forum?id= OaNbl9b56B .Paul Rolland, Volkan Cevher, Matthäus Kleindessner, Chris Russell, Dominik Janzing, Bernhard Schölkopf, and Francesco Locatello. Score matching enables causal discovery of nonlinear additive noise models. In International Conference on Machine Learning , pages 18741–18753. PMLR, 2022. Karen Sachs, Omar Perez, Dana Pe’er, Douglas Lauffenburger, and Garry Nolan. Causal protein-signaling networks derived from multiparameter single-cell data. Science , pages 523–9, 2005. 11 Shohei Shimizu, Patrik O Hoyer, Aapo Hyvärinen, Antti Kerminen, and Michael Jordan. A linear non-gaussian acyclic model for causal discovery. Journal of Machine Learning Research , 7(10), 2006. Peter Spirtes, Clark Glymour, and Richard Scheines. Causation, prediction, and search . MIT press, 2001. Daniel J Stekhoven and Peter Bühlmann. Missforest—non-parametric missing value imputation for mixed-type data. Bioinformatics , 28(1):112–118, 2012. Stef Van Buuren and Karin Groothuis-Oudshoorn. mice: Multivariate imputation by chained equations in r. Journal of statistical software , 45:1–67, 2011. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. Attention is all you need. Advances in neural information processing systems , 30, 2017. Igor Vivanco and Charles Sawyers. The phosphatidylinositol 3 kinase akt pathway in human cancer. 
+
+Nature reviews. Cancer , 2:489–501, 08 2002. doi: 10.1038/nrc839. Liang Wendong, Simon Buchholz, and Bernhard Schölkopf. Algorithmic causal structure emerging through compression. In Causal Learning and Reasoning , pages 201–242. PMLR, 2025. Sascha Xu, Sarah Mameche, and Jilles Vreeken. Information-theoretic causal discovery in topological order. In International Conference on Artificial Intelligence and Statistics , pages 2008–2016. PMLR, 2025. Jinsung Yoon, James Jordon, and Mihaela Schaar. Gain: Missing data imputation using generative adversarial nets. In International conference on machine learning , pages 5689–5698. PMLR, 2018. Kun Zhang and Aapo Hyvärinen. On the identifiability of the post-nonlinear causal model. In 
+
+Proceedings of the Twenty-Fifth Conference on Uncertainty in Artificial Intelligence , UAI ’09, page 647–655, Arlington, Virginia, USA, 2009. AUAI Press. ISBN 9780974903958. Xun Zheng, Bryon Aragam, Pradeep K Ravikumar, and Eric P Xing. Dags with no tears: Continuous optimization for structure learning. Advances in neural information processing systems , 31, 2018. 12 A Detailed Theoretical Results 
+
+A.1 Background and Assumptions 
+
+Our analysis builds on a set of standard assumptions commonly used in causal structure learning. We give a shortened overview below and refer to, e.g., Pearl [2009] for a detailed exposition. 
+
+(i) Causal Markov Condition. The joint distribution factorizes according to the true causal DAG 
+
+G⋆, i.e., each variable Xi is conditionally independent of its non-descendants given its parents pa i.
+
+(ii) Faithfulness. All conditional independencies in the data distribution are entailed by the causal DAG. That is, there are no independencies arising from exact cancellations of parameters. 
+
+(iii) Causal Sufficiency. There are no unobserved confounders: all common causes of observed variables are included in the model. 
+
+(iv) Additive Noise Model (ANM). Data are generated according to a structural causal model of the form 
+
+Xi = X
+
+> j∈pa i
+
+fij (Xj ) + Ni, (13) where the noise variables Ni are jointly independent and the functions fij are nonlinear and suffi-ciently smooth. Under these assumptions, causal directions become identifiable in many settings [Shimizu et al., 2006, Hoyer et al., 2008, Zhang and Hyvärinen, 2009, Bühlmann et al., 2014], and likelihood- or variance-based scores are consistent for recovering valid topological orders of the underlying DAG. 
+
+A.2 Identifiability of Causal Orders 
+
+Identifying the causal graph and thereby recovering a valid topological ordering is feasible for certain classes of functional mechanisms [Shimizu et al., 2006, Hoyer et al., 2008, Zhang and Hyvärinen, 2009]. Because our learning objective is based on minimizing conditional error variance, we focus on causal additive models [Bühlmann et al., 2014], where 
+
+Xi = X
+
+> j∈pa i
+
+fij (Xj ) + Ni, (14) with smooth functions fij and independent noise. Bühlmann et al. [2014] show that likelihood-/residual-variance–based scores consistently recover orders that respect the data-generating causal DAG. A simplified version of their main result reads as follows. 
+
+Theorem 2 (Order Consistency in Causal Additive Models; Bühlmann et al., 2014) . In a causal addi-tive model with non-linear functions and independent, non-zero noise, let ˆπ be the order minimizing residual variance. Then, 
+
+P(ˆ π ∈ Π0) → 1 as n → ∞ , (15) 
+
+where Π0 denotes the set of all topological orders of the true causal DAG. Any order violating a causal edge incurs a strictly larger expected residual variance. 
+
+For this particular class of ANMs, likelihood-optimal orders are consistent with the topological orders of the causal DAG. This property is key for T AB ORDER : maximizing the likelihood naturally guides the optimization toward orders that match the underlying causal structure, because conditioning on the true parents yields the overall lowest-variance conditionals. In this way, the likelihood itself provides a causal inductive bias, steering the learned order toward compatibility with the generative process, without requiring any explicit supervision or information about the causal graph. 
+
+A.3 Formal Proof of Theorem 1 Theorem 1 (Effect of Missingness on Likelihood Asymmetry) . Consider an additive noise model 
+
+Y = f (X)+ N with N ⊥⊥ X and Var( N ) > 0 and missingness indicator MX , M Y ∼ Bernoulli( q)
+
+with q ∈ (0 , 1) . Then, the difference in likelihood is amplified iff the forward signal-to-noise ratio 
+
+Var( f (X)) / Var( N ) exceeds the backwards ratio Var( E[X | Y ]) /E[Var( X | Y )] , i.e., 
+
+∆inc > ∆fix ⇐⇒ Var( f (X)) Var( N ) > Var( E[X | Y ]) 
+
+E[Var( X | Y )] . (12) 13 Proof. Fix a direction τ (either forward or backward). Let v0,τ be the residual variance when the parent is observed ( M = 0 ) and v1,τ when the parent is missing ( M = 1 ), with Pr( M = 1) = q.We first consider the log-likelihood under fixed variance versus missingness-aware variance. An optimal Gaussian conditional model that uses a single variance parameter must match the mask-averaged residual variance 
+
+¯σ2 
+
+> τ
+
+= (1 − q) v0,τ + q v 1,τ , (16) hence achieves population log-likelihood 
+
+L⋆τ, fix = − 12 log ¯ σ2 
+
+> τ
+
++ C, (17) for a constant C independent of τ . A model that distinguishes the two regimes fits them exactly and achieves 
+
+L⋆τ, inc = − 12
+
+(1 − q) log v0,τ + q log v1,τ 
+
+ + C. (18) 
+
+Likelihood Gain. We now characterize the improvement in log-likelihood when using missingness-aware variance. We define the (nonnegative) gain as 
+
+Gτ := L⋆τ, inc − L ⋆τ, fix . (19) By substituting the expressions above and canceling C, we obtain for the gain 
+
+Gτ = − 12
+
+(1 − q) log v0,τ + q log v1,τ 
+
+ + 12 log  (1 − q) v0,τ + q v 1,τ 
+
+.
+
+Our objective is now to express the gain in terms of the variance ratio Rτ := v1,τ /v 0,τ and the missingness rate q. We factor v0,τ out of the logarithm as 
+
+(1 − q) v0,τ + q v 1,τ = v0,τ 
+
+ (1 − q) + q R τ
+
+. (20) Therefore, we substitute for the logarithm of the single variance model 
+
+log  (1 − q) v0,τ + q v 1,τ 
+
+ = log v0,τ + log  (1 − q) + qR τ
+
+. (21) By expanding log v1,τ = log( v0,τ Rτ ) = log v0,τ + log Rτ and plugging both into Gτ yields 
+
+Gτ = − 12
+
+h
+
+(1 − q) log v0,τ + q log v0,τ + log Rτ
+
+i
+
++ 12
+
+h
+
+log v0,τ + log  (1 − q) + qR τ
+
+i
+
+(22) 
+
+= − 12
+
+h (1 − q) + q log v0,τ + q log Rτ
+
+i
+
++ 12
+
+h
+
+log v0,τ + log  (1 − q) + qR τ
+
+i
+
+(23) 
+
+= − 12
+
+h
+
+log v0,τ + q log Rτ
+
+i
+
++ 12
+
+h
+
+log v0,τ + log  (1 − q) + qR τ
+
+i
+
+(24) 
+
+= 12
+
+h
+
+log  (1 − q) + qR τ
+
+ − q log Rτ
+
+i
+
+. (25) Thus Gτ depends on (v0,τ , v 1,τ ) only through the ratio Rτ and the missingness rate q:
+
+Gτ = G(Rτ , q ) := 12
+
+h
+
+log  (1 − q) + qR τ
+
+ − q log Rτ
+
+i
+
+. (26) We now differentiate G(R, q ) with respect to R to establish monotonicity under masking rates of 
+
+q ∈ (0 , 1) 
+
+∂G ∂R = 12
+
+ q
+
+(1 − q) + qR − qR
+
+
+
+= q(1 − q)( R − 1) 2R (1 − q) + qR  . (27) If the ratio R > 1, then all terms in the numerator and denominator are positive, and therefore the derivative is positive, so G(R, q ) is strictly increasing in R on (1 , ∞), i.e. 
+
+R1 > R 2 > 1 = ⇒ G(R1, q ) > G (R2, q ). (28) The case when R = 1 corresponds to no gain, since then missingness does not affect the residual variance. This is only achievable in pathological cases (e.g., constant functions). We have now established general conditions under which the gain in one direction exceeds that in the other. We now move to provide explicit conditions in the ANM case. 14 Gain in Additive Noise Models. Let ∆fix := L⋆ 
+
+> fwd ,fix
+
+− L ⋆ 
+
+> bwd ,fix
+
+and ∆inc := L⋆ 
+
+> fwd ,inc
+
+− L ⋆
+
+> bwd ,inc
+
+.Then 
+
+∆inc − ∆fix =  L⋆ 
+
+> fwd ,inc
+
+− L ⋆
+
+> fwd ,fix
+
+ −  L⋆ 
+
+> bwd ,inc
+
+− L ⋆
+
+> bwd ,fix
+
+ = G(Rfwd , q ) − G(Rbwd , q ). (29) By strict monotonicity of G(·, q ) on R > 1,
+
+∆inc > ∆fix ⇐⇒ Rfwd > R bwd . (30) It remains to derive specific terms for Rfwd and Rbwd in ANMs. 
+
+Forward direction ( X → Y ): if X is observed, the optimal residual is N , so v0,fwd = Var( N ). If 
+
+X is missing, the optimal predictor is the mean of Y , so v1,fwd = Var( Y ) = Var( f (X)) + Var( N )
+
+(since N ⊥⊥ X). Thus 
+
+Rfwd = v1,fwd 
+
+v0,fwd 
+
+= Var( f (X)) + Var( N )Var( N ) = 1 + Var( f (X)) Var( N ) . (31) 
+
+Backward direction ( Y → X): if Y is observed, the optimal residual variance is v0,bwd =
+
+E[Var( X | Y )] . If Y is missing, the best predictor is the mean of X, so v1,bwd = Var( X) = 
+
+E[Var( X | Y )] + Var( E[X | Y ]) . Hence 
+
+Rbwd = v1,bwd 
+
+v0,bwd 
+
+= E[Var( X | Y )] + Var( E[X | Y ]) 
+
+E[Var( X | Y )] = 1 + Var( E[X | Y ]) 
+
+E[Var( X | Y )] . (32) Therefore Rfwd > R bwd is equivalent to 
+
+1 + Var( f (X)) Var( N ) > 1 + Var( E[X | Y ]) 
+
+E[Var( X | Y )] ⇐⇒ Var( f (X)) Var( N ) > Var( E[X | Y ]) 
+
+E[Var( X | Y )] . (33) Using Eq. (30) , we can thus conclude that the likelihood gap is amplified iff the forward signal-to-noise ratio exceeds the backward ratio, which proves the claim. 
+
+## B Model and Training Details 
+
+This section summarizes the model components and hyperparameters used in the experiments. We implement the attention mask as an additive bias to the attention scores before applying the softmax. Forward, we use Aij ·β, where β is annealed from −5.0 to −20 .0 during training; backward, we use the sigmoid form ˆAij = σ(( si − sj )/t ) where t is annealed from 1.0 to 0.1.• We embed every cell to a vector of dimension dembedding = 128 .• Transformer blocks: 6 repetitions for inducing order and 4 repetitions for cell prediction. We use Pytorch’s nn.TransformerEncoderLayer with GELU activations, feed-forward dimension of 2 · dembedding , dropout 0.1 and prenorm. • Optimization: Adam with base learning rate 2 × 10 −4, warmup ratio 0.03 and weight decay. • Batch size 4 with 25000 training steps for a total of 100,000 datasets seen. Datasets are generated with 5 − 10 variables each and 512 − 1024 samples. • Masking during training: random masking with masking_percentage =0.2. 
+
+## C Detailed Experimental Setups 
+
+C.1 Synthetic Data Generation 
+
+For each synthetic example, we sample the number of variables d ∼ Unif Int (5 , 10) and construct a directed acyclic graph (DAG) G = ( V, E ) over V = {1, . . . , d } by first drawing a random topological ordering and then sampling parent sets subject to an in-degree constraint |pa i| ∈ { 1, 2, 3}.
+
+Given G, we generate observations according to a nonlinear structural causal model (SCM). For each node i = 1 , . . . , d , variables are generated as 
+
+Xi = fi(Xpa i ) + εi,
+
+15 where the noise terms are mutually independent with σi ∼ Unif(0 .05 , 0.25) and εi ∼ N (0 , σ 2 
+
+> i
+
+).For root nodes ( pa i = ∅), we sample Xi from a mixture of simple base distributions: with probability 
+
+1/2, a scaled Gaussian Xi = sZ where Z ∼ N (0 , 1) and s ∼ Unif(0 .5, 2.0) ; otherwise, a scaled uniform Xi = ( U − 12 )a where U ∼ Unif(0 , 1) and a ∼ Unif(1 .0, 5.0) . Values are lightly clipped to avoid extreme outliers. In the non-additive setting, each structural function fi is a smooth nonlinear function of all parents jointly, sampled from an RBF Gaussian process prior approximated by random Fourier features (RFF). Let x ∈ RP denote the standardized parent vector, where P = |pa i|. We sample a lengthscale 
+
+ℓ ∼ exp  Unif(log 0 .3, log 1 .0) , and define 
+
+ϕ(x) = 
+
+r 2
+
+H cos  W ⊤x + b, W ∈ RP ×H , b ∈ RH ,
+
+with H = 256 features, Wjk ∼ N (0 , ℓ −2), and bk ∼ Unif(0 , 2π). With weights a ∼ N (0 , I H ), we set fi(x) = a⊤ϕ(x). This yields smooth nonlinear mechanisms that are explicitly non-additive across parents. Finally, for each DAG we draw batches with sequence length r ∼ Unif Int (512 , 1024) from the resulting SCM. 
+
+C.2 Real-World Datasets Sachs Datasets. We evaluate our method on the protein signaling dataset of Sachs et al. [2005]. The data consist of single-cell measurements of intracellular signaling proteins in primary human CD4 + T cells, obtained via multiparameter flow cytometry. The dataset contains measurements of 11 phosphoproteins and phospholipids ( Raf , Mek , Erk , Plcg ,
+
+PIP2 , PIP3 , PKC , PKA , Akt , Jnk , P38 ) under multiple experimental conditions, where as is common we disregard the condition b2camp and treat the condition cd3cd28 as the main reference condition, shown in the main experiments (Figure 4b). The conditions correspond to different combinations of external stimulation (e.g., TCR/CD28 activation and ICAM-2 co-stimulation) and inhibition (e.g., of MEK, PKC, PI3K, and Akt, as well as perturbations of phosphoinositide signaling). For the evaluations, we use a reduced Sachs signaling graph over the measured variables consistent with commonly used benchmark variants in prior causal discovery work [e.g., Zheng et al., 2018]. The used network closely follows the validated Sachs benchmark network distributed within the bnlearn 
+
+R package, replacing the edges Erk → Akt and PKC → PKA with the biologically established reduced-pathway edges PIP3 → Akt and PIP2 →PKC, both of which Sachs et al. [2005] identify as signaling influences. We show this graph in Figure 9, depicting the consensus graph we use in the experiments (a) and the activating resp. inhibiting perturbations (b). We show the correspondence of these interventions with the available experimental conditions in Table 1. Table 1: Interventional Conditions in the Data by Sachs et al. [2005]. Listed is each interventional condition and the type of perturbation applied therein. No. Type Condition Intervention 1 Activator cd3cd28 TCR/CD28 stimulation 2 Activator cd3cd28_icam2 TCR/CD28 + ICAM-2 3 Activator pma PKA/PKC-side activation proxy 4 Inhibitor cd3cd28_g0076 PKC inhibition 5 Inhibitor cd3cd28_aktinhib Akt inhibition 6 Inhibitor cd3cd28_u0126 MEK inhibition 7 Inhibitor cd3cd28_ly PI3K/PIP3/Akt-axis inhibition 8 Inhibitor cd3cd28_psitect PIP2/PIP3-axis perturbation 
+
+CC18 and CTR23. For reference, we include statistics on the real-world datasets CC18 and CTR23 used in Figure 6 in Table 2. 16 PKC               
+
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 12
+> 34
+> 5
+> 6
+> 78
+> (a) Causal DAG.
+> PKC
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 12
+> 34
+> 5
+> 6
+> 78
+> (b) Intervention Targets.
+
+Figure 9: Consensus Causal Structure for the Data by Sachs et al. [2005]. We show the causal DAG that we consider in the evaluations (a), as well as the effects of perturbations applied in each experimental condition (b). Dashed colored nodes correspond to activators (green) and inhibitors (blue), cf. Table 1. Table 2: Real-World Datasets for Predictive Tasks. CC18 and CTR23 datasets used in our experiments. suite dataset rows cols target_name CC18 GesturePhaseSegmentationProcessed 9873 33 Phase CC18 MiceProtein 552 78 class CC18 analcatdata_authorship 841 71 Author CC18 balance-scale 625 5 class CC18 banknote-authentication 1372 5 Class CC18 blood-transfusion-service-center 748 5 Class CC18 breast-w 683 10 Class CC18 churn 5000 17 class CC18 climate-model-simulation-crashes 540 19 outcome CC18 diabetes 768 9 class CC18 electricity 45312 8 class CC18 first-order-theorem-proving 6118 52 Class CC18 ilpd 583 10 Class CC18 jm1 10880 22 defects CC18 jungle_chess_2pcs_raw_endgame_complete 44819 7 class CC18 kc1 2109 22 defects CC18 kc2 522 22 problems CC18 mfeat-morphological 2000 7 class CC18 ozone-level-8hr 2534 73 Class CC18 pc1 1109 22 defects CC18 pc3 1563 38 cCC18 pc4 1458 38 cCC18 phoneme 5404 6 Class CC18 qsar-biodeg 1055 42 Class CC18 satimage 6430 37 class CC18 segment 2310 17 class CC18 spambase 4601 58 class CC18 steel-plates-fault 1941 28 target CC18 vehicle 846 19 Class Continued on next page 17 suite dataset rows cols target_name CC18 vowel 990 11 Class CC18 wall-robot-navigation 5456 25 Class CC18 wdbc 569 31 Class CC18 wilt 4839 6 class CTR23 QSAR_fish_toxicity 908 7 LC50 CTR23 abalone 4177 8 rings CTR23 airfoil_self_noise 1503 6 sound_pressure CTR23 california_housing 20640 9 medianHouseValue CTR23 cars 804 18 Price CTR23 concrete_compressive_strength 1030 9 strength CTR23 cpu_activity 8192 22 usr CTR23 energy_efficiency 768 9 heating_load CTR23 fifa 19178 28 wage_eur CTR23 forest_fires 517 11 area CTR23 geographical_origin_of_music 1059 117 latitude CTR23 grid_stability 10000 13 stab CTR23 kin8nm 8192 9 yCTR23 kings_county 21613 18 price CTR23 miami_housing 13932 16 SALE_PRC CTR23 naval_propulsion_plant 11934 15 gt_compressor_decay_ state_coefficient CTR23 physiochemical_protein 45730 10 RMSD CTR23 pumadyn32nh 8192 33 thetadd6 CTR23 red_wine 1599 12 quality CTR23 sarcos 48933 22 V22 CTR23 space_ga 3107 7 ln_votes_pop CTR23 superconductivity 21263 82 critical_temp CTR23 white_wine 4898 12 quality 
+
+## D Extended Experiments 
+
+D.1 Causal Order Inference on Synthetic Data (Fig. 4a) 
+
+Our baselines for causal order discovery include topological sorting methods that use regression together with regularized likelihood or AMC-based scores, C AM [Bühlmann et al., 2014] and TOPIC [Xu et al., 2025], or perform sorting based on the score of the data distribution using score matching, namely S CORE [Rolland et al., 2022] and extensions DAS [Montagna et al., 2023a] and NOGAM [Montagna et al., 2023b], and finally the neural method N OTEARS [Zheng et al., 2018]. We use their publicly available implementations, among others included in the causal-learn 
+
+resp. do-discover Python packages, using default parameter choices as suggested in the original implementations. A suite of methods, such as the classical PC algorithm [Spirtes et al., 2001], return only partially oriented structures (CPDAGs or PDAGs) that do not correspond to a unique causal order. Given this and the fact that they are often outperformed by the methods we consider here in terms of other structural metrics [e.g., Xu et al., 2025], hence we omit them from comparison. In the evaluation, we use batch sizes of |B| = 4 for nB = 30 batches, resulting in 120 runs per method. All methods return a fully oriented causal DAG with the exception of AVICI, which outputs edge probabilities from which we extract a causal order by thresholding. We assess the causal order learning using the topological divergence dTOP , which measures the discrepancy between the predicted causal order ˆπ and the ground-truth order implied by the true DAG 
+
+G⋆ by counting edge disagreements dTOP (ˆ π, G ⋆) = Pdi=1 
+
+P 
+
+> j:π(i)≥π(j)
+
+I[( i, j ) ∈ G⋆], with lower values indicating better alignment with the true causal ordering. We plot the topological divergence in Figure 10, including both additive mechanisms as well as non-additive mechanisms. 18 TOPIC 
+
+> CAM
+> TAB ORDER
+> AVICI
+> NOGAM
+> SCORE
+> DAS
+> NOTEARS
+> R2S RT
+
+0
+
+0.5
+
+1
+
+> dTOP
+
+NONLINEAR -A DDITIVE 
+
+> TOPIC
+> CAM
+> TAB ORDER
+> AVICI
+> NOGAM
+> SCORE
+> DAS
+> NOTEARS
+> R2S RT
+
+0
+
+0.5
+
+1
+
+NONLINEAR -N ONADDITIVE 
+
+Figure 10: Causal Order Inference (extends Fig. 4a). Shown is the average topological divergence (dTOP , lower is better) between ground truth and estimated causal orders on synthetic datasets, generated from a nonlinear additive noise model with functions drawn from a Gaussian process, with both a variant where functional mechanisms are additive (left), respectively non-additive (right), in the causal parents. 
+
+D.2 Causal Order Inference on Real-World Data (Fig. 4b) 
+
+We evaluate causal order discovery on the Sachs protein-signaling benchmark [Sachs et al., 2005], using the consensus graph in Figure 9. We focus on the cd3cd28 condition as the primary reference condition, since it corresponds to TCR/CD28 stimulation without additional inhibitors and is com-monly used as the closest proxy to an observational setting. We compare T AB ORDER again with the order-based and graph-based causal discovery baselines C AM , T OPIC , S CORE , DAS, N OGAM, NOTEARS , R2S RT , and AVICI. In addition to the reference condition reported in Figure 4b, the Sachs dataset contains multiple interventional conditions corresponding to targeted perturbations of signaling pathways. We therefore also evaluate T AB ORDER across all Sachs conditions, besides b2camp which we exclude from the analysis as in previous works [Mooij et al., 2020]. The full results are shown in the heatmap in Figure 11. Across most conditions, T AB ORDER obtains topological divergences in the range 0.12 –0.29 ,indicating that the inferred orders remain broadly compatible with the reference signaling graph under moderate interventions. The main exception is the PKC inhibition condition cd3cd28_g0076 ,where the divergence is substantially larger. This is biologically plausible, since PKC acts as a hub in the reduced graph and its perturbation can induce widespread changes across downstream MAPK and stress-signaling branches. Overall, these results suggest that T AB ORDER recovers meaningful causal order information not only on synthetic data, but also on a real biological benchmark with known intervention structure. In Section E.3, we further analyze how individual interventions affect the inferred orders through rank shifts and pairwise order flips. 
+
+D.3 Imputation Experiments (Fig. 6) 
+
+We use a variety of baselines for missing value imputation: conventional methods such as column mean (C OL MEAN ), KNN, and S OFT IMPUTE [Hastie et al., 2015] the iterative approaches ICE, MICE [Van Buuren and Groothuis-Oudshoorn, 2011], and M ISS FOREST [Stekhoven and Bühlmann, 2012], neural baselines GAIN [Yoon et al., 2018] and MIWAE [Mattei and Frellsen, 2019], and HYPER IMPUTE [Jarrett et al., 2022], which automatically selects the best imputation model per feature. Lastly, we compare to T AB IMPUTE [Feitelberg et al., 2025], a tabular foundation model specifically designed for missing value imputation. Due to memory constraints we use maximum batch sizes of 512 data points for T AB IMPUTE and limit the maximum number of variables to 15 , as larger tables caused out-of-memory errors on our 40 GB GPU hardware. We evaluate T AB ORDER ,which is fine-tuned on the training set, as well as the pretrained T AB ORDER without fine-tuning (denoted T AB ORDER -Pre). We plot the average rank of imputation and downstream prediction performance across all datasets and missingness rates in Figure 12. We observe that T AB ORDER is the most accurate imputation method for ≥ 40% missingness, outperforming all baselines including T AB IMPUTE . T AB ORDER -Pre 19 cd3cd28 
+
+> cd3cd28_aktinhib
+> cd3cd28_g0076
+> cd3cd28_icam2
+> cd3cd28_ly
+> cd3cd28_psitect
+> cd3cd28_u0126
+> cd3cd28icam2_aktinhib
+> cd3cd28icam2_g0076
+> cd3cd28icam2_ly
+> cd3cd28icam2_psit
+> cd3cd28icam2_u0126
+> pma
+> mean
+
+TAB ORDER 
+
+NOTEARS 
+
+TOPIC 
+
+R2S RT 
+
+CAM 
+
+SCORE 
+
+NOGAM 
+
+DAS 
+
+AVICI                                                                                                                      
+
+> 0.21 0.29 0.76 0.24 0.19 0.24 0.26 0.13 0.54 0.13 0.18 0.12 0.15 0.26
+> 0.59 0.59 0.29 0.59 0.71 0.59 0.53 0.41 0.47 0.53 0.47 0.59 0.65 0.54
+> 0.35 0.71 0.76 0.35 0.71 0.47 0.65 0.65 0.41 0.59 0.82 0.47 0.47 0.57
+> 0.35 0.29 0.35 0.41 0.41 0.18 0.59 0.47 0.41 0.29 0.35 0.29 0.41 0.37
+> 0.41 0.82 0.59 0.65 0.65 0.35 0.41 0.59 0.29 0.41 0.65 0.65 0.76 0.56
+> 0.53 0.47 0.35 0.53 0.53 0.47 0.35 0.53 0.53 0.53 0.53 0.53 0.53 0.49
+> 0.53 0.47 0.29 0.53 0.65 0.47 0.53 0.53 0.41 0.53 0.59 0.53 0.47 0.50
+> 0.59 0.71 0.35 0.59 0.53 0.65 0.47 0.53 0.59 0.53 0.47 0.53 0.53 0.54
+> 0.53 0.53 0.82 0.35 0.53 0.59 0.47 0.53 0.29 0.47 0.53 0.47 0.35 0.50
+
+Interventional Condition 
+
+> Causal (Order) Discovery Method
+
+Top. divergence ( dTOP , ↓) across experimental conditions [Sachs et al., 2005] 
+
+0
+
+0.2
+
+0.4
+
+0.6
+
+0.8
+
+> dTOP
+
+Figure 11: Causal Order Inference in Real-World Data (extends Fig. 4b). Shown is the average topological divergence ( dTOP , lower is better) between ground truth and estimated causal orders on the real-world causal discovery benchmark by Sachs et al. [2005]. For each available dataset c
+
+(vertical) corresponding to one experimental condition, we show each method (horizontal) and how the causal order ˆπc it discovers in dataset c differs from the consensus graph Gc0 . The consensus graph 
+
+Gc0 represents a summary of causal relationships that likely best represents the near-observational condition cd3cd28 . Figure 4b reports the corresponding bar-plot results for this condition. 
+
+0.10.20.30.40.5
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+Missing rate Avg. Rank TAB ORDER HYPER IMPUTE MISS FOREST ICE GAIN MICE SOFT IMPUTE KNN COL MEAN MIWAE TAB IMPUTE TAB ORDER -Pre 
+
+(a) CTR23 Imputation Rank 
+
+0.10.20.30.40.5
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+Missing rate 
+
+> Avg. Rank
+
+(b) CTR23 Prediction Rank 
+
+0.10.20.30.40.5
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+Missing rate 
+
+> Avg. Rank
+
+(c) CC18 Imputation Rank 
+
+0.10.20.30.40.5
+
+2
+
+4
+
+6
+
+8
+
+10 
+
+Missing rate 
+
+> Avg. Rank
+
+(d) CC18 Prediction Rank 
+
+Figure 12: Predictive Performance (extends Fig. 6). Shown is the average rank of imputation (a, c) and downstream prediction (b, d) performance on the CTR23 and CC18 datasets of all tested methods. 20 i.i.d. Intervened 
+
+0
+
+0.5
+
+1
+
+> MSE
+
+GP, hard 
+
+TAB ORDER XGB OOST TAB PFN 
+
+i.i.d. Intervened 
+
+0
+
+0.5
+
+1
+
+GP, mech. shift 
+
+i.i.d. Intervened 
+
+0
+
+0.5
+
+1
+
+Spline, hard 
+
+i.i.d. Intervened 
+
+0
+
+0.5
+
+1
+
+Spline, mech. shift 
+
+Figure 13: Intervention-Robust Prediction (extends Fig.7). Test MSE for predicting Y in the three-variable chain, split by mechanism family (GP vs. spline) and intervention type. does not perform competitively, indicating that fine-tuning or alternatively training on different synthetic data is necessary to achieve strong imputation performance. 
+
+D.4 Intervention-Robust Prediction (Fig. 7) 
+
+For this experiment, we generate data from a three-variable chain X → Y → Z. X is sampled from a standard normal distribution. Y is generated from an additive noise model Y = f (X) + NY where f
+
+is a GP sample with RBF kernel or spline function and NY ∼ N (0 , 0.12). Z is generated similarly as 
+
+Z = g(Y ) + NZ where g is an independent GP/spline and NZ ∼ N (0 , 0.12). We generate training datasets with 5000 samples and test datasets with 2500 samples. We use the default configuration of TAB PFN obtained via huggingface as well as the default XGBoost regressor with 100 estimators. We provide the full intervention MSE plots in Figure 13. 
+
+## E Additional Experiments 
+
+E.1 Assumptions: Additive Noise Assumption 
+
+We additionally investigate the robustness of T AB ORDER to violations of the additive noise as-sumption used in the theoretical analysis. Besides standard additive Gaussian noise, we evaluate heteroskedastic noise, where the noise variance depends on the parent variables, and multiplicative noise, where noise scales the signal directly. Table 3 reports the resulting topological divergence dTOP . For illustration, we include both models trained on additive (CAM) functional models as well as non-additive ones. While the additive GP variant performs best under additive and heteroskedastic noise, the non-additive GP variant achieves the strongest performance under multiplicative noise and overall remains more stable across noise forms. These results suggest that T AB ORDER is reasonably robust to moderate deviations from the classical additive noise setting. Table 3: Non-Additive Noise. Topological divergence ( dTOP ) under different noise forms in the SCM. Method Additive Noise Heteroskedastic Noise Multiplicative Noise TAB ORDER (additive GP) 0.202 0.190 0.232 TAB ORDER (non-additive GP) 0.179 0.180 0.172 
+
+E.2 Causal Order Inference: Scalability 
+
+We also demonstrate the scalability of T AB ORDER depending on (1) the number of features d and (2) sequence length of each batch n, otherwise using the standard data generating settings in Section C.1. For each configuration, we generate 25 batches of size 4 (a total of 100 graphs) and report averaged metrics. We vary either the number of variables d ∈ { 10 , 20 , 50 , 100 , 200 } at fixed sequence length 
+
+n = 1024 , or the sequence length n ∈ { 128 , 256 , 512 , 1024 , 2048 , 4096 } at fixed d = 10 . All experiments were run on a single NVIDIA A100 GPU (40GB VRAM) using PyTorch without distributed computation. 21 0
+
+0.5
+
+1
+
+> Top. Div.  dTOP
+
+Number of Features 
+
+TAB ORDER NOTEARS TOPIC 
+
+R2S RT CAM SCORE 
+
+NOGAM DAS AVICI 
+
+20 40 
+
+10 −1
+
+10 0
+
+10 1
+
+10 2
+
+10 3
+
+d    
+
+> Eval Wall (s)
+> (a) Varying the number of features dat n= 1024 .
+
+0
+
+0.5
+
+1
+
+Number of Samples 
+
+TAB ORDER NOTEARS TOPIC 
+
+R2S RT CAM SCORE 
+
+NOGAM DAS AVICI 
+
+500 1,000 1,500 2,000 
+
+10 −1
+
+10 0
+
+10 1
+
+10 2
+
+10 3
+
+n    
+
+> (b) Varying the sequence length nat d= 10 .
+
+Figure 14: Scalability (extends Fig. 4a). Shown are scalability comparisons for T AB ORDER and baselines on causal order discovery. This experiment uses the same data generation and evaluation as in Figure 4 and varies the number of features d (left) and samples n (right). Shaded regions show 95% confidence intervals. For C AM , only d < = 20 is shown as the available implementation did not reasonably scale to d = 50 .Figure 14 compares T AB ORDER against causal discovery baselines as the number of variables increases. We report topological divergence, evaluation runtime, and peak GPU memory usage. Some classical methods could not be evaluated beyond moderate dimensionalities due to computational limitations and are therefore omitted for larger d, in particular C AM for d = 50 (Figure 14 a). Table 4a and Table 4b provide detailed scalability statistics for T AB ORDER , including topological divergence, evaluation wall-clock time, and peak GPU memory usage. Computationally, runtime and memory usage scale predictably with problem size. Increasing the number of variables d has a substantially stronger effect on runtime and memory consumption than increasing the sequence length n. Despite being trained primarily on graphs with 5–10 variables, TAB ORDER generalizes to substantially larger settings up to d = 200 variables while maintaining moderate topological divergence. Order quality degrades gradually as d increases, reflecting the increasing difficulty of predicting globally consistent orders in high-dimensional settings. In contrast, the topological divergence remains comparatively stable across sequence lengths and slightly improves for larger n, suggesting that the model is not strongly data-limited in this regime and can extract sufficient causal signal from relatively short sequences. Inference of the causal order itself remains near-instant once the forward pass is completed. 
+
+E.3 Real-World Data: Analysis of Biological Intervention Effects 
+
+We additionally analyze how the causal orders inferred by T AB ORDER change across the interven-tional conditions of the Sachs signaling benchmark [Sachs et al., 2005]. Since the dataset contains 22 Table 4: Scalability . Shown are scalability metrics for T AB ORDER on causal order discovery. This experiment uses the same data generation and evaluation as in Figure 4 and varies the number of features respectively samples.         
+
+> (a) Scalability with Feature Size . Shown are scalability metrics for T AB ORDER when varying the number of features dat fixed sample size n= 1024 . Values are mean ±95% CI.
+
+d Top. div. ( dTOP ) Eval wall (s) Peak mem (GB) 10 0.204096 ± 0.0179684 0.0458761 ± 0.00885146 0.151067 ± 0.0000251987 
+
+20 0.236118 ± 0.0147771 0.0772007 ± 0.0137936 0.293119 ± 0.0000504157 
+
+50 0.264468 ± 0.0105586 0.185035 ± 0.0112221 0.981129 ± 0.000124748 
+
+100 0.322675 ± 0.00883721 0.321426 ± 0.00937954 2.92858 ± 0.000259869 
+
+200 0.421040 ± 0.00577534 0.663079 ± 0.00304706 8.55309 ± 0.000527340        
+
+> (b) Scalability with Sample Size . Shown are scalability metrics for T AB ORDER when varying the sample size
+> nat fixed number of features d= 10 . Values are mean ±95% CI.
+
+n Top. div. ( dTOP ) Eval wall (s) Peak mem (GB) 128 0.254131 ± 0.0207305 0.0205390 ± 0.00128916 0.0397114 ± 0.00000329479 
+
+256 0.229872 ± 0.0218224 0.0196907 ± 0.000812033 0.0560856 ± 0.00000642391 
+
+512 0.199187 ± 0.0206693 0.0268431 ± 0.00181145 0.0891907 ± 0.0000126822 
+
+1024 0.204096 ± 0.0179684 0.0458761 ± 0.00885146 0.151067 ± 0.0000251987 
+
+2048 0.197760 ± 0.0187264 0.149261 ± 0.00514696 0.278104 ± 0.0000855268 
+
+4096 0.172316 ± 0.0184299 0.209578 ± 0.0120166 0.532027 ± 0.000107620 
+
+multiple experimentally perturbed signaling conditions with known intervention targets, it provides a useful setting to study whether learned orderings reflect biologically meaningful system reorganization under intervention. 
+
+Setup. For each experimental condition c, we infer a topological ordering ˆπc over the 11 signaling variables and compare it to the reference condition c0 = cd3cd28 , which is commonly treated as the closest approximation to an observational baseline. The discovered orders and their topological divergences relative to the consensus graph are summarized in Table 5a and Table 5b. The evaluated conditions and intervention targets are summarized in Table 1, while the underlying consensus signaling graph is shown in Figure 9. 
+
+Metrics. Beyond the global topological divergence dTOP , we analyze two local measures of intervention-dependent reorganization. For each node X, we compute the rank shift as 
+
+∆c(X) = rank(ˆ πc, X ) − rank(ˆ πcd3cd28 , X ),
+
+where positive (negative) values indicate downstream (upstream) movement in the inferred order. We additionally compute pairwise order flips, i.e., changes in the relative ordering between node pairs across conditions. For each node, we aggregate the number of flipped pairwise relations relative to the baseline and normalize by (p − 1) to obtain a fraction in [0 , 1] .Figure 15 summarizes rank shifts and pairwise flips across all experimental conditions. Figure 16 visualizes pairwise flips on the consensus signaling graph, while Figure 17 shows some representative examples of how the inferred orders themselves change relative to the baseline condition. 
+
+Analysis. We observe clear intervention-dependent reorganizations in the inferred orders. MEK inhibition ( cd3cd28_u0126 ) induces strong changes involving Mek , Erk , and Raf , consistent with perturbation of the MAPK pathway and known feedback within the Raf–MEK–ERK cascade [Lake et al., 2016]. PKC inhibition ( cd3cd28_g0076 ) produces the strongest global reorganization across the signaling network, which is biologically plausible given the central role of PKC as a signaling hub 23 PKA 
+
+> PKC
+> Plcg
+> PIP3
+> Erk
+> Jnk
+> Akt
+> PIP2
+> P38
+> Mek
+> Raf
+
+cd3cd28 
+
+cd3cd28_icam2 
+
+cd3cd28_u0126 
+
+cd3cd28_aktinhib 
+
+cd3cd28icam2_aktinhib 
+
+cd3cd28_g0076 
+
+cd3cd28icam2_g0076 
+
+cd3cd28_ly 
+
+cd3cd28_psitect                                                                                           
+
+> +0 +0 +0 +0 +0 +0 +0 +0 +0 +0 +0
+> +0 +1 +1 -2 +4 +1 +1 -2 -4 +1 -1
+> +2 -1 +4 +4 -3 +0 +4 +2 +0 -6 -6
+> +0 +2 +0 +3 +3 -4 +2 -2 -4 +0 +0
+> +0 +1 -1 +0 +6 +2 +0 -2 -4 +0 -2
+> +8 +8 +2 +4 +6 -2 +0 -6 -8 -7 -5
+> +0 +9 +4 +4 +5 +3 -4 -4 -3 -8 -6
+> +0 +1 -1 +0 +0 +0 +1 +1 -2 +0 +0
+> +2 +3 -1 +0 +4 +1 -1 -7 -1 +1 -1
+
+Node 
+
+> Condition
+
+Rank shifts vs. cd3cd28 
+
+−5
+
+0
+
+5
+
+> Rank shift
+> PKA
+> PKC
+> Plcg
+> PIP3
+> Erk
+> Jnk
+> Akt
+> PIP2
+> P38
+> Mek
+> Raf
+
+cd3cd28 
+
+cd3cd28_icam2 
+
+cd3cd28_u0126 
+
+cd3cd28_aktinhib 
+
+cd3cd28icam2_aktinhib 
+
+cd3cd28_g0076 
+
+cd3cd28icam2_g0076 
+
+cd3cd28_ly 
+
+cd3cd28_psitect                                                                                           
+
+> 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0
+> 0.0 0.1 0.1 0.2 0.4 0.3 0.3 0.4 0.4 0.1 0.1
+> 0.2 0.1 0.4 0.4 0.3 0.4 0.4 0.4 0.4 0.6 0.6
+> 0.0 0.2 0.2 0.3 0.3 0.4 0.2 0.4 0.4 0.0 0.0
+> 0.0 0.1 0.1 0.0 0.6 0.4 0.4 0.4 0.4 0.2 0.2
+> 0.8 0.8 0.6 0.8 0.6 0.8 0.8 0.8 0.8 0.7 0.5
+> 0.0 0.9 0.6 0.6 0.7 0.7 0.6 0.6 0.7 0.8 0.6
+> 0.0 0.1 0.1 0.0 0.0 0.0 0.1 0.1 0.2 0.0 0.0
+> 0.2 0.3 0.3 0.2 0.4 0.3 0.3 0.7 0.1 0.1 0.1
+
+Node 
+
+> Condition
+
+Pairwise order flips vs. cd3cd28 
+
+0
+
+0.2
+
+0.4
+
+0.6
+
+0.8
+
+1
+
+> Fraction of pairwise order flips
+
+Figure 15: Changes in Inferred Orders under Intervention. The heatmaps compare the topological orders inferred by T AB ORDER across all Sachs experimental conditions relative to the reference condition cd3cd28 . Top: node-wise rank shifts, where positive (negative) values indicate downstream (upstream) movement in the inferred order compared to the baseline condition. Bottom: fraction of pairwise order flips involving each node, measuring how often its relative ordering with other variables changes compared to the baseline. Rows correspond to experimental conditions and columns to signaling variables. Strong localized changes are observed for targeted pathway perturbations such as MEK inhibition ( cd3cd28_u0126 ) and phosphoinositide perturbation ( cd3cd28_psitect ), while PKC inhibition ( cd3cd28_g0076 ) induces broader global reorganization across the signaling network. 24 PKC       
+
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 12
+> 34
+> 5
+> 6
+> 78
+
+(a) cd3cd28 .      
+
+> PKC
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 12
+> 34
+> 5
+> 6
+> 78
+
+(b) cd3cd28_u0126 .      
+
+> PKC
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 12
+> 34
+> 5
+> 6
+> 78
+
+(c) cd3cd28_g0076 .      
+
+> PKC
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 12
+> 34
+> 5
+> 6
+> 78
+
+(d) cd3cd28_psitect .      
+
+> PKC
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 12
+> 34
+> 5
+> 6
+> 78
+
+(e) cd3cd28_ly .      
+
+> PKC
+> PKA Raf Jnk
+> P38
+> Plc γ
+> PIP2 PIP3 Akt Erk
+> Mek
+> 12
+> 34
+> 5
+> 6
+> 78
+
+(f) cd3cd28_aktinhib .
+
+Figure 16: Changes in Inferred Orders under Intervention (extends Fig. 8). Nodes are colored by pairwise flip fraction relative to cd3cd28 ; edges show the fixed consensus graph. Activator and inhibitor markers indicate the corresponding experimental perturbations. Panel titles report the global topological divergence dTOP for T AB ORDER where available. [Isakov and Altman, 2002]. In contrast, phosphoinositide perturbation ( cd3cd28_psitect ) yields comparatively localized changes centered around PIP2 and nearby signaling components. Other interventions induce weaker or more diffuse effects. PI3K inhibition ( cd3cd28_ly ) produces only moderate changes involving PIP3 and Akt , while Akt inhibition ( cd3cd28_aktinhib ) affects a broader set of MAPK-related nodes rather than remaining localized to the Akt pathway itself [Vivanco and Sawyers, 2002]. Overall, the inferred orders reflect biologically meaningful intervention-dependent reorganizations of the signaling system, suggesting that T AB ORDER captures pathway-specific changes beyond purely observational dependencies. 25 cd3cd28 u0126  
+
+> dTOP = 0 .265
+> PKA
+> PKC
+> Plc γ
+> PIP3
+> Erk
+> Jnk
+> Akt
+> PIP2
+> P38
+> Mek
+> Raf
+> PKC
+> Erk
+> PKA
+> Mek
+> Raf
+> Jnk
+> Plc γ
+> PIP3
+> P38
+> PIP2
+> Akt
+
+(a) u0126 (MEK inhibition).   
+
+> cd3cd28 g0076
+> dTOP = 0 .765
+> PKA
+> PKC
+> Plc γ
+> PIP3
+> Erk
+> Jnk
+> Akt
+> PIP2
+> P38
+> Mek
+> Raf
+> P38
+> PIP2
+> Mek
+> Jnk
+> Plc γ
+> Raf
+> Akt
+> PIP3
+> PKA
+> PKC
+> Erk
+
+(b) g0076 (PKC inhibition).   
+
+> cd3cd28 psitect
+> dTOP = 0 .235
+> PKA
+> PKC
+> Plc γ
+> PIP3
+> Erk
+> Jnk
+> Akt
+> PIP2
+> P38
+> Mek
+> Raf
+> PIP2
+> Plc γ
+> PKA
+> PIP3
+> PKC
+> Akt
+> Jnk
+> P38
+> Erk
+> Raf
+> Mek
+
+(c) psitect (Phosphoinositide perturbation).   
+
+> cd3cd28 ly
+> dTOP = 0 .191
+> PKA
+> PKC
+> Plc γ
+> PIP3
+> Erk
+> Jnk
+> Akt
+> PIP2
+> P38
+> Mek
+> Raf
+> PKA
+> Plc γ
+> PKC
+> PIP3
+> Erk
+> Jnk
+> P38
+> Akt
+> PIP2
+> Mek
+> Raf
+
+(d) ly (PI3K inhibition). 
+
+Figure 17: Example Changes in Inferred Orders. Each panel compares the baseline order inferred by T AB ORDER on cd3cd28 to the order inferred under the intervention. Nodes in the baseline order are shown in light blue; nodes in the interventional condition are colored in dark blue depending on their pairwise flip fraction relative to the baseline. 26 Table 5: Real-World Causal Order Inference. Listed are the topological orders discovered by TAB ORDER in each experimental condition in the data by Sachs et al. [2005], as well as how they compare to the consensus network. 
+
+(a) Discovered Topological Orders per Condition. Listed are the topological orders ˆπc discovered in c by TAB ORDER in each experimental condition c.Condition c Topological order ˆπc
+
+cd3cd28 PKA ≺ PKC ≺ Plcg ≺ PIP3 ≺ Erk ≺ Jnk ≺ Akt ≺ PIP2 ≺ P38 ≺ Mek ≺ Raf 
+
+cd3cd28_icam2 PKA ≺ PIP3 ≺ PKC ≺ Plcg ≺ P38 ≺ PIP2 ≺ Jnk ≺ Akt ≺ Erk ≺ Raf ≺ Mek 
+
+cd3cd28_u0126 PKC ≺ Erk ≺ PKA ≺ Mek ≺ Raf ≺ Jnk ≺ Plcg ≺ PIP3 ≺ P38 ≺ PIP2 ≺ Akt 
+
+cd3cd28_aktinhib PKA ≺ Jnk ≺ Plcg ≺ PKC ≺ P38 ≺ PIP2 ≺ PIP3 ≺ Erk ≺ Akt ≺ Mek ≺ Raf 
+
+cd3cd28icam2_aktinhib PKA ≺ Plcg ≺ PKC ≺ PIP3 ≺ P38 ≺ PIP2 ≺ Akt ≺ Jnk ≺ Raf ≺ Mek ≺ Erk 
+
+cd3cd28_g0076 P38 ≺ PIP2 ≺ Mek ≺ Jnk ≺ Plcg ≺ Raf ≺ Akt ≺ PIP3 ≺ PKA ≺ PKC ≺ Erk 
+
+cd3cd28icam2_g0076 PKA ≺ Mek ≺ Akt ≺ PIP2 ≺ Raf ≺ P38 ≺ Plcg ≺ PIP3 ≺ Jnk ≺ Erk ≺ PKC 
+
+cd3cd28_ly PKA ≺ Plcg ≺ PKC ≺ PIP3 ≺ Erk ≺ Jnk ≺ P38 ≺ Akt ≺ PIP2 ≺ Mek ≺ Raf 
+
+cd3cd28_psitect PIP2 ≺ Plcg ≺ PKA ≺ PIP3 ≺ PKC ≺ Akt ≺ Jnk ≺ P38 ≺ Erk ≺ Raf ≺ Mek (b) Discovered Topological Orders per Condition vs. Consensus Graph. Edge Viol. and Top. Div. are edge violation counts, respectiveky the topological divergence dTOP , for the order ˆπc discovered T AB ORDER ,computed with respect to the consensus graph Gc0 .Condition c Edge viol. Div. Top. 
+
+cd3cd28 3 0.206 
+
+cd3cd28_icam2 3 0.235 
+
+cd3cd28_u0126 4 0.265 
+
+cd3cd28_aktinhib 5 0.294 
+
+cd3cd28icam2_aktinhib 1 0.132 
+
+cd3cd28_g0076 13 0.765 
+
+cd3cd28icam2_g0076 8 0.544 
+
+cd3cd28_ly 3 0.191 
+
+cd3cd28_psitect 3 0.235 
+
+27 F Discussion 
+
+F.1 Limitations 
+
+Further limitations include that T AB ORDER currently supports only real-valued features, and our theoretical guarantees apply primarily to settings such as additive noise models. Extending the approach to mixed-type data, and establishing corresponding theoretical properties, presents an important direction for future work. Our method also focuses on learning causal orderings rather than full causal graphs. Extending the framework to learn sparser or more fine-grained causal structures is an interesting future direction but may require additional inductive biases or assumptions. In practice, we observe that T AB ORDER pretrained solely on synthetic data does not yet match the performance of classical imputation methods, and fine-tuning on real-world datasets is required to achieve competitive results. Our current synthetic priors are best suited for generating mechanisms with known identifiability properties. Developing more realistic priors to improve pretraining quality is a particularly promising avenue for future research. 
+
+F.2 Broader impacts 
+
+TAB ORDER advances the state of the art in tabular foundation models by enabling them to infer and integrate causal structure directly from data without structural supervision. This principled approach can improve robustness to distribution shifts and interventions, but it also introduces risks when variable orderings are misidentified or causal assumptions are incomplete. The structural inferences produced by T AB ORDER are hypotheses rather than ground truth and therefore require further validation, especially in high-stakes applications. As with other causal discovery methods, we recommend that users carefully assess the validity of the inferred structure, incorporate domain expertise, and perform appropriate sensitivity analyses before deploying T AB ORDER in critical settings. 28
