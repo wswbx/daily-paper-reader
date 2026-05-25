@@ -6,77 +6,77 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-24
-- 运行时间：2026-05-24 20:38:39 UTC
+- 最新运行日期：2026-05-25
+- 运行时间：2026-05-25 20:58:34 UTC
 - 运行状态：成功
 - 本次总论文数：19
 - 精读区：7
 - 速读区：12
 
 ### 今日简报（AI）
-今日处理19篇论文（7精读12速读），重点聚焦AI驱动的科学发现与数据可视化。精读最高分9.0的两篇分别提出图自动发现简洁土壤水力函数和端到端AI协同科学家的可视化解决方案；速读8.0高分关注代码智能体记忆策略及离散分布符号密度估计。建议优先探索AI协同科学家框架与数据驱动建模方法，以提升复杂科学问题的自动化分析效率。
-- 详情：[/202605/24/README](/202605/24/README)
+今日收录19篇论文，精读7篇，聚焦AI自动化科研与符号回归优化。重点推荐《AutoResearch AI》推动AI驱动科学发现，以及《When Good Equations Get Bad Scores》改进符号回归参数优化。建议关注AI在科研自动化中的实际应用与参数调整技巧。
+- 详情：[/202605/25/README](/202605/25/README)
 
 ### 精读区论文标签
-1. [Graph-based automated discovery of concise soil hydraulic functions from data: beyond the Mualem - van Genuchten model](/202605/24/2605.19379v1-graph-based-automated-discovery-of-concise-soil-hydraulic-functions-from-data-beyond-the-mualem---van-genuchten-model)  
-   标签：评分：9.0/10、query:sr
-   evidence：基于图的自动发现简洁土壤水力函数，类似于符号回归
-2. [Toward AI VIS Co-Scientists: A General and End-to-End Agent Harness for Solving Complex Data Visualization Tasks](/202605/24/2605.21825v1-toward-ai-vis-co-scientists-a-general-and-end-to-end-agent-harness-for-solving-complex-data-visualization-tasks)  
+1. [AutoResearch AI: Towards AI-Powered Research Automation for Scientific Discovery](/202605/25/2605.23204v1-autoresearch-ai-towards-ai-powered-research-automation-for-scientific-discovery)  
    标签：评分：9.0/10、query:ai-scientific-discovery
-   evidence：AI合作科学家通过可视化数据分析助力科学发现
-3. [Discovery of Interpretable Surrogates via Agentic AI: Application to Gravitational Waves](/202605/24/2605.11280v1-discovery-of-interpretable-surrogates-via-agentic-ai-application-to-gravitational-waves)  
+   evidence：关于AI驱动科学发现研究自动化的综述
+2. [When Good Equations Get Bad Scores: Improving Symbolic Regression Through Better Parameter Optimization](/202605/25/2605.23272v1-when-good-equations-get-bad-scores-improving-symbolic-regression-through-better-parameter-optimization)  
+   标签：评分：9.0/10、query:sr
+   evidence：直接改进符号回归方法
+3. [PRAXIS: Case-distilled and code-verified AI agents for biological research](/202605/25/2605.23169v1-praxis-case-distilled-and-code-verified-ai-agents-for-biological-research)  
    标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：AI代理在物理学中可解释代理模型发现
-4. [CVEvolve: Autonomous Algorithm Discovery for Unstructured Scientific Data Processing](/202605/24/2605.11359v1-cvevolve-autonomous-algorithm-discovery-for-unstructured-scientific-data-processing)  
+   evidence：结合文献学习和案例蒸馏的生物研究AI智能体框架
+4. [Knowledge Inclusive Machine Learning for Disease Gene Prioritisation](/202605/25/biorxiv-10-64898-2026-04-29-721522-v2-knowledge-inclusive-machine-learning-for-disease-gene-prioritisation)  
    标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：针对科学数据处理的自主算法发现
-5. [Discovering interpretable low-dimensional dynamics using maximum entropy](/202605/24/2605.16724v1-discovering-interpretable-low-dimensional-dynamics-using-maximum-entropy)  
-   标签：评分：8.0/10、query:sr
-   evidence：发现可解释的符号动力学
-6. [LABO: LLM-Accelerated Bayesian Optimization through Broad Exploration and Selective Experimentation](/202605/24/2605.22054v1-labo-llm-accelerated-bayesian-optimization-through-broad-exploration-and-selective-experimentation)  
+   evidence：融合生物知识进行疾病基因发现
+5. [Do Larger Models Really Win in Drug Discovery?A Benchmark Assessment of Model Scaling in AI-Driven Molecular Property and Activity Prediction](/202605/25/biorxiv-10-64898-2026-04-29-721568-v2-do-larger-models-really-win-in-drug-discoverya-benchmark-assessment-of-model-scaling-in-ai-driven-molecular-property-and-activity-prediction)  
    标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：LLM加速贝叶斯优化用于科学探索
-7. [SciCore-Mol: Augmenting Large Language Models with Pluggable Molecular Cognition Modules](/202605/24/2605.22287v1-scicore-mol-augmenting-large-language-models-with-pluggable-molecular-cognition-modules)  
+   evidence：评估药物发现中AI模型缩放的基准
+6. [spatiAlytica: Viewer-Grounded Multimodal Agentic System for Interactive Spatial Omics Analysis](/202605/25/biorxiv-10-64898-2026-04-29-721735-v1-spatialytica-viewer-grounded-multimodal-agentic-system-for-interactive-spatial-omics-analysis)  
    标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：人工智能用于分子科学发现
+   evidence：用于空间组学分析的交互式AI智能体
+7. [Autoresearch Discovery of Interpretable Filter Rules for Antibody Binder Classification](/202605/25/biorxiv-10-64898-2026-05-05-723069-v2-autoresearch-discovery-of-interpretable-filter-rules-for-antibody-binder-classification)  
+   标签：评分：8.0/10、query:ai-scientific-discovery
+   evidence：自动研究循环用于抗体设计的科学发现
 
 ### 速读区论文标签
-1. [Evaluating Memory Condensation Strategies for Coding Agents in Data-Driven Scientific Discovery](/202605/24/2605.18854v1-evaluating-memory-condensation-strategies-for-coding-agents-in-data-driven-scientific-discovery)  
+1. [Rewriting protein alphabets with language models](/202605/25/biorxiv-10-1101-2025-11-27-690975-v3-rewriting-protein-alphabets-with-language-models)  
    标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：评估科学发现中编码代理的记忆策略
-2. [Symbolic Density Estimation for Discrete Distributions](/202605/24/2605.21813v1-symbolic-density-estimation-for-discrete-distributions)  
-   标签：评分：8.0/10、query:sr
-   evidence：符号密度估计类似于符号回归
-3. [TogoMCP: Natural Language Querying of Life-Science Knowledge Graphs via Schema-Guided LLMs and the Model Context Protocol](/202605/24/biorxiv-10-64898-2026-03-19-713030-v2-togomcp-natural-language-querying-of-life-science-knowledge-graphs-via-schema-guided-llms-and-the-model-context-protocol)  
+   evidence：蛋白质语言模型用于生物发现的工具
+2. [Interpreting Omics Data Analysis with Large Language Models for Disease Target and Drug Discovery](/202605/25/biorxiv-10-64898-2026-04-30-721768-v2-interpreting-omics-data-analysis-with-large-language-models-for-disease-target-and-drug-discovery)  
    标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：基于LLM的知识图谱查询用于生命科学发现
-4. [Discriminative Site-Directed Protein Engineering via Lightweight CASPE Platform](/202605/24/biorxiv-10-64898-2026-04-24-720551-v2-discriminative-site-directed-protein-engineering-via-lightweight-caspe-platform)  
+   evidence：大语言模型用于组学数据解释助力药物发现
+3. [Towards autonomous biology: Compiler-Verified Protocols as a Foundation for Real World AI Execution](/202605/25/biorxiv-10-64898-2026-05-05-720956-v1-towards-autonomous-biology-compiler-verified-protocols-as-a-foundation-for-real-world-ai-execution)  
    标签：评分：8.0/10、query:ai-scientific-discovery
-   evidence：使用蛋白质语言模型的轻量级蛋白质工程平台
-5. [SEMA-RAG: A Self-Evolving Multi-Agent Retrieval-Augmented Generation Framework for Medical Reasoning](/202605/24/2605.17101v1-sema-rag-a-self-evolving-multi-agent-retrieval-augmented-generation-framework-for-medical-reasoning)  
+   evidence：编译器验证协议实现生物学自主闭环发现
+4. [Culsma: A Formal Language for Laboratory Protocols](/202605/25/biorxiv-10-64898-2026-05-07-723509-v1-culsma-a-formal-language-for-laboratory-protocols)  
+   标签：评分：8.0/10、query:ai-scientific-discovery
+   evidence：实验室协议的形式化语言，支持AI驱动的科学
+5. [Learning from Drops: AI-Guided Integration of Liquid Biopsy Features in Cancer Studies](/202605/25/biorxiv-10-64898-2026-05-12-724535-v1-learning-from-drops-ai-guided-integration-of-liquid-biopsy-features-in-cancer-studies)  
+   标签：评分：8.0/10、query:ai-scientific-discovery
+   evidence：AI指导的液体活检特征整合用于癌症发现
+6. [SciAtlas: A Large-Scale Knowledge Graph for Automated Scientific Research](/202605/25/2605.22878v1-sciatlas-a-large-scale-knowledge-graph-for-automated-scientific-research)  
    标签：评分：7.0/10、query:ai-scientific-discovery
-   evidence：多智能体RAG用于医学推理，从临床数据中实现知识发现
-6. [Learning Causal Orderings for In-Context Tabular Prediction](/202605/24/2605.22335v1-learning-causal-orderings-for-in-context-tabular-prediction)  
+   evidence：用于自动化科学研究的学术知识图谱
+7. [An Isoform-Centric, Structure-Aware Framework for Protein Function Prediction and Evaluation, Instantiated in 3DisoDeepPF](/202605/25/biorxiv-10-64898-2026-04-24-720502-v2-an-isoform-centric-structure-aware-framework-for-protein-function-prediction-and-evaluation-instantiated-in-3disodeeppf)  
    标签：评分：7.0/10、query:ai-scientific-discovery
-   evidence：因果发现用于科学发现
-7. [IDEAL-Age: an interpretable deep learning framework for single-cell resolution profiling of immunological aging](/202605/24/biorxiv-10-64898-2025-12-25-696528-v2-ideal-age-an-interpretable-deep-learning-framework-for-single-cell-resolution-profiling-of-immunological-aging)  
+   evidence：深度学习预测蛋白质功能辅助生物发现
+8. [Cosine Similarity Conflates Clinically Distinct Cancer Variants: A Case for Typed-Graph Retrieval in Precision Oncology Decision Support](/202605/25/biorxiv-10-64898-2026-05-05-723102-v2-cosine-similarity-conflates-clinically-distinct-cancer-variants-a-case-for-typed-graph-retrieval-in-precision-oncology-decision-support)  
    标签：评分：7.0/10、query:ai-scientific-discovery
-   evidence：可解释深度学习用于单细胞分辨率的免疫老化发现
-8. [ChatDIA: A zero-shot large language model workflow for targeted analysis of data-independent acquisition mass spectrometry data](/202605/24/biorxiv-10-64898-2026-02-11-705360-v2-chatdia-a-zero-shot-large-language-model-workflow-for-targeted-analysis-of-data-independent-acquisition-mass-spectrometry-data)  
+   evidence：通过类型化图检索改进知识发现
+9. [sxLaep: a Lightweight and Accurate Enzyme Predictorfor High-throughput Mining of Metagenomic Sequences](/202605/25/biorxiv-10-64898-2026-05-06-723393-v2-sxlaep-a-lightweight-and-accurate-enzyme-predictorfor-high-throughput-mining-of-metagenomic-sequences)  
    标签：评分：7.0/10、query:ai-scientific-discovery
-   evidence：零样本大模型工作流用于靶向DIA蛋白质组学分析
-9. [Automated Kernel Discovery Towards Understanding High-dimensional Bayesian Optimization](/202605/24/2605.20249v1-automated-kernel-discovery-towards-understanding-high-dimensional-bayesian-optimization)  
+   evidence：用于宏基因组挖掘的轻量级酶预测器
+10. [Automated Kernel Discovery Towards Understanding High-dimensional Bayesian Optimization](/202605/25/2605.20249v1-automated-kernel-discovery-towards-understanding-high-dimensional-bayesian-optimization)  
    标签：评分：6.0/10、query:ai-scientific-discovery
-   evidence：大语言模型驱动的高维贝叶斯优化核发现
-10. [Divide-Prompt-Refine: a Training-Free, Structure-Aware Framework for Biomedical Abstract Generation](/202605/24/2605.20628v1-divide-prompt-refine-a-training-free-structure-aware-framework-for-biomedical-abstract-generation)  
+   evidence：LLM驱动的核发现用于高维贝叶斯优化
+11. [Mechanistic Identifiability Preservation for Hybrid Neural Differential Equations](/202605/25/biorxiv-10-1101-2024-12-08-627408-v2-mechanistic-identifiability-preservation-for-hybrid-neural-differential-equations)  
    标签：评分：6.0/10、query:ai-scientific-discovery
-   evidence：生物医学摘要生成，支持知识发现
-11. [Learning the Language of the Microbiome with Transformers](/202605/24/biorxiv-10-64898-2026-05-02-722381-v2-learning-the-language-of-the-microbiome-with-transformers)  
+   evidence：混合神经常微分方程保持机械可辨识性用于科学建模
+12. [Evaluating open LLMs for agentic analysis orchestration in a typical biomedical lab](/202605/25/biorxiv-10-64898-2026-05-13-724985-v1-evaluating-open-llms-for-agentic-analysis-orchestration-in-a-typical-biomedical-lab)  
    标签：评分：6.0/10、query:ai-scientific-discovery
-   evidence：微生物组科学中的自监督预训练
-12. [A unified benchmark of synthetic data generation for clinical transcriptomic cancer cohorts](/202605/24/biorxiv-10-64898-2026-05-13-724858-v1-a-unified-benchmark-of-synthetic-data-generation-for-clinical-transcriptomic-cancer-cohorts)  
-   标签：评分：6.0/10、query:ai-scientific-discovery
-   evidence：临床转录组学合成数据基准，AI用于精准肿瘤学
+   evidence：评估开源LLM用于智能体生物医学数据分析
 
 
 <div class="dpr-home-promo-card">
