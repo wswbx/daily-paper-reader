@@ -6,39 +6,27 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-27
-- 运行时间：2026-05-27 20:58:24 UTC
+- 最新运行日期：2026-05-28
+- 运行时间：2026-05-28 21:41:40 UTC
 - 运行状态：成功
-- 本次总论文数：5
-- 精读区：4
-- 速读区：1
+- 本次总论文数：2
+- 精读区：2
+- 速读区：0
 
 ### 今日简报（AI）
-今日精读4篇、速读1篇，重点覆盖强化学习策略蒸馏与类人机器人多技能生成控制。
-
-最值得关注的是10分精读《Less is More》提出的在线策略蒸馏提前停止机制，以及9分精读《MuGen》实现的人形机器人多技能生成控制器。
-
-建议优先精读这两篇论文，尤其是策略蒸馏的早停方法，可显著提升训练效率与模型泛化性。
-- 详情：[/202605/27/README](/202605/27/README)
+今日精读两篇蒸馏论文，聚焦自适应窗口与通过率加权策略。最值得关注的是ADWIN的自适应窗口机制可优化在线策略蒸馏效率，以及Restoring the Sweet Spot通过通过率加权自蒸馏增强LLM推理表现。建议深入研读ADWIN的算法细节，其方法论对动态环境下的知识蒸馏有重要启发。
+- 详情：[/202605/28/README](/202605/28/README)
 
 ### 精读区论文标签
-1. [Less is More: Early Stopping Rollout for On-Policy Distillation](/202605/27/2605.27028v1-less-is-more-early-stopping-rollout-for-on-policy-distillation)  
+1. [ADWIN: Adaptive Windows for Horizon-Aware On-Policy Distillation](/202605/28/2605.28396v1-adwin-adaptive-windows-for-horizon-aware-on-policy-distillation)  
    标签：评分：10.0/10、query:opd
-   evidence：在线策略蒸馏，提前停止Rollout
-2. [MuGen: Multi-Skill Generative Locomotion Controller for Humanoid Robots](/202605/27/2605.24592v1-mugen-multi-skill-generative-locomotion-controller-for-humanoid-robots)  
-   标签：评分：9.0/10、query:opd
    evidence：策略蒸馏方法
-3. [Not All Disagreement Is Learnable: Token Teachability in On-Policy Distillation](/202605/27/2605.26844v1-not-all-disagreement-is-learnable-token-teachability-in-on-policy-distillation)  
-   标签：评分：9.0/10、query:opd
-   evidence：直接研究在线策略蒸馏
-4. [Symbolic Regression via Latent Iterative Refinement](/202605/27/2605.27245v1-symbolic-regression-via-latent-iterative-refinement)  
-   标签：评分：9.0/10、query:sr
-   evidence：符号回归的潜在迭代优化方法
+2. [Restoring the Sweet Spot: Pass-Rate Weighted Self-Distillation for LLM Reasoning](/202605/28/2605.27765v1-restoring-the-sweet-spot-pass-rate-weighted-self-distillation-for-llm-reasoning)  
+   标签：评分：8.0/10、query:opd
+   evidence：LLM推理中的自蒸馏策略优化是一种用于强化学习的在策略蒸馏形式
 
 ### 速读区论文标签
-1. [Learning regime-dependent governing equations: A symbolic decision tree approach](/202605/27/2605.24275v1-learning-regime-dependent-governing-equations-a-symbolic-decision-tree-approach)  
-   标签：评分：7.0/10、query:sr
-   evidence：符号决策树发现区域依赖方程，与符号回归相关
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">
