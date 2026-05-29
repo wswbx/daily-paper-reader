@@ -6,24 +6,26 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-28
-- 运行时间：2026-05-28 21:41:40 UTC
+- 最新运行日期：2026-05-29
+- 运行时间：2026-05-29 21:37:27 UTC
 - 运行状态：成功
 - 本次总论文数：2
 - 精读区：2
 - 速读区：0
 
 ### 今日简报（AI）
-今日精读两篇蒸馏论文，聚焦自适应窗口与通过率加权策略。最值得关注的是ADWIN的自适应窗口机制可优化在线策略蒸馏效率，以及Restoring the Sweet Spot通过通过率加权自蒸馏增强LLM推理表现。建议深入研读ADWIN的算法细节，其方法论对动态环境下的知识蒸馏有重要启发。
-- 详情：[/202605/28/README](/202605/28/README)
+今日精读两篇9分论文，聚焦自适应在线策略蒸馏与大模型驱动的符号回归科学发现。
+最值得关注方向：ADWIN的自适应窗口蒸馏方法，以及Influence-Guided范式用LLM+细粒度反馈搜索方程。
+建议读者重点了解LLM如何辅助符号回归加速科学发现，或探索强化学习中动态窗口蒸馏的实用价值。
+- 详情：[/202605/29/README](/202605/29/README)
 
 ### 精读区论文标签
-1. [ADWIN: Adaptive Windows for Horizon-Aware On-Policy Distillation](/202605/28/2605.28396v1-adwin-adaptive-windows-for-horizon-aware-on-policy-distillation)  
-   标签：评分：10.0/10、query:opd
-   evidence：策略蒸馏方法
-2. [Restoring the Sweet Spot: Pass-Rate Weighted Self-Distillation for LLM Reasoning](/202605/28/2605.27765v1-restoring-the-sweet-spot-pass-rate-weighted-self-distillation-for-llm-reasoning)  
-   标签：评分：8.0/10、query:opd
-   evidence：LLM推理中的自蒸馏策略优化是一种用于强化学习的在策略蒸馏形式
+1. [ADWIN: Adaptive Windows for Horizon-Aware On-Policy Distillation](/202605/29/2605.28396v1-adwin-adaptive-windows-for-horizon-aware-on-policy-distillation)  
+   标签：评分：9.0/10、query:opd
+   evidence：提出了ADWIN，一个面向在线策略蒸馏的自适应窗口框架
+2. [Influence-Guided Symbolic Regression: Scientific Discovery via LLM-Driven Equation Search with Granular Feedback](/202605/29/2605.29184v1-influence-guided-symbolic-regression-scientific-discovery-via-llm-driven-equation-search-with-granular-feedback)  
+   标签：评分：9.0/10、query:sr
+   evidence：大语言模型驱动的符号回归及细粒度反馈
 
 ### 速读区论文标签
 - 本次无速读推荐。
