@@ -6,40 +6,38 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-01
-- 运行时间：2026-06-01 22:54:15 UTC
+- 最新运行日期：2026-06-02
+- 运行时间：2026-06-02 22:43:20 UTC
 - 运行状态：成功
-- 本次总论文数：6
+- 本次总论文数：5
 - 精读区：5
-- 速读区：1
+- 速读区：0
 
 ### 今日简报（AI）
-1) 今日精读5篇，聚焦两篇9分高质论文：监督保真度衰退应对与GPU加速进化算法。
-2) 最值得关注：在线蒸馏中教师能力衰退的解决方案，以及GPU并行化进化算法的设计分析。
-3) 建议优先精读上述两篇9分论文，速读可简要了解非加性可解释性方向。
-- 详情：[/202606/01/README](/202606/01/README)
+今日精读两篇满分论文，聚焦在线策略蒸馏与自蒸馏的温度内化创新。  
+最值得关注：策略蒸馏无需完整回滚即可生效，自蒸馏通过内化温度充当策略加热器。  
+建议普通读者从这两篇入手，探索强化学习训练效率的简化路径。
+- 详情：[/202606/02/README](/202606/02/README)
 
 ### 精读区论文标签
-1. [Your Teacher Can't Help You Here: Combating Supervision Fidelity Decay in On-Policy Distillation](/202606/01/2605.30833v1-your-teacher-cant-help-you-here-combating-supervision-fidelity-decay-in-on-policy-distillation)  
+1. [Are Full Rollouts Necessary for On-Policy Distillation?](/202606/02/2605.31490v2-are-full-rollouts-necessary-for-on-policy-distillation)  
+   标签：评分：10.0/10、query:opd
+   evidence：标题直接提到在策略蒸馏
+2. [Internalize the Temperature: On-Policy Self-Distillation as Policy Reheater for Reinforcement Learning](/202606/02/2606.00755v1-internalize-the-temperature-on-policy-self-distillation-as-policy-reheater-for-reinforcement-learning)  
    标签：评分：9.0/10、query:opd
-   evidence：直接处理强化学习中的在线策略蒸馏问题
-2. [GP-GOMEA with GPU-Based Fitness Evaluations: Design and Performance Analysis](/202606/01/2605.30954v1-gp-gomea-with-gpu-based-fitness-evaluations-design-and-performance-analysis)  
+   evidence：直接匹配在线策略蒸馏
+3. [Data Enrichment for Symbolic Regression Using Diffusion Models](/202606/02/2606.00988v1-data-enrichment-for-symbolic-regression-using-diffusion-models)  
    标签：评分：9.0/10、query:sr
-   evidence：基于GPU加速的符号回归进化算法
-3. [Learning Parametric Nitrogen Fertilizer Response Curves Using Neuro Symbolic Regression](/202606/01/2605.31276v1-learning-parametric-nitrogen-fertilizer-response-curves-using-neuro-symbolic-regression)  
-   标签：评分：9.0/10、query:sr
-   evidence：神经符号回归用于参数曲线学习
-4. [Are Full Rollouts Necessary for On-Policy Distillation?](/202606/01/2605.31490v1-are-full-rollouts-necessary-for-on-policy-distillation)  
+   evidence：符号回归数据增强扩散模型
+4. [OPD+: Rethinking the Advantage Design for On-Policy Distillation](/202606/02/2606.01039v1-opd-rethinking-the-advantage-design-for-on-policy-distillation)  
    标签：评分：9.0/10、query:opd
-   evidence：关于策略蒸馏效率的研究
-5. [Theoretical Foundations and Effective Algorithms for Policy-Aware Simulator Learning](/202606/01/2605.29032v1-theoretical-foundations-and-effective-algorithms-for-policy-aware-simulator-learning)  
-   标签：评分：8.0/10、query:opd
-   evidence：强化学习中的策略感知模拟器学习，与on-policy蒸馏相关
+   evidence：重新设计优势函数的在线策略蒸馏方法
+5. [Simultaneous Model-Based Evolution of Constants and Expression Structure in GP-GOMEA for Symbolic Regression](/202606/02/2606.02236v1-simultaneous-model-based-evolution-of-constants-and-expression-structure-in-gp-gomea-for-symbolic-regression)  
+   标签：评分：9.0/10、query:sr
+   evidence：直接涉及符号回归中的GP-GOMEA常数优化
 
 ### 速读区论文标签
-1. [Beyond Additive Decompositions: Interpretability Through Separability](/202606/01/2605.31200v1-beyond-additive-decompositions-interpretability-through-separability)  
-   标签：评分：6.0/10、query:sr
-   evidence：通过可分离的秩一乘积实现可解释回归，与符号回归目标相似
+- 本次无速读推荐。
 
 
 <div class="dpr-home-promo-card">
