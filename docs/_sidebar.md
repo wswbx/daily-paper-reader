@@ -1,6 +1,9 @@
 * <a class="dpr-sidebar-root-link" href="#/">首页</a>
 * <a class="dpr-sidebar-root-link dpr-sidebar-noactive-link" href="javascript:void(0)" data-dpr-hash="#/tutorial/README">使用教程</a>
 * Daily Papers
+  * 2026-06-05 <!--dpr-date:20260605-->
+    * 速读区
+      * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/202606/05/2605.31200v2-beyond-additive-decompositions-interpretability-through-separability" data-sidebar-item="{&quot;title&quot;: &quot;Beyond Additive Decompositions: Interpretability Through Separability&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2605.31200v2-beyond-additive-decompositions-interpretability-through-separability&quot;, &quot;score&quot;: &quot;7.0&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;sr&quot;}], &quot;evidence&quot;: &quot;可分离回归模型，提供类似符号回归的可解释性&quot;}">Beyond Additive Decompositions: Interpretability Through Separability</a>
   * 2026-06-04 <!--dpr-date:20260604-->
     * 精读区
       * <a class="dpr-sidebar-item-link dpr-sidebar-item-structured" href="#/202606/04/2606.04360v1-deliberate-evolution-agentic-reasoning-for-sample-efficient-symbolic-regression-with-llms" data-sidebar-item="{&quot;title&quot;: &quot;Deliberate Evolution: Agentic Reasoning for Sample-Efficient Symbolic Regression with LLMs&quot;, &quot;link&quot;: &quot;https://arxiv.org/abs/2606.04360v1-deliberate-evolution-agentic-reasoning-for-sample-efficient-symbolic-regression-with-llms&quot;, &quot;score&quot;: &quot;10.0&quot;, &quot;tags&quot;: [{&quot;kind&quot;: &quot;query&quot;, &quot;label&quot;: &quot;sr&quot;}], &quot;evidence&quot;: &quot;直接提出了使用LLM的符号回归新方法&quot;}">Deliberate Evolution: Agentic Reasoning for Sample-Efficient Symbolic Regression with LLMs</a>
