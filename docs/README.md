@@ -6,40 +6,32 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-09
-- 运行时间：2026-06-09 21:14:19 UTC
+- 最新运行日期：2026-06-10
+- 运行时间：2026-06-10 21:40:16 UTC
 - 运行状态：成功
-- 本次总论文数：6
-- 精读区：5
+- 本次总论文数：4
+- 精读区：3
 - 速读区：1
 
 ### 今日简报（AI）
-今日推荐两篇9分精读论文，聚焦LLM引导符号回归与编辑修正方法。  
-最值得关注符号回归领域的两大创新：结构引导的LLM进化搜索和基于编辑的修正策略。  
-建议深入阅读FunctionEvolve和EditSR，了解如何结合LLM提升符号回归精度。
-- 详情：[/202606/09/README](/202606/09/README)
+今日精读两篇高分论文，分别探索不确定性感知的符号回归与轨迹精炼蒸馏技术。最值得关注贝叶斯支持选择提升符号回归鲁棒性，以及利用轨迹精炼蒸馏优化模型性能。建议优先精读这两篇9分工作，尤其符号回归对可解释建模有启发。
+- 详情：[/202606/10/README](/202606/10/README)
 
 ### 精读区论文标签
-1. [FunctionEvolve: Structure-Guided Symbolic Regression with LLMs](/202606/09/2606.07704v1-functionevolve-structure-guided-symbolic-regression-with-llms)  
+1. [Uncertainty-Aware Symbolic Regression through Bayesian Support Selection](/202606/10/2606.04042v2-uncertainty-aware-symbolic-regression-through-bayesian-support-selection)  
    标签：评分：9.0/10、query:sr
-   evidence：基于LLM引导的表达式树进化的符号回归
-2. [EditSR: Enhancing Neural Symbolic Regression via Edit-based Rectification](/202606/09/2606.07915v1-editsr-enhancing-neural-symbolic-regression-via-edit-based-rectification)  
-   标签：评分：9.0/10、query:sr
-   evidence：神经符号回归与基于编辑的修正
-3. [Trajectory-Refined Distillation](/202606/09/2606.08432v1-trajectory-refined-distillation)  
+   evidence：符号回归不确定性
+2. [Trajectory-Refined Distillation](/202606/10/2606.08432v1-trajectory-refined-distillation)  
    标签：评分：9.0/10、query:opd
-   evidence：直接解决大型语言模型中的在线策略蒸馏问题
-4. [Stabilizing On-Policy Distillation for MLLM Reasoning with Global Normalization](/202606/09/2606.09091v1-stabilizing-on-policy-distillation-for-mllm-reasoning-with-global-normalization)  
-   标签：评分：9.0/10、query:opd
-   evidence：针对MLLM推理的全局归一化在线蒸馏
-5. [ERBench: A Benchmark and Testsuite for Equation Discovery Algorithms](/202606/09/2606.09276v1-erbench-a-benchmark-and-testsuite-for-equation-discovery-algorithms)  
+   evidence：在线蒸馏轨迹精炼
+3. [A constrained symbolic regression approach for Lyapunov function discovery](/202606/10/2606.10045v1-a-constrained-symbolic-regression-approach-for-lyapunov-function-discovery)  
    标签：评分：9.0/10、query:sr
-   evidence：使用符号回归进行方程发现的基准测试
+   evidence：使用约束符号回归发现李雅普诺夫函数
 
 ### 速读区论文标签
-1. [Auto-Relate: A Unified Approach to Discovering Reliable Functional Relationships Leveraging Statistical Tests](/202606/09/2606.07060v1-auto-relate-a-unified-approach-to-discovering-reliable-functional-relationships-leveraging-statistical-tests)  
+1. [Compile Once, Differentiate Everywhere: A Differentiable Meta-Circular Interpreter](/202606/10/2606.09930v1-compile-once-differentiate-everywhere-a-differentiable-meta-circular-interpreter)  
    标签：评分：6.0/10、query:sr
-   evidence：发现包括算术关系在内的功能关系，类似符号回归
+   evidence：可微分元循环解释器支持程序常数的梯度优化，可辅助符号回归任务。
 
 
 <div class="dpr-home-promo-card">
