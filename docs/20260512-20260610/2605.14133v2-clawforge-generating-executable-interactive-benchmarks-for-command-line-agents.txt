@@ -1,0 +1,876 @@
+Title: ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents
+
+URL Source: https://arxiv.org/pdf/2605.14133v2
+
+Published Time: Tue, 19 May 2026 02:45:27 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+Yuxiang Lai 1 * Peng Xia 1 * Haonian Ji 1 Kaiwen Xiong 1 Kaide Zeng 1 Jiaqi Liu 1 Fang Wu 2 Jike Zhong 3
+
+Zeyu Zheng 4 Cihang Xie 5 Huaxiu Yao 1
+
+# Abstract 
+
+Interactive agent benchmarks face a tension be-tween scalable construction and realistic work-flow evaluation. Hand-authored tasks are expen-sive to extend and revise, while static prompt evaluation misses failures that only appear when agents operate over persistent state. Existing in-teractive benchmarks have advanced agent evalu-ation significantly, but most initialize tasks from clean state and do not systematically test how agents handle pre-existing partial, stale, or con-flicting artifacts. We present ClawForge , a generator-backed benchmark framework for ex-ecutable command-line workflows under state conflict. The framework compiles scenario tem-plates, grounded slots, initialized state, reference trajectories, and validators into reproducible task specifications, and evaluates agents step by step over persistent workflow surfaces using normal-ized end state and observable side effects rather than exact trajectory matching. We instantiate this framework as the ClawForge-Bench (17 scenar-ios, 6 ability categories). Results across seven frontier models show that the best model reaches only 45.3% strict accuracy, wrong-state replace-ment remains below 17% for all models, and the widest model separation (17% to 90%) is driven by whether agents inspect existing state before acting. Partial-credit and step-efficiency analy-ses further reveal that many failures are near-miss closures rather than early breakdowns, and that models exhibit qualitatively different failure styles under state conflict. Code and Data: https:// github.com/aiming-lab/ClawForge 
+
+> *
+
+Equal contribution : <yxlai@unc.edu, pxia@cs.unc.edu >
+
+> 1
+
+University of North Carolina at Chapel Hill 2Stanford Univer-sity 3University of Southern California 4University of California, Berkeley 5University of California, Santa Cruz. Correspondence to: Huaxiu Yao <huaxiu@cs.unc.edu >.
+
+Preprint. May 19, 2026. 
+
+# 1. Introduction 
+
+As Large Language Model (LLM) agents (Yao et al., 2022; Shinn et al., 2023) move from one-shot prompting to persis-tent software workflows, benchmark construction becomes a bottleneck in its own right. A realistic workflow task is not just an instruction paired with an answer: it requires initialized state, valid and invalid pre-existing artifacts, ex-pected side effects, and executable validation logic. These ingredients must also be reproducible and auditable, because small changes in state can turn an apparently equivalent task into a different decision problem. Hand-authored interactive tasks are therefore expensive to scale and difficult to revise once coverage or fairness issues emerge (Zheng et al., 2023; Chang et al., 2024). This problem is especially acute for command-line agents (OpenClaw, 2026; Merrill et al., 2026; Research, 2026). Real workflows require agents to inspect task boards, inbox threads, calendars, files, runtime configura-tion, weather state, and messaging surfaces before deciding whether to add, preserve, repair, or replace state. Many failures only appear after execution: an agent may create a duplicate task, leave stale state unresolved, choose the wrong branch under conflicting evidence, or stop before the final side effect is produced. Existing interactive bench-marks have advanced agent evaluation significantly (Qin et al., 2023; Liu et al., 2023; Zhou et al., 2023), but most initialize tasks from clean state and do not systematically test how agents handle pre-existing partial, stale, or conflict-ing artifacts (Ye et al., 2026; Ji et al., 2026; Li et al., 2026a). This means a central part of workflow competence remains unmeasured: correctness that depends on the final state of a live environment, not only on a plausible textual answer or command sequence. To address these challenges, we present ClawForge , a generator-backed benchmark framework for executable state-conflict workflows. ClawForge compiles scenario templates, grounded variables, seeded environment state, reference trajectories, validators, and metadata into exe-cutable task specifications that can be regenerated, audited, and systematically extended. The execution environment then evaluates agents step by step through a CLI-style inter-1 
+
+> arXiv:2605.14133v2 [cs.AI] 18 May 2026 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents
+> Figure 1. ClawForge-Bench benchmark coverage. Inner: 6 primary ability categories. Outer: 17 scenario families within each category.
+
+face, scoring normalized workflow state and observable side effects rather than exact command imitation. Automatic generation is therefore not merely a scalable way to produce more tasks, but a mechanism for maintaining reproducibil-ity, extensibility, and evaluation consistency in interactive benchmarks. We instantiate this framework as ClawForge-Bench , a suite of 17 scenarios organized into six ability cate-gories (Figure 1) that begin from partial, stale, or conflicting workflow state and target realistic failure modes, including duplicate-aware completion, stale-state repair, wrong-state replacement, multi-source branch resolution, and full work-flow closure. In summary, our primary contribution is ClawForge, a generator-backed benchmark framework for evaluat-ing command-line agents under state-conflict workflows through automated task construction, stateful execution, and result-first evaluation. On ClawForge-Bench (17 scenarios spanning 6 ability categories), evaluations across seven fron-tier models show that the benchmark remains far from satu-rated: the best model achieves only 45.3% strict accuracy, wrong-state replacement stays below 17% for all models, and Interrupted Workflow Resume exhibits the largest model gap (17%–90%), largely depending on whether agents in-spect existing state before acting. Partial-credit and step-efficiency analyses further reveal that many failures arise from near-miss workflow closure rather than early break-downs, and that models exhibit qualitatively different failure behaviors under state conflict. 
+
+# 2. Task Generation and Execution 
+
+ClawForge is a generator-backed benchmark system rather than a prompt collection. The central design principle is that each generated task is an executable specification: the instruction, initialized state, reference trajectory, valida-tors, and metadata are produced together and then evaluated through the same stateful runtime. This section describes how tasks are generated (§2.1) and executed (§2.2); Sec-tion 3 defines the evaluation protocol. 
+
+2.1. Automated Benchmark Generation 
+
+Each task is generated from a scenario template together with grounded slots such as city, timezone, recipient, topic, due date, or calendar start time. This yields surface diversity while ensuring that every generated task maps back to a known scenario and can be evaluated by the same validators. As shown in Figure 2, the generation pipeline proceeds in stages: the scenario template is first grounded with concrete slot values, then a state-mode (mock or real) is selected 2ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+and the initial environment state is instantiated accordingly, followed by instruction rendering. The pipeline then syn-thesizes reference commands C⋆ by executing the intended workflow against the initialized state, generates validators that check required state transitions and side effects, and exports structured metadata (scenario family, primary abil-ity, prompt style). The final output is a complete executable task object. A generated task is an executable specification with five coupled components: 
+
+τ = ( x, S 0, C ⋆, E, m ), (1) where x is the instruction, S0 the initialized state, C⋆ a ref-erence command trajectory, E the executable checks, and m
+
+the structured metadata. Each τ is instantiated from a sce-nario family σ, a grounded slot assignment z, and a prompt policy p. The key design choice is that all five components are generated together from the same scenario specification, so the benchmark object is an executable workflow task rather than a prompt paired with an offline answer key. Because the generator is parameterized by scenario family, different scenarios can encode fundamentally different deci-sion structures rather than only surface wording variations. Some are gap-completion tasks, some require explicit repair or replacement of stale state, and others require branch se-lection across several information sources. This structural diversity lets the benchmark separate state conflict, closure efficiency, and multi-source decision failures rather than measuring only surface command following (Section 4). Once generated, each task is executed through the interac-tive environment described next. 
+
+2.2. Interactive Environment 
+
+Generated tasks are executed in a stateful environment rather than graded as static prompts. ClawForge exposes a CLI-style interface over workflow surfaces such as tasks, calen-dar, email, messaging, files, runtime configuration, weather, and recurring checks. An episode begins with a natural-language instruction. At each step, the agent emits one command, the environment executes it, and the next obser-vation is built from the resulting outputs and updated state. This execution-and-evaluation loop is summarized in Fig-ure 3, which makes explicit that execution and result-first grading happen inside one coupled episode rather than as separate offline stages. This loop is intentionally stateful: many failures only be-come visible after execution. An agent may recreate an ex-isting object, leave stale state untouched, update the wrong entity, or stop before the final side effect is produced. Claw-Forge therefore treats execution state as a first-class object in both rollout and evaluation (see Appendix B.1 for imple-mentation details). 
+
+Algorithm 1 ClawForge episode rollout  
+
+> 1:
+
+Load task T and copy base state S0 into an isolated state directory  
+
+> 2:
+
+Apply task-specific state overrides  
+
+> 3:
+
+Initialize routed backend B and evaluator E 
+
+> 4:
+
+Initialize observation o0 ← instruction, config, gateway status, command hints  
+
+> 5:
+
+for t = 1 , . . . , H do  
+
+> 6:
+
+if agent requests stop or emits DONE then  
+
+> 7:
+
+break  
+
+> 8:
+
+end if  
+
+> 9:
+
+Agent emits one command at 
+
+> 10:
+
+Execute at through routed backend B 
+
+> 11:
+
+Record stdout/stderr, exit code, command metadata, and inferred effects  
+
+> 12:
+
+Construct next observation ot 
+
+> 13:
+
+if at ∈ { done , exit , quit } or t = H or a rollout stopping rule triggers then  
+
+> 14:
+
+break  
+
+> 15:
+
+end if  
+
+> 16:
+
+end for  
+
+> 17:
+
+Build normalized evaluation state ˆS from command his-tory, effects, latest outputs, config, and merged backend state  
+
+> 18:
+
+Return final result E( ˆS, T )
+
+# 3. Evaluation Protocol 
+
+ClawForge evaluates tasks functionally rather than by com-paring surface-form trajectories. The evaluator operates over normalized execution state and explicit effect traces, so multiple trajectories can pass as long as they produce the required state transitions and observable side effects. Because tasks are generated together with their validators, evaluation stays tied to the same scenario semantics that produced the task. This result-first design lets us distin-guish between early breakdowns and structured near misses, such as preserving the wrong object, omitting one final side effect, or stopping after a partially correct repair. 
+
+3.1. Episode Rollout 
+
+Each episode is instantiated from a generated task contain-ing an instruction, initialized state, reference trajectory, exe-cutable checks, and structured metadata. On reset, the en-vironment materializes task state, applies any task-specific state overrides, initializes the selected backend, and builds the evaluator. The agent receives the instruction once and then emits exactly one command at each subsequent step. The environment executes that command, records state-changing effects, and returns the next observation. Algo-rithm 1 summarizes this interaction. When a rollout ends, the environment builds a normalized state ˆS from the com-3ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents       
+
+> Figure 2. Automated benchmark generation pipeline. Scenario templates are compiled into executable task specifications τ=(x, S 0, C ⋆,E, m )through slot grounding, state initialization, instruction rendering, reference command synthesis, and validator generation.
+
+mand history, accumulated effect traces, the latest process outputs, and the merged backend state. The evaluator then applies task-defined checks over ˆS rather than comparing against one exact command sequence. The default protocol uses multi mode, which routes commands to their corre-sponding workflow surfaces, with a configurable maximum step limit (see Appendix B.1 for additional runtime details). 
+
+3.2. Scoring 
+
+We report two complementary metrics. Let D denote the evaluation set. Strict full-pass accuracy counts the fraction of tasks where every required check passes: 
+
+Acc( D) = 1
+
+|D| 
+
+X 
+
+> τ∈D
+
+1[τ passes all required checks ]. (2) 
+
+Partial-credit score measures how much of each workflow was completed correctly. If a rollout has checks {ci}ni=1 ,each with score si ∈ [0 , 1] and weight wi > 0, the per-task score is 
+
+Score( ˆS) = 
+
+Pni=1 wisi
+
+Pni=1 wi
+
+, (3) and we report the average over D. The two metrics use the same evaluator but summarize it differently: strict accuracy rewards complete closure, while partial credit distinguishes near-miss failures from early breakdowns. When agents are served by external providers, ClawForge also records provider-side failures and provider-impacted tasks as sup-plementary records. 
+
+# 4. Experiments 
+
+We evaluate the ClawForge-Bench (17 scenarios, 362 tasks, two prompt styles) across seven frontier models. Our ex-periments address the following questions: (1) Is the bench-mark challenging and discriminative across strong models? (2) Which ability categories expose the largest capability gaps? (3) Do models differ in step efficiency, and does extra interaction translate into better closure? (4) Can partial-credit analysis separate near-miss failures from early stops? 
+
+4.1. Experimental Setup 
+
+All experiments follow the protocol in Section 3 using 
+
+multi mode, full interaction history, and a 25-step budget. We evaluate seven frontier models: Kimi-K2.5 (Team et al., 2026), GPT-5.2 (OpenAI, 2025a), OpenAI o3 (OpenAI, 2025c), GPT-5.3-Codex (OpenAI, 2025b), GPT-5.4 (Ope-nAI, 2026), Claude Sonnet 4.6 (Anthropic, 2026b), and Claude Opus 4.6 (Anthropic, 2026a). We report strict full-pass accuracy and partial-credit score as defined in Sec-tion 3.2. For Claude models, step counts in Table 4 are ag-gregated from partially overlapping trace subsets rather than a single uniform run; consequently, step-efficiency compar-isons with other models should be interpreted cautiously (see Appendix D.1). 
+
+4.2. Benchmark Results 
+
+The generated ClawForge-Bench snapshot separates abili-ties that matter in stateful execution. Tables 1 to 4 highlight three benchmark findings. First, aggregate performance remains far from saturation while still separating strong frontier models. Second, the hardest settings are not simply 4ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents    
+
+> Figure 3. Interactive execution and evaluation loop. Agents emit commands step by step; the environment executes them, records state changes and effect traces, and merges everything into a normalized evaluation state ˆSfor result-first scoring.
+
+long workflows, but scenarios involving stale state, incor-rect replacement, and incomplete workflow closure. Third, partial-credit and step-efficiency analyses expose meaning-ful behavioral differences—including near-miss comple-tion and inefficient execution—that strict pass/fail accuracy alone would largely obscure. 4.2.1. O VERALL BENCHMARK SEPARATION 
+
+Table 1 shows that the benchmark is neither saturated nor dominated by one model family: the best strict accuracy is 45.3% (Claude Opus 4.6) and the weakest is 35.9% (Kimi-K2.5). Strict accuracy and partial credit rank models differ-ently: GPT-5.3-Codex has the highest partial credit (0.8238) but ranks fourth on strict accuracy, while Claude Opus 4.6 leads strict accuracy but has lower partial credit (0.7868). This mismatch indicates that the suite distinguishes mod-els that steadily accumulate correct intermediate state from models that convert a smaller subset of trajectories into complete workflow closure. 4.2.2. A BILITY -L EVEL ANALYSIS 
+
+The clearest capability gap appears when the environment already contains partially wrong state (Table 2). State repair remains below 34% for all models, and Wrong-State Re-placement is the hardest shared slice: even the best model reaches only 17.4%, while several remain at 0.0%. These failures are qualitatively different from ordinary comple-tion errors, as the model must identify stale state, preserve valid parts, retire or replace invalid parts, and still finish downstream follow-through. Table 3 adds a partial-credit perspective. Many rollouts that fail the strict criterion still make substantial progress: for example, o3 leads state-repair score at 0.6757 despite only 33.7% strict accuracy. This reveals that many failures are near-miss closures rather than early breakdowns. Models often identify the correct repair direction but miss one final side effect or replacement step, or stop as if the workflow were already complete after only a partial repair. The score view supports a useful failure taxonomy: early breakdown, correct direction but incomplete closure, stale-state mishan-dling, and hallucinated completion. 4.2.3. S TEP EFFICIENCY 
+
+Table 4 pairs reference-trajectory length with average exe-cuted steps, revealing two distinct failure styles. GPT-5.3-Codex and GPT-5.4 are step-efficient, staying near eight executed steps on the longest reference buckets while main-taining strong accuracy. Claude Opus 4.6 achieves higher strict accuracy on several buckets but uses substantially more steps (16–20 average steps on GT-6 through GT-8 tasks). This distinguishes two failure modes: step-efficient but imperfect models reach compact, partially correct so-lutions but miss one final operation, while high-step low-conversion models keep exploring without improving clo-sure proportionally. In stateful workflows, extra steps are not neutral: they often correspond to repeated inspection, 5ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents     
+
+> Table 1. Main results (strict accuracy and partial score). All entries use multi mode with full interaction history and a 25-step budget.
+
+Model Strict Acc. Partial Credit Rank Claude Opus 4.6 (Anthropic, 2026a) 45.3% 0.7868 1
+
+Claude Sonnet 4.6 (Anthropic, 2026b) 42.3% 0.7473 2GPT-5.4 (OpenAI, 2026) 40.9% 0.8078 3GPT-5.3-Codex (OpenAI, 2025b) 40.6% 0.8238 4GPT-o3 (OpenAI, 2025c) 39.5% 0.8071 5GPT-5.2 (OpenAI, 2025a) 38.7% 0.7883 6Kimi-K2.5 (Team et al., 2026) 35.9% 0.7404 7  
+
+> Table 2. Strict accuracy (%) by primary ability. Each row is a disjoint partition of the task set.
+
+Primary Ability Kimi GPT Claude K2.5 5.2 o3 5.3-Codex 5.4 Sonnet 4.6 Opus 4.6 duplicate avoidance 95.0% 95.0% 95.0% 95.0% 100.0% 100.0% 95.0% gap completion 26.9% 42.3% 50.0% 51.9% 53.8% 78.8% 78.8% 
+
+information transfer 71.9% 62.5% 50.0% 71.9% 81.2% 59.4% 59.4% multi-source reasoning 31.4% 31.4% 25.6% 37.2% 40.7 % 39.5% 37.2% state repair 18.5% 26.1% 33.7% 13.0% 12.0% 17.4% 29.3% workflow completion 37.5% 35.0% 36.2% 42.5% 35.0% 28.8% 32.5% redundant list queries, or additional state mutations that do not improve the final evaluator-visible state. A benchmark that only reports pass/fail would collapse these two failure styles together; the combined accuracy/steps view shows that workflow competence involves not just whether a model eventually passes, but how efficiently it converts interaction budget into closure. 4.2.4. S CENARIO -L EVEL DISCRIMINATION 
+
+Figure 4 shows that the benchmark’s difficulty is not uni-form. At one extreme, Already-Done Skip and Duplicate Avoidance are near saturation (90–100% for most mod-els) and are not shown in the figure. At the other extreme, Wrong-State Replacement remains below 17% for all mod-els, and Release Gate stays between 3% and 17%, exposing persistent weaknesses in state-conflict resolution. Between these extremes, Interrupted Workflow Resume produces the widest model separation (17% to 90%), with Claude mod-els strongly outperforming GPT models on this slice. This per-scenario view demonstrates that the aggregate accuracy gap across models is not driven by uniform difficulty but by a small set of genuinely discriminative scenario families targeting state repair, replacement, and multi-step closure. 
+
+4.3. Case Studies 
+
+The aggregate results above show where models fail; this section illustrates how they fail through two representative tasks. We select these cases because they test complemen-tary state-conflict capabilities: one requires identifying and replacing incorrect state, while the other requires recogniz-ing and preserving correct state. Together they cover the two hardest judgment calls in stateful workflows. 
+
+Case 1: Wrong-State Replacement.                          
+
+> Task. hard decision workflow 261 : “Something in the Seattle release setup was staged wrong. Check whether the next step is stale, replace the stale next step with the correct version, and leave the next step and sync correctly set.”
+> Initial state. The environment contains a pre-existing task Existing Seattle release follow-up (low priority, stale). The replacement task and replacement sync are both missing.
+> Required actions. Inspect the seeded task, determine it is stale, retire it, create the corrected Seattle release replacement next step ,and add the matching
+> Seattle replacement release sync calendar event.
+> Evaluation. Strict evaluation requires both retirement of the stale task and creation of the replacement state. Adding the replacement without cleanup, or cleaning up without recreating the follow-through, both fail.
+
+This task tests whether agents can identify and remove in-correct state before creating its replacement. In Table 2, Wrong-State Replacement remains below 17% strict accu-racy for all models, making it the hardest shared slice in the benchmark. The partial-credit view (Table 3) reveals that many models identify the stale object and attempt a replacement, but fail to complete the full retirement-and-recreation cycle, leaving the workflow in an inconsistent 6ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents   
+
+> Table 3. Partial-credit score by primary ability. Higher scores indicate more complete workflow execution even when evaluation fails.
+
+Primary Ability Kimi GPT Claude K2.5 5.2 o3 5.3-Codex 5.4 Sonnet 4.6 Opus 4.6 duplicate avoidance 0.9930 0.9930 0.9790 0.9930 1.0000 1.0000 0.9930 gap completion 0.7681 0.8813 0.7898 0.8731 0.8735 0.8940 0.8810 information transfer 0.9300 0.9059 0.8897 0.9259 0.9572 0.9060 0.9140 multi-source reasoning 0.8303 0.8020 0.7536 0.8277 0.8206 0.7910 0.8670 
+
+state repair 0.4297 0.5886 0.6757 0.6755 0.6171 0.4130 0.4980 workflow completion 0.8435 0.8431 0.8431 0.8719 0.8605 0.8630 0.8690   
+
+> Table 4. Accuracy (%) and average executed steps by reference-trajectory length. Format: Acc / Steps. Shorter reference trajectories indicate structurally simpler workflows.
+
+GT Num Kimi GPT Claude K2.5 5.2 o3 5.3-Codex 5.4 Sonnet 4.6 Opus 4.6 
+
+5 steps 77 36.4 / 7.8 37.7 / 7.3 40.3 / 8.4 48.1 / 6.2 44.2 / 6.3 40.3 / 8.1 40.3 / 9.6 
+
+6 steps 115 41.7 / 10.3 40.0 / 10.7 49.6 / 10.3 42.6 / 6.6 39.1 / 8.1 38.3 / 14.5 46.1 / 16.6 
+
+7 steps 45 53.3 / 11.7 53.3 / 13.7 51.1 / 12.4 28.9 / 8.2 33.3 / 9.6 31.1 / 20.7 37.8 / 19.9 
+
+8 steps 53 22.6 / 10.8 41.5 / 10.7 39.6 / 11.9 43.4 / 8.5 50.9 / 8.8 69.8 / 17.7 67.9 / 15.8 
+
+9 steps 72 25.0 / 10.3 26.4 / 12.0 15.3 / 9.4 34.7 / 8.1 37.5 / 8.5 37.5 / 14.8 37.5 / 14.9 intermediate state. The common failure pattern is halluci-nated completion: the model retires the stale task but stops before creating the replacement, or creates the replacement but leaves the stale task in place. The second case tests the opposite judgment: rather than replacing wrong state, the agent must preserve correct state and only fill in what is missing. 
+
+Case 2: Interrupted Workflow Resume.                      
+
+> Task. hard decision workflow 307 : “The New York release work already has pieces in place. Check the current model, the next step on the board, and the sync on the calendar, finish the missing handoff file, send manager@example.com a recap, and leave the existing setup alone.”
+> Initial state. The environment already contains New York existing release next step ,New York existing release sync ,and drafted notes in
+> /ops/release-review.txt . Only the handoff file and recap email are missing.
+> Required actions. Resume from the partially completed state: read existing review notes, create the missing handoff file, preserve the staged task and sync (no duplicates), and send the recap email.
+> Evaluation. The evaluator accepts only resume-style closure: the existing task and sync must remain, no duplicates may be created, the handoff file must appear, and the recap email must be sent.
+
+This task produces the widest model separation in Figure 4: Claude Opus 4.6 reaches 90% while Kimi-K2.5 stays at 17%. The gap is driven by whether the model inspects existing state before acting or immediately begins creating objects from scratch. Models that skip the inspection step tend to recreate the task and calendar event, triggering the duplicate guard and failing despite producing otherwise correct artifacts. These two cases illustrate the central design principle of the benchmark. Static or clean-state benchmarks would score both tasks as straightforward multi-step completions. The difficulty arises entirely from pre-existing state: in Case 1 the agent must judge what is wrong and replace it, while in Case 2 it must judge what is right and leave it alone. This state-aware judgment is what the ClawForge-Bench is designed to measure. The full scenario catalog with additional examples is provided in Appendix F. 
+
+# 5. Related Work 
+
+Interactive agent benchmarks. Recent work increasingly evaluates LLM agents as sequential decision-makers that in-terleave reasoning, tool use, and action rather than produce a single final answer, with ReAct serving as a representative formulation (Yao et al., 2022). This shift has motivated exe-cutable or semi-executable benchmarks for software repair, web interaction, planning, and tool use, including SWE-bench (Jimenez et al., 2023), AgentBench (Liu et al., 2023), WebArena (Zhou et al., 2023), OSWorld (Xie et al., 2024), GAIA (Mialon et al., 2023), Claw-Eval (Ye et al., 2026), and ClawsBench (Li et al., 2026a). However, these benchmarks mainly evaluate task completion or trajectory correctness under clean or weakly constrained initial state, making it difficult to measure failures caused by stale state, conflicting artifacts, or incomplete workflows. 7ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents  
+
+> Figure 4. Per-scenario strict accuracy. Duplicate-aware scenarios are near saturation, while state repair, release gating, and wrong-state replacement remain challenging across all models.
+
+Persistent memory and long-horizon agents. A related line of work studies persistent memory and long-horizon behavior in LLM agents. Virtual-context approaches, includ-ing MEMGPT (Packer et al., 2023), MEMORYOS (Kang et al., 2025), and stream-based controllers (Wang et al., 2024), extend interaction length through memory pag-ing or context management. Structured and graph-based systems, such as MEMORYBANK (Zhong et al., 2024), MEM0 (Chhikara et al., 2025), ZEP (Rasmussen et al., 2025), A-MEM (Xu et al., 2025), and O-MEM (Wang et al., 2025), instead organize memory into persistent represen-tations for long-horizon retrieval and planning. These ap-proaches primarily improve memory mechanisms, but pro-vide limited evaluation of whether agents correctly preserve, repair, or update workflow state during extended execution. 
+
+Stateful workflow evaluation. ClawForge focuses on eval-uating these workflow-state behaviors directly. Unlike ex-isting benchmarks that mainly evaluate final task comple-tion or exact trajectories (Li et al., 2026b; Ye et al., 2026), ClawForge evaluates agents under persistent workflow state, where tasks may already be partially completed, inconsis-tent, stale, or duplicate-sensitive before execution begins. Agents must preserve valid state, detect outdated artifacts, resolve conflicting information, avoid redundant mutations, and complete workflows. Correctness is defined over nor-malized end states and observable side effects rather than exact action sequences, allowing multiple valid trajectories. 
+
+# 6. Conclusion 
+
+We presented ClawForge, a generator-backed benchmark framework that systematically evaluates command-line agents under state-conflict workflows through automated task construction, stateful execution, and result-first evalu-ation. The ClawForge-Bench (17 scenarios, 6 ability cate-gories) exposes failure modes that static or clean-state eval-uation cannot observe: wrong-state replacement remains below 17% strict accuracy for all seven frontier models evaluated, and the widest model separation (17% to 90% on Interrupted Workflow Resume) is driven by whether agents inspect existing state before acting. Partial-credit and step-efficiency analyses further reveal that models ex-hibit qualitatively different failure styles, from step-efficient near-miss closures to high-step low-conversion exploration. Expanding scenario coverage to new workflow domains and reducing the manual effort for defining scenario templates are promising directions for future work. 8ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+# References 
+
+Anthropic. The claude 3 model family: Opus, sonnet, haiku, 2024. https://www.anthropic.com/news/ claude-3-family .Anthropic. Introducing opus 4.6, 2026a. https://www. anthropic.com/news/claude-opus-4-6 .Anthropic. Introducing sonnect 4.6, 2026b. https://www. anthropic.com/news/claude-sonnet-4-6 .Chang, Y., Wang, X., Wang, J., Wu, Y., Yang, L., Zhu, K., Chen, H., Yi, X., Wang, C., Wang, Y., et al. A survey on evaluation of large language models. ACM transactions on intelligent systems and technology , 15(3):1–45, 2024. Chhikara, P., Khant, D., Aryan, S., Singh, T., and Yadav, D. Mem0: Building production-ready ai agents with scalable long-term memory. arXiv preprint arXiv:2504.19413 , 2025. Ji, H., Xiong, K., Han, S., Xia, P., Qiu, S., Zhou, Y., Liu, J., Li, J., Li, B., Zheng, Z., et al. Clawarena: Benchmarking ai agents in evolving information environments. arXiv preprint arXiv:2604.04202 , 2026. Jimenez, C. E., Yang, J., Wettig, A., Yao, S., Pei, K., Press, O., and Narasimhan, K. Swe-bench: Can language models resolve real-world github issues? arXiv preprint arXiv:2310.06770 ,2023. Kang, J., Ji, M., Zhao, Z., and Bai, T. Memory os of ai agent. In 
+
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pp. 25972–25981, 2025. Li, X., Choe, K. W., Liu, Y., Chen, X., Tao, C., You, B., Chen, W., Di, Z., Sun, J., Zheng, S., et al. Clawsbench: Evaluating capability and safety of llm productivity agents in simulated workspaces. arXiv preprint arXiv:2604.05172 , 2026a. Li, X., Li, M., Xu, D., Chiang, W.-L., Stoica, I., Hsieh, C.-J., and Zhou, T. Clawenvkit: Automatic environment generation for claw-like agents. arXiv preprint arXiv:2604.18543 , 2026b. Liu, X., Yu, H., Zhang, H., Xu, Y., Lei, X., Lai, H., Gu, Y., Ding, H., Men, K., Yang, K., et al. Agentbench: Evaluating llms as agents. arXiv preprint arXiv:2308.03688 , 2023. Merrill, M. A., Shaw, A. G., Carlini, N., Li, B., Raj, H., Bercovich, I., Shi, L., Shin, J. Y., Walshe, T., Buchanan, E. K., et al. Terminal-bench: Benchmarking agents on hard, realistic tasks in command line interfaces. arXiv preprint arXiv:2601.11868 ,2026. Mialon, G., Fourrier, C., Wolf, T., LeCun, Y., and Scialom, T. Gaia: a benchmark for general ai assistants. In The Twelfth International Conference on Learning Representations , 2023. OpenAI. Introducing gpt-5.2, 2025a. https://openai.com/ index/introducing-gpt-5-2 .OpenAI. Introducing gpt-5.3-codex, 2025b. https://openai. com/index/introducing-gpt-5-3-codex/ .OpenAI. Introducing o3 and o4-mini, 2025c. https://openai.com/index/ introducing-o3-and-o4-mini/ .OpenAI. Introducing gpt-5.4, 2026. https://openai.com/ index/introducing-gpt-5-4/ .OpenClaw. Openclaw — personal ai assistant, 2026. https: //github.com/openclaw/openclaw .Packer, C., Fang, V., Patil, S., Lin, K., Wooders, S., and Gonzalez, J. Memgpt: towards llms as operating systems. 2023. Qin, Y., Liang, S., Ye, Y., Zhu, K., Yan, L., Lu, Y., Lin, Y., Cong, X., Tang, X., Qian, B., et al. Toolllm: Facilitating large lan-guage models to master 16000+ real-world apis. arXiv preprint arXiv:2307.16789 , 2023. Rasmussen, P., Paliychuk, P., Beauvais, T., Ryan, J., and Chalef, D. Zep: a temporal knowledge graph architecture for agent memory. arXiv preprint arXiv:2501.13956 , 2025. Research, N. Hermes agent — the agent that grows with you, 2026. https://github.com/nousresearch/ hermes-agent .Shinn, N., Cassano, F., Gopinath, A., Narasimhan, K., and Yao, S. Reflexion: Language agents with verbal reinforcement learning. 
+
+Advances in Neural Information Processing Systems , 36:8634– 8652, 2023. Team, K., Bai, T., Bai, Y., Bao, Y., Cai, S., Cao, Y., Charles, Y., Che, H., Chen, C., Chen, G., et al. Kimi k2. 5: Visual agentic intelligence. arXiv preprint arXiv:2602.02276 , 2026. Wang, Y., Takanobu, R., Liang, Z., Mao, Y., Hu, Y., McAuley, J., and Wu, X. Mem-{\ alpha }: Learning memory construction via reinforcement learning. arXiv preprint arXiv:2509.25911 ,2025. Wang, Z. Z., Mao, J., Fried, D., and Neubig, G. Agent workflow memory. arXiv preprint arXiv:2409.07429 , 2024. Xie, T., Zhang, D., Chen, J., Li, X., Zhao, S., Cao, R., Hua, T. J., Cheng, Z., Shin, D., Lei, F., et al. Osworld: Benchmarking multimodal agents for open-ended tasks in real computer envi-ronments. Advances in Neural Information Processing Systems ,37:52040–52094, 2024. Xu, W., Liang, Z., Mei, K., Gao, H., Tan, J., and Zhang, Y. A-mem: Agentic memory for llm agents. arXiv preprint arXiv:2502.12110 , 2025. Yao, S., Zhao, J., Yu, D., Du, N., Shafran, I., Narasimhan, K. R., and Cao, Y. React: Synergizing reasoning and acting in lan-guage models. In The eleventh international conference on learning representations , 2022. Ye, B., Li, R., Yang, Q., Liu, Y., Yao, L., Lv, H., Xie, Z., An, C., Li, L., Kong, L., et al. Claw-eval: Toward trustworthy evaluation of autonomous agents. arXiv preprint arXiv:2604.06132 , 2026. Zheng, L., Chiang, W.-L., Sheng, Y., Zhuang, S., Wu, Z., Zhuang, Y., Lin, Z., Li, Z., Li, D., Xing, E., et al. Judging llm-as-a-judge with mt-bench and chatbot arena. Advances in neural information processing systems , 36:46595–46623, 2023. Zhong, W., Guo, L., Gao, Q., Ye, H., and Wang, Y. Memorybank: Enhancing large language models with long-term memory. In 
+
+Proceedings of the AAAI conference on artificial intelligence ,volume 38, pp. 19724–19731, 2024. 
+
+9ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+Zhou, S., Xu, F. F., Zhu, H., Zhou, X., Lo, R., Sridhar, A., Cheng, X., Ou, T., Bisk, Y., Fried, D., et al. Webarena: A realistic web environment for building autonomous agents. arXiv preprint arXiv:2307.13854 , 2023. 
+
+10 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+# A. Benchmark Construction 
+
+This section documents the scenario taxonomy, generated task objects, and implementation details that support reproducibility. We first present the full scenario inventory (§A.1), then show a representative task instruction card (§A.2), and finally describe the implementation contract (§A.3). 
+
+A.1. Scenario Inventory 
+
+Table 5 lists all 17 scenario families in the ClawForge-Bench, together with their primary ability classification, overlapping ability tags, and a brief description of the required workflow. 
+
+A.2. Example Task Instruction Card 
+
+To make the generated task format concrete, we show one complete instruction card from a gap-completion scenario. This illustrates how the five task components (instruction, initial state, required actions, checks, and difficulty) are coupled in a single specification. 
+
+Task ID. hard decision workflow 204 (completion gap followthrough )
+
+Primary ability. Gap completion 
+
+Ability tags. gap completion , state inspection , workflow completion 
+
+Instruction. “I already have part of the Berlin release work in motion, and the review sync is the missing piece. Review what’s there, read the release notes, refresh the handoff file, leave the next step on the board in place and add only the missing sync on the calendar, and leave the rest alone.” 
+
+Initial visible state. The initial state already contains a pending board item for the Berlin release next step and a drafted release-review note. The calendar sync is still missing, and the handoff artifact needs to be created or refreshed. This means the task does not begin from an empty workspace: the agent must preserve valid state while identifying the one missing closure path. 
+
+Required correction and closure. A semantically correct completion must keep the existing Berlin next-step task in place, create or refresh a handoff artifact, and add the missing Berlin release sync on the calendar. It must not create a duplicate next-step task. The reference trajectory uses the benchmark date anchor for Europe/Berlin, but the evaluator accepts alternative command traces as long as the final state closes the workflow without introducing duplicate board work. 
+
+Representative required checks. This task mixes state-preservation and side-effect checks: the existing Berlin board item must still be present; a handoff-style file creation or refresh effect must be visible; no duplicate next-step task may be created; and the missing calendar sync must exist by the end of the rollout. 
+
+Why this task is hard. The task is easy to understand semantically but easy to fail procedurally. Models can recognize that a review sync is missing and still fail by recreating the board item, omitting the handoff refresh, or stopping after scheduling the sync and incorrectly assuming the workflow is complete. 
+
+A.3. Implementation Detail 
+
+This subsection describes how the task specification above is realized at runtime. At task level, each 
+
+hard decision workflow episode is an executable specification rather than a bare prompt. The specification bundles five pieces of information: a natural-language instruction, scenario metadata, task-specific initial state overrides ,a reference command trajectory, and typed evaluation checks. In practice, the task object also stores instruction variants, prompt style, realism and scenario tags, public or hidden task notes, and provider-related metadata used for analysis. At reset time, the environment loads a base state, applies the overrides declared by the task, initializes the backend for that state direc-tory, and then exposes the instruction plus compact execution hints to the agent. For hard decision workflow 204 ,the override layer inserts an already-existing Berlin next-step task and a drafted release-review note, so the evaluator can later distinguish correct gap completion from unnecessary re-creation. During rollout, the environment records each command, its stdout/stderr, exit code, and inferred effects such as created 11 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+Table 5. Full scenario inventory for hard decision workflow . Scenario names are rendered in paper form rather than as generator slugs; release counts are omitted because the generator allows per-scenario counts to be reconfigured. Scenario Primary Ability Ability Tags Description Inbox Information transfer information transfer, workflow completion Close an inbox thread, inspect board and calendar state, and add only the missing follow-up. Release Recovery Runbook Workflow comple-tion workflow completion, schedule inference Restore a partially staged release review by switching models and filling the miss-ing review artifact. Channel Incident Recovery Information transfer information transfer, workflow completion Send a channel update, verify tracking on the board, and add only the missing incident next step. Daily Operations Commitment Loop Workflow comple-tion workflow completion, schedule inference Use today’s schedule plus board and cron state to fill the single missing daily operations commitment. Release Gate Workflow comple-tion workflow completion, state in-spection Inspect model, board, and calendar state before closing the release gate cleanly. Delivery Update Information transfer information transfer, workflow completion Repair a delivery path, avoid duplicate board work, and choose the right live or async closure. Operations Review Workflow comple-tion workflow completion, schedule inference Use forecast and schedule context to fin-ish the missing operations setup before placing the review. Existing State Gap completion gap completion, state inspection, duplicate avoidance, workflow completion Audit a partially completed recurring setup and fill exactly one missing piece without rebuilding the rest. Duplicate Avoidance Duplicate avoidance duplicate avoidance, completion recognition Preserve existing operations setup and choose the correct primary or backup review block. Multi-Source Decision Multi-source reason-ing multi-source reasoning, branch resolution, workflow completion Combine email, forecast, and calendar evidence to decide between live and async closure. State Repair State repair state repair, state inspection, workflow completion Detect one stale release artifact and re-pair it while preserving the rest of the setup. Completion Gap Gap completion gap completion, state inspection, workflow completion Inspect a partial release setup and add only the missing task and/or sync. Branch Resolution Multi-source reason-ing multi-source reasoning, branch resolution, duplicate avoidance Resolve a live-vs-async branch from forecast and calendar context without duplicating setup. Already Done Skip Duplicate avoidance duplicate avoidance, completion recognition, information transfer Verify that a release setup is already cor-rect and send a recap without rebuilding anything. Wrong-State Replacement State repair state repair, replacement plan-ning, workflow completion Replace one wrongly staged artifact with the correct release state and pre-serve the valid pieces. Interrupted Workflow Resume Gap completion gap completion, state inspection, duplicate avoidance, workflow completion Resume partially completed release work, finish the missing artifact, and avoid recreating existing state. Contradictory Source Resolution Multi-source reason-ing multi-source reasoning, branch resolution, workflow completion, state inspection Reconcile conflicting signals across sources before choosing the correct clo-sure path. 
+
+12 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+files, completed tasks, or created calendar events. The rollout record therefore preserves not only what the agent typed, but what externally visible state transitions were actually produced. Scoring is then performed over a normalized result state rather than over exact trajectory imitation. This design matters for hard workflows because many tasks require a sequence of decisions before any mutation is safe: the agent often has to determine whether the relevant object already exists, whether it is stale, whether it should be preserved, and only then whether the correct action is to add, update, or replace state. In other words, the benchmark object is not just “what command should be typed next,” but “what workflow state should exist when the rollout is over.” The default benchmark runtime is multi mode, which uses explicit routing rather than one monolithic executor. Command families such as openclaw , calendar , email , tasks , weather , file , and curl are dispatched to their corre-sponding skills or adapters. This routing layer is important for reproducibility because it preserves cross-surface interaction while keeping the execution contract stable across benchmark runs. One useful way to think about the implementation is as a four-stage contract: (1) construct initialized workflow state, (2) execute one command at a time under routed backends, (3) infer explicit state-changing effects from those executions, and (4) merge the resulting traces into evaluator-facing state. The appendix carries these details so that the main paper can focus on what the benchmark reveals about model behavior rather than on runtime mechanics alone. 
+
+# B. Evaluation Details 
+
+This section shows how result-first scoring works in practice. We first describe the execution modes and evaluator internals (§B.1), then present representative evaluation checks (§B.2), and finally explain how to read the full scenario examples (§B.3). 
+
+B.1. Execution Mode and Evaluator Details 
+
+Algorithm 2 gives the episode-level rollout contract used by the main experiments. 
+
+Algorithm 2 ClawForge episode rollout (detailed)  
+
+> 1:
+
+Load task T , base state S0, and backend B 
+
+> 2:
+
+Apply task-specific state overrides and initialize evaluator E 
+
+> 3:
+
+Initialize observation o0 ← instruction, config, gateway status, command hints  
+
+> 4:
+
+for t = 1 , . . . , H do  
+
+> 5:
+
+Agent emits one command at 
+
+> 6:
+
+Execute at through backend B 
+
+> 7:
+
+Update backend state and append inferred effects  
+
+> 8:
+
+Construct next observation ot 
+
+> 9:
+
+if at ∈ { done , exit , quit } or t = H then  
+
+> 10:
+
+break  
+
+> 11:
+
+end if  
+
+> 12:
+
+end for  
+
+> 13:
+
+Build normalized evaluation state ˆS 
+
+> 14:
+
+Return final result E( ˆS, T )
+
+ClawForge supports four execution modes with different fidelity and stability trade-offs: • mock uses a single in-process mock backend for unit tests and deterministic debugging. • multi is the default benchmark setting, with explicit command-family routing through registered skills and adapters. • real replaces the openclaw branch with a subprocess-backed real backend while keeping the same routing architecture. • hybrid extends real with gateway lifecycle management, including auto-start, port injection, and health polling. 13 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents                           
+
+> Table 6. Representative task-level evaluation checks. These checks illustrate the benchmark’s result-first philosophy: trajectories may differ, but the rollout must leave the required state and effects behind. Check family Concrete condition Why it matters State ( 204 )Existing Berlin follow-through task remains present Verifies that the rollout preserves already-correct board state rather than deleting or re-placing it unnecessarily. Effect ( 204 )files created count gte 1and created path contains handoff
+> Accepts semantically correct handoff refreshes without forcing one exact filename. Effect ( 204 )tasks created not exists Implements the no-duplicate guard for the ex-isting release next step. Effect ( 204 )calendar events created count gte 1Checks that the missing review sync was actu-ally scheduled rather than merely mentioned. Effect ( 263 )tasks completed count gte 1Requires the stale Paris follow-up to be retired rather than simply ignored. Effect ( 263 )Replacement task created and replacement sync cre-ated Enforces replacement-and-closure: the cor-rected next step and the replacement sync must both exist. Output (both) Final command exits successfully Prevents a rollout from being counted as com-plete when the last required mutation failed.
+
+Internally, the evaluator builds a normalized state ˆS that merges configuration state, gateway state, bounded command history, the latest stdout/stderr/exit code, and explicit effect traces (created calendar events, sent emails, created files, completed tasks, etc.). This normalization is particularly important for the hard benchmark because many tasks are judged by the relationship between pre-existing and newly created state: the evaluator must determine not only that an artifact exists, but whether an existing object was preserved, a stale object was retired, and the required downstream side effects were produced. 
+
+B.2. Evaluation Check Examples 
+
+Table 6 shows representative result-first checks from two hard tasks: hard decision workflow 204 (gap completion) and hard decision workflow 263 (wrong-state replacement). The first task rewards preserving correct existing state while filling a single missing gap. The second additionally requires retiring stale state and putting the replacement plan in place. This is why replacement-style tasks are materially harder: they require preserving the valid part of the workflow, modifying the invalid part, and still achieving end-to-end closure. Different checks can also carry different weights in the partial-credit score. In practice, this means the benchmark can distinguish between a rollout that gets the main task direction right but misses one final side effect, and a rollout that never reaches the correct repair or branch decision in the first place. The score layer is therefore not a soft alternative to evaluation, but an additional view on how close a failed rollout came to the intended state transition. 
+
+B.3. Execution Examples 
+
+The appendix now separates two example roles. The later full scenario catalog gives one long-form example for every released scenario family, while the present section explains how to read those examples. Each long example follows the same schema: a concrete instance, the initial visible state, the key repair or branch decision, a short representative action trace, and the evaluator-facing success condition. This keeps the examples comparable even when one scenario is mostly about duplicate avoidance and another is mostly about state replacement or multi-source resolution. A useful reading strategy is to compare three things across the catalog: first, whether the task begins from empty or partially populated state; second, whether the required operation is additive, repair-oriented, or replacement-oriented; and third, whether final closure depends on one surface or on coordination across board, calendar, email, file, and cron state. That contrast is exactly what makes the ClawForge-Bench analytically useful. 
+
+# C. Supplementary Results 
+
+This section provides additional experimental breakdowns that extend the main-text analysis: per-scenario accuracy slices (§C.1), recurring failure patterns (§C.2), and step-efficiency interpretation (§C.3). 14 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+Table 7. Supplementary scenario-level full-pass accuracy (%) for selected hard slices. Values follow the same evaluated run set used in the main experiment section. Scenario Kimi-K2.5 GPT-5.2 o3 GPT-5.3-Codex GPT-5.4 Claude Sonnet 4.6 Claude Opus 4.6 already done skip followthrough 100 100 90 90 100 100 100 duplicate avoidance followthrough 90 90 80 100 100 100 90 release gate followthrough 3 17 7 10 17 17 17 wrong state replacement followthrough 0 0 7 17 13 0 2interrupted workflow resume 17 33 47 33 43 87 90 multi source decision followthrough 30 15 55 40 55 50 55 
+
+Table 8. Representative failure patterns that recur across the hard benchmark. Failure pattern Typical benchmark symptom Why it matters analytically Early breakdown Wrong branch or wrong object selected before meaningful state change Indicates misunderstanding of the task logic rather than near-miss closure. Incomplete closure Main repair direction is correct, but one final side effect is absent Distinguishes almost-finished rollouts from fully incorrect ones. Stale-state mishandling Valid state is overwritten, or stale state is left in place while new state is added Captures failures in state conflict resolution rather than in simple completion. Hallucinated completion Agent stops after partial repair and behaves as if the workflow were done Explains why some runs earn high score but still fail strict evaluation. Excess-step inefficiency Rollout consumes many extra steps without proportionate progress toward final closure Exposes weak workflow efficiency rather than just low pass rate. 
+
+C.1. Scenario Slice Table 
+
+Table 7 highlights six scenario families that are particularly useful for interpreting the benchmark. The selected slices include near-saturated checks (already done skip followthrough , duplicate avoidance followthrough ), a uniformly hard shared slice (release gate followthrough ), the hardest replacement slice (wrong state replacement followthrough ), a strong separator (interrupted workflow resume ), and a multi-source branch-selection slice ( multi source decision followthrough ). 
+
+C.2. Failure Pattern Notes 
+
+Beyond per-scenario accuracy, the benchmark reveals recurring failure patterns that cut across scenario families. The main text argues that many failures are structured rather than arbitrary; Table 8 expands that claim with concrete pattern-level categories that recur across scenario families. 
+
+C.3. Length and Efficiency Notes 
+
+The previous subsections examine what models get wrong; this subsection examines how efficiently they use their interaction budget. The length-stratified analysis in the main paper pairs reference-trajectory length with average executed steps. A useful interpretation is that GT length measures the structural size of the intended workflow, while executed steps measure how much interaction budget a model actually spends on that workflow. These quantities need not match closely. A model can be step-efficient but still miss one final operation, or it can consume many additional steps without improving final closure. This distinction is particularly important for stateful tasks. In many ClawForge-Bench episodes, extra steps are not neutral: they often correspond to repeated inspection, redundant list queries, or additional state mutations that do not improve the final evaluator-visible state. The benchmark therefore treats step usage as a behavioral signal about workflow efficiency, not just as an implementation detail of the rollout trace. 15 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+# D. Data and Reproducibility 
+
+D.1. Data Provenance and Provider Impact 
+
+The main experimental tables report benchmark outcomes over the shared ClawForge-Bench snapshot. For Kimi-K2.5, GPT-5.2, GPT-o3, GPT-5.3-Codex, GPT-5.4, and Claude Opus 4.6, the reported strict accuracy, partial-credit score, and length-bucket average steps are computed from task-level traces over the evaluated run set. The Claude Models aggregate accuracy is reported over the same task denominator, but the length-bucket average-step values are computed from the available task-level traces selected for the merged available run. Provider-aware reporting is included because benchmark runs over external model endpoints can introduce retries, filtered out-puts, or fallback behavior that affect an otherwise valid interactive rollout. In the reporting scheme, provider failures 
+
+counts tasks that fail outright because a provider-side issue prevents a normal completion. provider impacted tasks 
+
+counts tasks whose trajectories complete but are materially disturbed by provider-side effects such as compact fallbacks or filtered responses. These statistics are explanatory rather than primary: they do not replace full-pass accuracy or partial-credit score, but help readers judge whether serving noise is large enough to affect a comparison. The intended reading order is therefore to examine accuracy and score first, use the length table to interpret closure efficiency, and then use provider-aware statistics to determine whether a model’s execution trace was unusually noisy at the serving layer. 
+
+D.2. Limitations and Scope 
+
+Several limitations bound the claims made in the main paper. First, the benchmark is intentionally narrow in environment type: it studies executable command-line workflow episodes over tasks, calendar, email, messaging, files, configuration, weather, and cron state, rather than arbitrary long-horizon agent deployment. The intended claim is therefore not that one benchmark exhausts real agent reliability, but that state-conflict workflows expose failure modes that static prompting and lighter tool-use tests often miss. Second, the reported model comparisons are benchmark evaluations over one shared ClawForge-Bench snapshot rather than variance estimates over many independently repeated runs. This matters especially for externally served agents, where provider-side retries, filtered outputs, and compact-fallback behavior can perturb a rollout even when the task specification is fixed. The paper surfaces those effects through provider-aware accounting, but it does not eliminate them. Third, the hard suite emphasizes result-first closure under persistent state, so some conclusions are benchmark-specific by construction. The strongest separations in this paper come from duplicate-sensitive completion, stale-state repair, replacement, and branch resolution. Other capabilities that matter in agent deployment, such as open-ended research, web navigation, or multimodal perception, are outside the scope of this benchmark family. Fourth, the Sonnet 4.6 reporting line is not perfectly symmetric with the other entries. Its strict-accuracy value uses the shared task denominator, but some diagnostic step statistics rely on the available merged best-available traces rather than one fully uniform trace set. The main text and Section D.1 therefore treat those step counts as efficiency evidence, not as a clean latency benchmark. 
+
+D.3. Statistical Significance 
+
+The paper reports deterministic benchmark outcomes on a fixed task snapshot and emphasizes exact full-pass accuracy, partial-credit score, and structured breakdown tables. It does not report confidence intervals, bootstrap uncertainty, or hypothesis tests. This omission is deliberate rather than hidden: the current paper is positioned as a benchmark-construction and empirical-separation study, not as a statistical comparison of nearly tied models under repeated random resampling. The absence of formal significance reporting should shape how close comparisons are read. Large gaps tied to stable scenario families, such as the persistent difficulty of replacement-style tasks or the near-saturation of already-done and duplicate-avoidance slices, are more important to the paper’s argument than tiny differences between adjacent aggregate rankings. Future versions of the benchmark can add repeated-run variance estimation or bootstrap intervals over tasks, but that analysis is not part of the present submission. 16 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+D.4. Compute Resources 
+
+The reported experiments do not train new models. The local benchmark workload is therefore orchestration-heavy rather than training-heavy: task reset, routed command execution, evaluator-state construction, and result aggregation all run through the ClawForge runtime in multi mode with full interaction history and a 25-step budget. In this setup, the benchmark runner itself is CPU-oriented and does not require local GPU execution for the paper’s reported results. 
+
+# E. Broader Impact and Release 
+
+E.1. Broader Impact Positive impact. This work improves measurement quality for interactive agents. Many real-world failures arise from state conflicts rather than one-shot misunderstanding. By explicitly capturing failure modes such as duplication, stale state, incorrect branching, and incomplete workflow closure, the benchmark enables more precise diagnosis of where agents remain unreliable. 
+
+Risks. Improved benchmark coverage may indirectly accelerate deployment of agents in coordination, operations, or messaging workflows, where incorrect execution can incur real-world cost. Benchmark progress may also be misinterpreted as readiness for broader automation beyond the evaluated scenarios. 
+
+Misuse and mitigation. Workflow benchmarks can be used to optimize agents that manipulate calendars, messages, files, or system state, including in settings with limited oversight. To mitigate this, the benchmark is built on synthetic or seeded environments, emphasizes transparent reporting of failure modes, and frames evaluation as a diagnostic tool rather than evidence of safe autonomous deployment. 
+
+E.2. Asset Credits and Terms 
+
+The paper uses two main classes of existing assets: prior benchmark literature and externally served foundation-model endpoints. Prior interactive-benchmark and agent-evaluation papers are cited in the introduction, method, experiment, and related-work sections. The evaluated models are likewise credited by provider and citation: Kimi-K2.5 (Team et al., 2026) to the Kimi team, GPT (OpenAI, 2026) to OpenAI, and Claude Code (Anthropic, 2024) models to Anthropic. These evaluated models are not treated as open-weight assets in this paper. They are proprietary provider endpoints accessed under the corresponding provider’s service terms rather than redistributed model weights. The paper therefore makes a sharper distinction than many open-model evaluations: for these systems, the relevant usage condition is provider-controlled API or hosted-access terms, not an open-source model license embedded in the benchmark package itself. The new benchmark artifacts described in this paper are ClawForge task specifications, seeded state, evaluator contracts, and reporting views. They are documented as new assets of the study rather than borrowed benchmark files relabeled as original contributions. The paper does not claim to redistribute third-party model weights, proprietary datasets, or third-party application data snapshots. 
+
+E.3. Open Access Release Status 
+
+This submission documents the benchmark protocol, task structure, evaluator contract, and reporting methodology in enough detail to support scientific interpretation, but it does not attach an anonymized open-access release bundle for the benchmark snapshot and code at submission time. That is a release-status fact, not a hidden omission. The practical reason is that a faithful release package for this benchmark is more than a PDF appendix: it must include task specifications, state initialization assets, command-routing runtime code, evaluator definitions, and clear instructions for running the shared hard snapshot against supported model providers. The paper already documents those components conceptually, but the anonymized distribution bundle is not part of the present submission package. 17 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents 
+
+Table 9. Directory of the full scenario example catalog. Page references point to the start of each long example. Scenario Page Scenario Page Inbox 18 Multi-Source Decision 23 Release Recovery Runbook 19 State Repair 23 Channel Incident Recovery 19 Completion Gap 24 Daily Operations Commitment Loop 20 Branch Resolution 24 Release Gate 20 Already Done Skip 25 Delivery Update 21 Wrong-State Replacement 25 Operations Review 21 Interrupted Workflow Resume 26 Existing State 22 Contradictory Source Resolution 27 Duplicate Avoidance 22 
+
+# F. Full Scenario Catalog 
+
+F.1. Scenario Example Directory F.2. Full Scenario Example Catalog 
+
+The following catalog now uses one concrete representative task instance for every released scenario family. Each box is grounded in one actual hard decision workflow xxx specification rather than in a scenario-level summary, so the instruction wording, seeded state, representative commands, and evaluator-visible closure conditions all come from a real released task. 
+
+Example A: Inbox ( hard decision workflow 1 )
+
+Representative instance. hard decision workflow 1 asks: “The budget email thread in the inbox needs attention today. Then check the Berlin board and calendar; right now the next step is already on the board, and if it only needs async follow-up, leave the calendar alone, so fill only what is missing, note it in a handoff file, and send alice@example.com a quick update.” 
+
+Initial state. The seeded board already contains the pending task Berlin budget follow-up . The task instruction also implies that the follow-through should stay async if the existing calendar state already supports that branch, so the missing work is the handoff note plus the external update rather than a new calendar block. 
+
+Required correction. Read the budget thread, verify that the staged Berlin task can stay in place, avoid adding a duplicate task or review event, create the handoff note under /handoff , and send the requested email update to alice@example.com .
+
+Representative actions. 
+
+1. email search --query ’budget’ 
+
+2. email read --id email seed 3 
+
+3. tasks list --status pending 
+
+4. calendar list 
+
+5. calendar today --timezone Europe/Berlin 
+
+6. file create --path ’/handoff/berlin-budget-followup.txt’ --content ’Berlin budget follow-up handoff note.’ 
+
+7. email send --to alice@example.com --subject ’Budget follow-up for Berlin’ --body ’Tracking the next step for Berlin.’ 
+
+Evaluation outcome. The evaluator accepts this rollout only if the handoff file is created, the update email is sent, the pre-existing Berlin follow-up task remains sufficient, and no duplicate task or calendar event is introduced. This makes the task a real inbox-grounded completion problem rather than a generic email summary. 
+
+18 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents Example B: Release Recovery Runbook ( hard decision workflow 7 )Representative instance. hard decision workflow 7 asks: “Please tighten up the Berlin release review. Check what’s already on the board and calendar, use anthropic/claude-opus-4-6, refresh the handoff file, and add only the missing review slot or decision-log task.” 
+
+Initial state. The override layer already stages a pending Berlin release next-step task, so the workflow is not empty. What is missing is the corrected review configuration under the required model path together with a refreshed handoff artifact. 
+
+Required correction. Confirm the current model, switch to anthropic/claude-opus-4-6 , preserve the existing Berlin release next step, refresh the handoff file, and add only the missing Berlin review slot rather than recreating the release workflow from scratch. 
+
+Representative actions. 
+
+1. openclaw config get agent.model 
+
+2. tasks list --status pending 
+
+3. calendar list 
+
+4. calendar today --timezone Europe/Berlin 
+
+5. openclaw models set anthropic/claude-opus-4-6 
+
+6. file create --path ’/ops/release-handoff.txt’ --content ’Berlin release handoff notes.’ 
+
+7. calendar add-event --title ’Berlin release review’ --start 2026-03-10T09:00 
+
+Evaluation outcome. A passing rollout must visibly set the model to the required Opus path, create the handoff file, keep the existing decision-log reminder and board task intact, and place the Berlin review event on the calendar. The task fails if the model switch is skipped or if valid staged state is rebuilt unnecessarily. 
+
+Example C: Channel Incident Recovery ( hard decision workflow 13 )Representative instance. hard decision workflow 13 asks: “Please get the incident update to #general on discord, check the incident next step on the board first to see whether it is already there, add only the missing piece, and send alice@example.com a recap when it’s handled.” 
+
+Initial state. The board already contains the pending task Incident escalation follow-up . The missing work is therefore the externally visible incident post plus the recap email, not another board task. 
+
+Required correction. Audit the task board first, post the incident escalation update to Discord #general , avoid recreating the follow-up task that already exists, and send the requested recap to alice@example.com .
+
+Representative actions. 
+
+1. openclaw security audit 
+
+2. tasks list --status pending 
+
+3. openclaw channels login --channel discord 
+
+4. openclaw message send --channel discord --target #general --message ’Incident escalation started. Please acknowledge.’ 
+
+5. openclaw channels list --json 
+
+6. email send --to alice@example.com --subject ’Incident escalation recap’ --body ’The escalation is posted and being tracked.’ 
+
+Evaluation outcome. Strict evaluation requires both external side effects: the Discord message to #general and the recap email. It also checks that the existing follow-up task remains the only board artifact. This makes the task a clean example of information transfer plus duplicate-aware closure. 
+
+19 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents Example D: Daily Operations Commitment Loop ( hard decision workflow 19 )Representative instance. hard decision workflow 19 asks: “Can you check today’s Europe/Berlin schedule for Berlin, look at the next step on the board and the recurring daily check, and only fill the missing piece?” 
+
+Initial state. The seeded state already contains Berlin existing ops next-step task . No recurring daily-check cron is present yet, so only the recurring commitment is missing. 
+
+Required correction. Inspect the Berlin schedule, verify the existing next-step task, check the current cron state, and add only the missing recurring daily-check job without touching the valid board state. 
+
+Representative actions. 
+
+1. weather forecast --location ’Berlin’ --days 3
+
+2. calendar today --timezone Europe/Berlin 
+
+3. tasks list --status pending 
+
+4. openclaw cron list 
+
+5. openclaw cron add --name hard-ops-01 --cron ’0 9 * * *’ --message ’Run Berlin daily ops check’ 
+
+Evaluation outcome. This rollout passes only if the Berlin next-step task remains in place and exactly one new cron job is created for the daily ops check. It fails when the model duplicates board work, adds the wrong recurring artifact, or stops after inspection without committing the missing scheduler state. 
+
+Example E: Release Gate ( hard decision workflow 43 )Representative instance. hard decision workflow 43 asks: “Please get the Singapore release gate sorted out. Confirm the current model, review the board and calendar first, then update the handoff file, the next step on the board, and the sync on the calendar.” 
+
+Initial state. This instance does not preload the release artifacts through overrides, so the full gate closure must be assembled from inspection plus creation. The hidden constraints require a specific model path, a handoff file, a release-gate follow-through task, and a matching sync. 
+
+Required correction. Confirm the current model, inspect board and calendar state, switch to 
+
+anthropic/claude-3-7-sonnet-latest , create the release handoff file, create the Singapore release-gate task, and place the release-gate sync on the calendar. 
+
+Representative actions. 
+
+1. openclaw config get agent.model 
+
+2. tasks list --status pending 
+
+3. calendar list 
+
+4. calendar today --timezone Asia/Singapore 
+
+5. openclaw models set anthropic/claude-3-7-sonnet-latest 
+
+6. file create --path ’/ops/release-handoff.txt’ --content ’Singapore release gate handoff notes.’ 
+
+7. tasks add --title ’Singapore release gate follow-through’ --priority high --due 2026-03-08 
+
+8. calendar add-event --title ’Singapore release gate sync’ --start 2026-03-10T09:00 
+
+9. calendar today --timezone Asia/Singapore 
+
+Evaluation outcome. Evaluation checks all four closure outputs together: model set, handoff file created, task created, and calendar event created. The task therefore exposes whether the agent can carry a release-gate workflow through to a fully consistent final state rather than stopping after one local fix. 
+
+20 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents Example F: Delivery Update ( hard decision workflow 73 )Representative instance. hard decision workflow 73 asks: “Can you get the outage update out to #launch on discord? Fix the delivery path if needed, check what’s already on the board, the next step may already be on the board, so leave it alone if it is there, if the target is shared, leave a short live block on the calendar, and send bob@example.com a quick recap.” 
+
+Initial state. The board already contains Outage delivery next step . The required shared-target branch also expects a short live calendar block, but neither the Discord post nor the recap email has been sent yet. 
+
+Required correction. Leave the staged outage next step alone, post the outage update to Discord #launch , add the live follow-up calendar block, and send the recap to bob@example.com .
+
+Representative actions. 
+
+1. tasks list --status pending 
+
+2. openclaw channels list --json 
+
+3. openclaw channels login --channel discord 
+
+4. calendar add-event --title ’Outage delivery follow-up’ --start 2026-03-12T14:00 
+
+5. openclaw message send --channel discord --target #launch --message ’Outage update posted and being tracked.’ 
+
+6. email send --to bob@example.com --subject ’Outage delivery recap’ --body ’The delivery path is recovered and the update is posted.’ 
+
+Evaluation outcome. The evaluator requires all three visible side effects while also enforcing that no duplicate board task is created. This task is representative because it mixes messaging, scheduling, and duplicate-aware state preservation inside one delivery workflow. 
+
+Example G: Operations Review ( hard decision workflow 83 )Representative instance. hard decision workflow 83 asks: “Can you look at the forecast and today’s Europe/London calendar for London, review the next step on the board and the recurring daily check, and only add what’s missing before you put the review on the calendar?” 
+
+Initial state. The seeded state already contains London existing ops next-step task . The missing pieces are the recurring daily-check cron and the review event itself, both conditioned on current forecast and London calendar context. 
+
+Required correction. Read the forecast, inspect the London calendar, confirm the existing ops task, create the missing daily-check cron, and place the London backup ops review event on the calendar. 
+
+Representative actions. 
+
+1. weather forecast --location ’London’ --days 1
+
+2. calendar today --timezone Europe/London 
+
+3. openclaw cron list 
+
+4. tasks list --status pending 
+
+5. openclaw cron add --name hard-ops-07-01 --cron ’15 8 * * 1-5’ --message ’Run London daily ops check’ 
+
+6. calendar add-event --title ’London backup ops review’ --start 2026-03-10T13:00 
+
+Evaluation outcome. A passing rollout must keep the existing task intact while creating both the cron job and the review event. The task fails if the model schedules a review without completing the missing recurring setup or if it adds duplicate board state while trying to be safe. 
+
+21 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents Example H: Existing State ( hard decision workflow 113 )Representative instance. hard decision workflow 113 asks: “The Boston daily ops setup is only partway done. Look over the next step on the board, the review slot on the calendar, and the recurring daily check, then finish just the missing piece and send alice@example.com a short recap.” 
+
+Initial state. The override layer preloads both Boston existing ops next-step task and Boston existing ops review block . The only missing piece is the recurring daily-check cron, after which a recap email must be sent. 
+
+Required correction. Audit the partially completed Boston ops setup, preserve the existing task and review block, create only the missing cron job, and send the recap to alice@example.com .
+
+Representative actions. 
+
+1. openclaw cron list 
+
+2. tasks list --status pending 
+
+3. calendar list 
+
+4. calendar today --timezone America/New York 
+
+5. openclaw cron add --name existing-hard-ops-01 --cron ’30 9 * * 1-5’ --message ’Run Boston daily ops check’ 
+
+6. Send the Boston ops recap email to alice@example.com .
+
+Evaluation outcome. Strict evaluation checks that the existing task and review block remain present, no duplicate task or calendar event appears, the cron job is created, and the recap email is sent. This makes the example a concrete existing-state completion task rather than a vague recurring-workflow summary. 
+
+Example I: Duplicate Avoidance ( hard decision workflow 123 )Representative instance. hard decision workflow 123 asks: “Some of the London ops setup is already in place. Check the board, forecast, and calendar, then add a backup review block on the calendar if the forecast looks risky; otherwise add a primary review block on the calendar, and avoid recreating the existing setup.” 
+
+Initial state. The workflow already contains London existing ops next-step task and an active recurring cron 
+
+london-existing-daily-ops-check . The only missing artifact is the review block, whose title depends on the forecast branch. 
+
+Required correction. Inspect the existing board and cron state, read the London forecast and calendar, choose the backup review branch supported by the task instance, and add only the London backup ops review block without recreating existing setup. 
+
+Representative actions. 
+
+1. openclaw cron list 
+
+2. tasks list --status pending 
+
+3. calendar list 
+
+4. weather forecast --location ’London’ --days 1
+
+5. calendar today --timezone Europe/London 
+
+6. calendar add-event --title ’London backup ops review block’ --start 2026-03-20T08:30 
+
+Evaluation outcome. The evaluator rewards recognition that most of the workflow already exists. It checks that the board task and daily check stay in place, no duplicate task or cron job is added, and the review event is created with a backup-oriented title. 
+
+22 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents Example J: Multi-Source Decision ( hard decision workflow 133 )Representative instance. hard decision workflow 133 asks: “For Austin, check the review email note, the forecast, and the America/Chicago calendar, decide whether this stays live or shifts async, leave the next step on the board, keep the daily check scheduled, put the review on the calendar if live, and send leadership@example.com an update only if async.” 
+
+Initial state. This Austin instance begins without task-specific overrides. The closure branch must be inferred from the review email note, the forecast, and the America/Chicago calendar, and the live branch requires creating the task, cron job, and calendar review event. 
+
+Required correction. Read the review email note, inspect the forecast and Chicago calendar, decide that the workflow stays live, create the Austin next-step task, keep the daily check scheduled, and place the Austin primary ops review event on the calendar. 
+
+Representative actions. 
+
+1. weather forecast --location ’Austin’ --days 1
+
+2. calendar today --timezone America/Chicago 
+
+3. email search --query ’review’ 
+
+4. email read --id email seed 5 
+
+5. openclaw cron list 
+
+6. tasks list --status pending 
+
+7. tasks add --title ’Austin ops next step’ --priority medium --due 2026-03-08 
+
+8. openclaw cron add --name multi-source-hard-ops-01 --cron ’0 9 * * *’ --message ’Run Austin daily ops check’ 
+
+9. calendar add-event --title ’Austin primary ops review’ --start 2026-03-10T09:00 
+
+Evaluation outcome. The evaluator requires task creation, cron creation, and review-event creation together. A rollout that sends an async email instead of committing to the live branch, or that keeps inspecting without deciding, still fails even if the intermediate reasoning looks plausible. 
+
+Example K: State Repair ( hard decision workflow 153 )Representative instance. hard decision workflow 153 asks: “The Boston release setup has something stale in it. Review the next-step task on the board and the sync on the calendar, repair the stale next step, refresh the handoff file, and leave the next step and sync correctly set.” 
+
+Initial state. The seeded state contains a stale low-priority task, Existing Boston release follow-up , under the 
+
+hard wrong task setup. The correct release follow-through, handoff refresh, and Boston release sync do not yet exist. 
+
+Required correction. Detect that the seeded Boston follow-up is stale, refresh the handoff file, complete the outdated task, create the corrected high-priority task Boston release follow-through , and add the Boston release sync calendar event. 
+
+Representative actions. 
+
+1. tasks list --status pending 
+
+2. calendar list 
+
+3. calendar today --timezone America/New York 
+
+4. file create --path ’/ops/release-handoff.txt’ --content ’Boston refreshed release handoff notes.’ 
+
+5. tasks complete --title ’Existing Boston release follow-up’ 
+
+6. tasks add --title ’Boston release follow-through’ --priority high --due 2026-03-16 
+
+7. calendar add-event --title ’Boston release sync’ --start 2026-03-19T15:00 
+
+Evaluation outcome. This rollout passes only if the stale object is actually retired and both replacement artifacts are created. It fails when the model notices the conflict but leaves the outdated task in place, adds the new task without cleanup, or stops after a partial repair and behaves as if the workflow were complete. 
+
+23 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents Example L: Completion Gap ( hard decision workflow 199 )Representative instance. hard decision workflow 199 asks: “Part of the Seattle release work is already handled, but the next step is the missing piece. Check what’s there, read the release notes, refresh the handoff file, and leave the sync on the calendar in place and add only the missing next step on the board.” 
+
+Initial state. The override layer preloads the review note /ops/release-review.txt and an existing Seattle release sync on the calendar. What is missing is the board next step plus the refreshed handoff file. 
+
+Required correction. Read the drafted release notes, preserve the existing Seattle sync, create the handoff file, and add only the missing high-priority task Seattle release next step on the board. 
+
+Representative actions. 
+
+1. openclaw config get agent.model 
+
+2. tasks list --status pending 
+
+3. calendar list 
+
+4. calendar today --timezone America/Los Angeles 
+
+5. file read --path ’/ops/release-review.txt’ 
+
+6. file create --path ’/ops/release-handoff.txt’ --content ’Seattle completion-gap release handoff notes.’ 
+
+7. calendar list --from 2026-03-10 --to 2026-03-10 
+
+8. tasks add --title ’Seattle release next step’ --priority high --due 2026-03-08 
+
+Evaluation outcome. Evaluation checks exactly that structure: the handoff file must be created, the release sync must remain an already-existing artifact, no duplicate calendar event may be created, and the new task must appear. This is a real gap-completion example where the missing piece is the board task rather than the calendar sync. 
+
+Example M: Branch Resolution ( hard decision workflow 211 )Representative instance. hard decision workflow 211 asks: “The Sydney ops setup already has part of the work in place. Please review the forecast, today’s Australia/Sydney calendar, the task already on the board, and the recurring daily check schedule before working out whether this stays live or moves async, and send bob@example.com the update if it moves async.” 
+
+Initial state. The seeded state already contains Sydney existing ops next-step task and an active daily-check cron. The task instance resolves to the async branch, so the live review path should not be scheduled. 
+
+Required correction. Inspect the Sydney forecast, calendar, board task, and cron state; decide that the workflow moves async; preserve the existing task and daily check; and send the backup-plan email to bob@example.com instead of creating a calendar review block. 
+
+Representative actions. 
+
+1. weather forecast --location ’Sydney’ --days 1
+
+2. calendar today --timezone Australia/Sydney 
+
+3. openclaw cron list 
+
+4. tasks list --status pending 
+
+5. Send the Sydney backup-plan email to bob@example.com .
+
+Evaluation outcome. The evaluator checks the preserved task and cron state, the absence of duplicate board or cron artifacts, the email side effect, and the absence of a duplicate calendar event. This makes the task a concrete branch-resolution example instead of a generic live-vs-async summary. 
+
+24 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents Example N: Already-Done Skip ( hard decision workflow 251 )Representative instance. hard decision workflow 251 asks: “The New York release setup should already be in place. Please verify the current model, the next-step task on the board, and the sync on the calendar before you send finance@example.com a short recap and leave it alone if it is already right.” 
+
+Initial state. Both key artifacts are already present through overrides: New York existing release next step on the board and New York existing release sync on the calendar. The only remaining obligation is to verify the state and send the finance recap. 
+
+Required correction. Confirm the current model, inspect the board and calendar, recognize that no repair is needed, and send the requested recap to finance@example.com without creating any new task or event. 
+
+Representative actions. 
+
+1. openclaw config get agent.model 
+
+2. tasks list --status pending 
+
+3. calendar list 
+
+4. calendar today --timezone America/New York 
+
+5. Send the New York release recap email to finance@example.com .
+
+Evaluation outcome. This task passes only when the model resists unnecessary mutation. The evaluator checks the model setting, the existing task and sync, the recap email, and the absence of duplicate task or calendar creations. It is therefore a real recognition-and-restraint task, not an empty no-op. 
+
+Example O: Wrong-State Replacement ( hard decision workflow 261 )Representative instance. hard decision workflow 261 asks: “Something in the Seattle release setup was staged wrong. Check whether the next step is stale, replace the stale next step with the correct version, and leave the next step and sync correctly set.” 
+
+Initial state. Under hard wrong task , the workflow starts with Existing Seattle release follow-up , a low-priority stale task that should not survive in the final state. The replacement task and replacement sync are both still missing. 
+
+Required correction. Inspect the seeded Seattle task, determine that it is stale, complete it, create the corrected task Seattle release replacement next step , and add the matching Seattle replacement release sync event. 
+
+Representative actions. 
+
+1. tasks list --status pending 
+
+2. calendar list 
+
+3. calendar today --timezone America/Los Angeles 
+
+4. tasks complete --title ’Existing Seattle release follow-up’ 
+
+5. tasks add --title ’Seattle release replacement next step’ --priority high --due 2026-03-09 
+
+6. calendar add-event --title ’Seattle replacement release sync’ --start 2026-03-10T13:00 
+
+Evaluation outcome. Strict evaluation requires both retirement of the stale task and creation of the corrected replacement state. Adding the replacement without cleanup, or cleaning up without recreating the follow-through, still fails. That is why this slice remains one of the hardest state-conflict settings in the benchmark. 
+
+25 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents Example P: Interrupted Workflow Resume ( hard decision workflow 307 )Representative instance. hard decision workflow 307 asks: “The New York release work already has pieces in place. Check the current model, the next step on the board, and the sync on the calendar, finish the missing handoff file, send man-ager@example.com a recap, and leave the existing setup alone.” 
+
+Initial state. The seeded release state already contains New York existing release next step , New York existing release sync , and drafted notes in /ops/release-review.txt . The only missing artifact is the hand-off file, after which a recap email is required. 
+
+Required correction. Resume from the partially completed New York release setup, read the existing review notes, create the missing handoff file, preserve the staged task and sync, and send the recap to manager@example.com .
+
+Representative actions. 
+
+1. openclaw config get agent.model 
+
+2. tasks list --status pending 
+
+3. tasks search --query ’New York release’ 
+
+4. calendar list 
+
+5. calendar today --timezone America/New York 
+
+6. file read --path ’/ops/release-review.txt’ 
+
+7. file create --path ’/ops/release-handoff.txt’ --content ’New York resumed release handoff notes.’ 
+
+8. Send the New York resume recap email to manager@example.com .
+
+Evaluation outcome. The evaluator accepts only resume-style closure: the task and sync must remain existing artifacts, no duplicates may be created, the handoff file must appear, and the recap email must be sent. Restarting the workflow from scratch or mutating already-correct state still fails. 
+
+26 ClawForge: Generating Executable Interactive Benchmarks for Command-Line Agents Example Q: Contradictory Source Resolution ( hard decision workflow 337 )Representative instance. hard decision workflow 337 asks: “Please reconcile the latest review email note, the forecast, and today’s Europe/London calendar for London. Leave the next step on the board, keep the recurring daily check scheduled, and either put the review on the calendar or send bob@example.com the async update.” 
+
+Initial state. This London instance begins without seeded overrides, so all action depends on reconciling the latest review email, the forecast, and the current London calendar. The correct branch here is async: the task and recurring check should be created, but no review event should be added. 
+
+Required correction. Read the latest review email note, inspect forecast and calendar evidence, create London contradictory-source next step , add the recurring contradiction-check cron, and send the async update to 
+
+bob@example.com while avoiding a calendar review block. 
+
+Representative actions. 
+
+1. email search --query ’review’ 
+
+2. email read --id email seed 5 
+
+3. weather forecast --location ’London’ --days 1
+
+4. calendar today --timezone Europe/London 
+
+5. calendar list --from 2026-03-01 --to 2026-03-01 
+
+6. tasks list --status pending 
+
+7. tasks add --title ’London contradictory-source next step’ --priority high --due 2026-03-11 
+
+8. openclaw cron add --name contradictory-source-01 --cron ’0 18 * * 1-5’ --message ’Run London daily contradiction check’ 
+
+9. Send the London async update email to bob@example.com .
+
+Evaluation outcome. The evaluator checks exactly those branch-specific side effects: task created, cron created, email sent, and no duplicate calendar event. This makes the example a genuine contradictory-evidence resolution task rather than a generic multi-source lookup problem. 
+
+27
