@@ -6,44 +6,34 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-11
-- 运行时间：2026-06-11 21:13:52 UTC
+- 最新运行日期：2026-06-12
+- 运行时间：2026-06-12 22:10:32 UTC
 - 运行状态：成功
-- 本次总论文数：8
-- 精读区：3
-- 速读区：5
+- 本次总论文数：4
+- 精读区：2
+- 速读区：2
 
 ### 今日简报（AI）
-今日推荐8篇论文，重点精读策略蒸馏几何与长程计算机智能体基准。最值得看满分10分的《On the Geometry of On-Policy Distillation》和9分的《WeaveBench》。建议进一步关注智能体技能学习相关速读论文，如工具使用工作流声明式技能。
-- 详情：[/202606/11/README](/202606/11/README)
+今日推荐4篇AI Agent研究论文，聚焦智能体构建方法与自动化评测，精读2篇获8分高分。  
+最值得关注的方向：一套从底层到生产的自定义AI Agent方法论，以及应用于基因组分析的可复现多Agent自动化流程。  
+建议优先精读这两篇8分论文，可快速掌握智能体系统设计核心思路与工程实践。
+- 详情：[/202606/12/README](/202606/12/README)
 
 ### 精读区论文标签
-1. [On the Geometry of On-Policy Distillation](/202606/11/2606.07082v2-on-the-geometry-of-on-policy-distillation)  
-   标签：评分：10.0/10、query:opd
-   evidence：直接研究同策略蒸馏的训练动力学
-2. [WeaveBench: A Long-Horizon, Real-World Benchmark for Computer-Use Agents with Hybrid Interfaces](/202606/11/2606.09426v2-weavebench-a-long-horizon-real-world-benchmark-for-computer-use-agents-with-hybrid-interfaces)  
-   标签：评分：9.0/10、query:cli-agent
-   evidence：用于计算机使用代理的基准测试，包含CLI和混合接口
-3. [Can Generalist Agents Automate Data Curation?](/202606/11/2606.04261v1-can-generalist-agents-automate-data-curation)  
+1. [Agents All the Way Down; A Methodology for Building Custom AI Agents from Substrate to Production](/202606/12/2606.11869v1-agents-all-the-way-down-a-methodology-for-building-custom-ai-agents-from-substrate-to-production)  
    标签：评分：8.0/10、query:cli-agent
-   evidence：使用命令行的通用编码代理进行数据整理
+   evidence：构建可执行命令的自定义AI智能体的方法论
+2. [KBase Research Agent: Automated Multi-Agent Workflow Construction for Reproducible Genome Analysis](/202606/12/biorxiv-10-64898-2026-06-01-729336-v1-kbase-research-agent-automated-multi-agent-workflow-construction-for-reproducible-genome-analysis)  
+   标签：评分：8.0/10、query:cli-agent
+   evidence：自动化KBase工作流的多智能体系统，涉及命令行执行
 
 ### 速读区论文标签
-1. [Declarative Skills for AI Agents in Knowledge-Grounded Tool-Use Workflows](/202606/11/2606.06923v1-declarative-skills-for-ai-agents-in-knowledge-grounded-tool-use-workflows)  
+1. [STAGE-Claw: Automated State-based Agent Benchmarking for Realistic Scenarios](/202606/12/2606.10394v1-stage-claw-automated-state-based-agent-benchmarking-for-realistic-scenarios)  
    标签：评分：7.0/10、query:cli-agent
-   evidence：使用自然语言技能文件的声明式代理用于工具使用工作流
-2. [Anything2Skill: Compiling External Knowledge into Reusable Skills for Agents](/202606/11/2606.09316v1-anything2skill-compiling-external-knowledge-into-reusable-skills-for-agents)  
-   标签：评分：7.0/10、query:cli-agent
-   evidence：智能体技能编译用于任务自动化
-3. [LatentSkill: From In-Context Textual Skills to In-Weight Latent Skills for LLM Agents](/202606/11/2606.06087v1-latentskill-from-in-context-textual-skills-to-in-weight-latent-skills-for-llm-agents)  
+   evidence：基于状态计算环境的自动化代理基准测试框架
+2. [SKILL.nb: Selective Formalization and Gated Execution for Durable Agent Workflows](/202606/12/2606.08049v1-skillnb-selective-formalization-and-gated-execution-for-durable-agent-workflows)  
    标签：评分：6.0/10、query:cli-agent
-   evidence：LLM代理技能表示方法，可应用于CLI代理
-4. [SWE-Marathon: Can Agents Autonomously Complete Ultra-Long-Horizon Software Work?](/202606/11/2606.07682v1-swe-marathon-can-agents-autonomously-complete-ultra-long-horizon-software-work)  
-   标签：评分：6.0/10、query:cli-agent
-   evidence：用于自主代理超长时软件任务的基准
-5. [Anything2Skill: Compiling External Knowledge into Reusable Skills for Agents](/202606/11/2606.09316v2-anything2skill-compiling-external-knowledge-into-reusable-skills-for-agents)  
-   标签：评分：6.0/10、query:cli-agent
-   evidence：将外部知识编译为代理的可复用技能
+   evidence：智能体工作流的选择性形式化和门控执行框架，与CLI智能体自动化相关
 
 
 <div class="dpr-home-promo-card">
