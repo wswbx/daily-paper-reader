@@ -6,34 +6,31 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-12
-- 运行时间：2026-06-12 22:10:32 UTC
+- 最新运行日期：2026-06-13
+- 运行时间：2026-06-13 21:09:19 UTC
 - 运行状态：成功
-- 本次总论文数：4
-- 精读区：2
+- 本次总论文数：3
+- 精读区：1
 - 速读区：2
 
 ### 今日简报（AI）
-今日推荐4篇AI Agent研究论文，聚焦智能体构建方法与自动化评测，精读2篇获8分高分。  
-最值得关注的方向：一套从底层到生产的自定义AI Agent方法论，以及应用于基因组分析的可复现多Agent自动化流程。  
-建议优先精读这两篇8分论文，可快速掌握智能体系统设计核心思路与工程实践。
-- 详情：[/202606/12/README](/202606/12/README)
+1) 今日3篇论文聚焦智能体工具调用与工作流自动化的可靠性提升。
+2) 精读推荐《QueryWeaver》，用LLM图生成实现多工具查询可靠执行，值得关注。
+3) 下一步可关注《SKILL.nb》的持久化工作流与《STAGE-Claw》的状态基准测试，以增强实际部署稳定性。
+- 详情：[/202606/13/README](/202606/13/README)
 
 ### 精读区论文标签
-1. [Agents All the Way Down; A Methodology for Building Custom AI Agents from Substrate to Production](/202606/12/2606.11869v1-agents-all-the-way-down-a-methodology-for-building-custom-ai-agents-from-substrate-to-production)  
+1. [QueryWeaver: Reliable Multi-Tool Query Execution Planning via LLM-Based Graph Generation](/202606/13/2606.08300v1-queryweaver-reliable-multi-tool-query-execution-planning-via-llm-based-graph-generation)  
    标签：评分：8.0/10、query:cli-agent
-   evidence：构建可执行命令的自定义AI智能体的方法论
-2. [KBase Research Agent: Automated Multi-Agent Workflow Construction for Reproducible Genome Analysis](/202606/12/biorxiv-10-64898-2026-06-01-729336-v1-kbase-research-agent-automated-multi-agent-workflow-construction-for-reproducible-genome-analysis)  
-   标签：评分：8.0/10、query:cli-agent
-   evidence：自动化KBase工作流的多智能体系统，涉及命令行执行
+   evidence：将自然语言查询转换为结构化图以执行多工具查询，类似于CLI agent
 
 ### 速读区论文标签
-1. [STAGE-Claw: Automated State-based Agent Benchmarking for Realistic Scenarios](/202606/12/2606.10394v1-stage-claw-automated-state-based-agent-benchmarking-for-realistic-scenarios)  
+1. [SKILL.nb: Selective Formalization and Gated Execution for Durable Agent Workflows](/202606/13/2606.08049v1-skillnb-selective-formalization-and-gated-execution-for-durable-agent-workflows)  
    标签：评分：7.0/10、query:cli-agent
-   evidence：基于状态计算环境的自动化代理基准测试框架
-2. [SKILL.nb: Selective Formalization and Gated Execution for Durable Agent Workflows](/202606/12/2606.08049v1-skillnb-selective-formalization-and-gated-execution-for-durable-agent-workflows)  
-   标签：评分：6.0/10、query:cli-agent
-   evidence：智能体工作流的选择性形式化和门控执行框架，与CLI智能体自动化相关
+   evidence：可复用智能体工作流框架，结合自然语言与代码执行
+2. [STAGE-Claw: Automated State-based Agent Benchmarking for Realistic Scenarios](/202606/13/2606.10394v1-stage-claw-automated-state-based-agent-benchmarking-for-realistic-scenarios)  
+   标签：评分：7.0/10、query:cli-agent
+   evidence：自动构建和评估个人智能体在真实计算环境中的框架
 
 
 <div class="dpr-home-promo-card">
