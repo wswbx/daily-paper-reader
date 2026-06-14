@@ -6,31 +6,28 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-13
-- 运行时间：2026-06-13 21:09:19 UTC
+- 最新运行日期：2026-06-14
+- 运行时间：2026-06-14 21:27:41 UTC
 - 运行状态：成功
-- 本次总论文数：3
+- 本次总论文数：2
 - 精读区：1
-- 速读区：2
+- 速读区：1
 
 ### 今日简报（AI）
-1) 今日3篇论文聚焦智能体工具调用与工作流自动化的可靠性提升。
-2) 精读推荐《QueryWeaver》，用LLM图生成实现多工具查询可靠执行，值得关注。
-3) 下一步可关注《SKILL.nb》的持久化工作流与《STAGE-Claw》的状态基准测试，以增强实际部署稳定性。
-- 详情：[/202606/13/README](/202606/13/README)
+今日精读1篇高引用论文《Evoflux: 面向紧凑代理的可执行工具工作流的推理时演化》（9.0分），速读1篇《GPT-Micro: 制造业中加速、廉价且热力学一致的本构模型发现》（6.0分）。  
+最值得关注的是Evoflux提出的推理时演化方法，能优化代理的工具工作流；GPT-Micro则为制造业本构模型发现提供低成本加速方案。  
+建议关注Evoflux中工作流动态演化的思路，可应用于自动化任务设计；GPT-Micro方法对于需要快速筛选材料模型的读者有参考价值。
+- 详情：[/202606/14/README](/202606/14/README)
 
 ### 精读区论文标签
-1. [QueryWeaver: Reliable Multi-Tool Query Execution Planning via LLM-Based Graph Generation](/202606/13/2606.08300v1-queryweaver-reliable-multi-tool-query-execution-planning-via-llm-based-graph-generation)  
-   标签：评分：8.0/10、query:cli-agent
-   evidence：将自然语言查询转换为结构化图以执行多工具查询，类似于CLI agent
+1. [Evoflux: Inference-Time Evolution of Executable Tool Workflows for Compact Agents](/202606/14/2606.12674v1-evoflux-inference-time-evolution-of-executable-tool-workflows-for-compact-agents)  
+   标签：评分：9.0/10、query:cli-agent
+   evidence：紧凑代理工具工作流演化方法，可直接用于命令行任务自动化
 
 ### 速读区论文标签
-1. [SKILL.nb: Selective Formalization and Gated Execution for Durable Agent Workflows](/202606/13/2606.08049v1-skillnb-selective-formalization-and-gated-execution-for-durable-agent-workflows)  
-   标签：评分：7.0/10、query:cli-agent
-   evidence：可复用智能体工作流框架，结合自然语言与代码执行
-2. [STAGE-Claw: Automated State-based Agent Benchmarking for Realistic Scenarios](/202606/13/2606.10394v1-stage-claw-automated-state-based-agent-benchmarking-for-realistic-scenarios)  
-   标签：评分：7.0/10、query:cli-agent
-   evidence：自动构建和评估个人智能体在真实计算环境中的框架
+1. [GPT-Micro: A large language paradigm for accelerated, inexpensive, and thermodynamics-consistent discovery of constitutive models in manufacturing](/202606/14/2606.08238v1-gpt-micro-a-large-language-paradigm-for-accelerated-inexpensive-and-thermodynamics-consistent-discovery-of-constitutive-models-in-manufacturing)  
+   标签：评分：6.0/10、query:sr
+   evidence：使用LLM发现本构模型，类符号回归
 
 
 <div class="dpr-home-promo-card">
