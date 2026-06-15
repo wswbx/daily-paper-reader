@@ -6,82 +6,50 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-05-17 ~ 2026-06-15
-- 运行时间：2026-06-15 09:11:38 UTC
+- 最新运行日期：2026-06-15
+- 运行时间：2026-06-15 21:51:42 UTC
 - 运行状态：成功
-- 本次总论文数：20
-- 精读区：12
-- 速读区：8
+- 本次总论文数：10
+- 精读区：7
+- 速读区：3
 
 ### 今日简报（AI）
-1. 今日推荐聚焦分层技能元进化与泛化，精读两篇满分论文探索智能体强化学习中的技能内化与动态组合。
-2. 最值得看《You Live More Than Once》提出分层技能元进化，《Skill0.5》则联合技能内化与利用实现跨分布泛化，均为10分力作。
-3. 建议优先精读这两篇，并关注速读中技能选择性调用及局部动力学规律复用等方向，有助于理解鲁棒技能构建路径。
-- 详情：[/20260517-20260615/README](/20260517-20260615/README)
+今日精选10篇论文，精读7篇，其中强化学习领域成果突出。最值得看的是10分的《RLCSD》将对比自蒸馏与强化学习结合，以及9分的《Co-Evolving Skill》实现技能生成与策略优化的协同进化。建议优先关注这两篇高分工作，对理解RL前沿方法很有帮助。
+- 详情：[/202606/15/README](/202606/15/README)
 
 ### 精读区论文标签
-1. [You Live More Than Once: Towards Hierarchical Skill Meta-Evolving](/20260517-20260615/2605.28390v1-you-live-more-than-once-towards-hierarchical-skill-meta-evolving)  
-   标签：评分：10.0/10、query:skill-rl
-   evidence：层次化技能元进化
-2. [Skill0.5: Joint Skill Internalization and Utilization for Out-of-Distribution Generalization in Agentic Reinforcement Learning](/20260517-20260615/2605.28424v1-skill05-joint-skill-internalization-and-utilization-for-out-of-distribution-generalization-in-agentic-reinforcement-learning)  
-   标签：评分：10.0/10、query:skill-rl
-   evidence：基于技能的强化学习框架，用于内化和利用
-3. [ReSkill: Reconciling Skill Creation with Policy Optimization in Agentic RL](/20260517-20260615/2606.01619v1-reskill-reconciling-skill-creation-with-policy-optimization-in-agentic-rl)  
-   标签：评分：10.0/10、query:skill-rl
-   evidence：直接处理强化学习中技能创建与策略优化
-4. [Co-Evolving Skill Generation and Policy Optimization](/20260517-20260615/2606.08755v1-co-evolving-skill-generation-and-policy-optimization)  
-   标签：评分：10.0/10、query:skill-rl
-   evidence：技能生成与策略优化的协同进化
-5. [Partner-Aware Hierarchical Skill Discovery for Robust Human-AI Collaboration](/20260517-20260615/2605.24352v1-partner-aware-hierarchical-skill-discovery-for-robust-human-ai-collaboration)  
+1. [RLCSD: Reinforcement Learning with Contrastive On-Policy Self-Distillation](/202606/15/2606.11709v1-rlcsd-reinforcement-learning-with-contrastive-on-policy-self-distillation)  
+   标签：评分：10.0/10、query:opd
+   evidence：面向推理模型的同策略自蒸馏
+2. [Co-Evolving Skill Generation and Policy Optimization](/202606/15/2606.08755v1-co-evolving-skill-generation-and-policy-optimization)  
    标签：评分：9.0/10、query:skill-rl
-   evidence：层次化技能发现，用于人机协作的深度层次强化学习
-6. [Exploiting Local Dynamics Regularity for Reusable Skills in Offline Hierarchical RL](/20260517-20260615/2605.26371v1-exploiting-local-dynamics-regularity-for-reusable-skills-in-offline-hierarchical-rl)  
+   evidence：语言智能体中技能生成与策略优化的协同进化
+3. [Escaping the KL Agreement Trap in On-Policy Distillation](/202606/15/2606.09471v1-escaping-the-kl-agreement-trap-in-on-policy-distillation)  
+   标签：评分：9.0/10、query:opd
+   evidence：直接解决在线策略蒸馏的局限
+4. [HERO: Hindsight-Enhanced Reflection from Environment Observations for Agentic Self-Distillation](/202606/15/2606.11559v1-hero-hindsight-enhanced-reflection-from-environment-observations-for-agentic-self-distillation)  
+   标签：评分：9.0/10、query:opd
+   evidence：在线策略自蒸馏，后见增强反思，多轮智能体设置
+5. [SkillCAT: Contrastive Assessment and Topology-Aware Skill Self-Evolution for LLM Agents](/202606/15/2606.13317v1-skillcat-contrastive-assessment-and-topology-aware-skill-self-evolution-for-llm-agents)  
    标签：评分：9.0/10、query:skill-rl
-   evidence：离线分层强化学习中的可重用技能
-7. [SKILLC: Learning Autonomous Skill Internalization in LLM Agents via Contrastive Credit Assignment](/20260517-20260615/2605.27899v1-skillc-learning-autonomous-skill-internalization-in-llm-agents-via-contrastive-credit-assignment)  
-   标签：评分：9.0/10、query:skill-rl
-   evidence：对比信用分配实现LLM智能体中技能自主内化
-8. [Skill is Not One-Size-Fits-All: Model-Aware Skill Alignment for LLM Agents](/20260517-20260615/2605.30723v1-skill-is-not-one-size-fits-all-model-aware-skill-alignment-for-llm-agents)  
-   标签：评分：9.0/10、query:skill-rl
-   evidence：模型感知的技能对齐以优化技能效用
-9. [Skill Reuse as Compression in Agentic RL](/20260517-20260615/2605.31509v1-skill-reuse-as-compression-in-agentic-rl)  
-   标签：评分：9.0/10、query:skill-rl
-   evidence：将技能复用视为智能体RL中的压缩
-10. [ReSkill: Reconciling Skill Creation with Policy Optimization in Agentic RL](/20260517-20260615/2606.01619v2-reskill-reconciling-skill-creation-with-policy-optimization-in-agentic-rl)  
-   标签：评分：9.0/10、query:skill-rl
-   evidence：在智能体强化学习中协调技能创建与策略优化
-11. [SkillPyramid: A Hierarchical Skill Consolidation Framework for Self-Evolving Agents](/20260517-20260615/2606.03692v1-skillpyramid-a-hierarchical-skill-consolidation-framework-for-self-evolving-agents)  
-   标签：评分：9.0/10、query:skill-rl
-   evidence：分层技能整合框架用于自进化智能体
-12. [Learning to Adapt: Representation-Based Reinforcement Learning for Multi-Task Skill Transfer](/20260517-20260615/2606.12890v1-learning-to-adapt-representation-based-reinforcement-learning-for-multi-task-skill-transfer)  
-   标签：评分：9.0/10、query:skill-rl
-   evidence：基于表征的多任务技能迁移强化学习
+   evidence：LLM智能体的技能自我进化，对比评估，拓扑感知合并
+6. [STAGE-Claw: Automated State-based Agent Benchmarking for Realistic Scenarios](/202606/15/2606.10394v1-stage-claw-automated-state-based-agent-benchmarking-for-realistic-scenarios)  
+   标签：评分：8.0/10、query:cli-agent
+   evidence：针对个人计算场景的自动化智能体基准测试框架
+7. [CacheRL:Multi-Turn Tool-Calling Agents via Cached Rollouts and Hybrid Reward](/202606/15/2606.14179v1-cacherlmulti-turn-tool-calling-agents-via-cached-rollouts-and-hybrid-reward)  
+   标签：评分：8.0/10、query:opd
+   evidence：通过缓存回放和混合奖励进行工具调用智能体的知识迁移
 
 ### 速读区论文标签
-1. [Maestro: Reinforcement Learning to Orchestrate Hierarchical Model-Skill Ensembles](/20260517-20260615/2605.22177v1-maestro-reinforcement-learning-to-orchestrate-hierarchical-model-skill-ensembles)  
-   标签：评分：8.0/10、query:skill-rl
-   evidence：强化学习编排分层模型技能集成
-2. [Exploiting Local Dynamics Regularity for Reusable Skills in Offline Hierarchical RL](/20260517-20260615/2605.26371v2-exploiting-local-dynamics-regularity-for-reusable-skills-in-offline-hierarchical-rl)  
-   标签：评分：8.0/10、query:skill-rl
-   evidence：利用局部动力学规律性实现离线分层强化学习中的可复用技能
-3. [Skill or Skip? Learning Selective Skill Invocation in Agentic Tasks via Dual-Granularity Preference Learning](/20260517-20260615/2606.00510v1-skill-or-skip-learning-selective-skill-invocation-in-agentic-tasks-via-dual-granularity-preference-learning)  
-   标签：评分：8.0/10、query:skill-rl
-   evidence：双粒度偏好学习实现智能体任务中选择性技能调用
-4. [Learning While Acting: A Skill-Enhanced Test-Time Co-Evolution Framework for Online Lifelong Learning Agents](/20260517-20260615/2606.04815v1-learning-while-acting-a-skill-enhanced-test-time-co-evolution-framework-for-online-lifelong-learning-agents)  
-   标签：评分：8.0/10、query:skill-rl
-   evidence：面向终身学习智能体的技能增强测试时协同进化
-5. [Abstraction for Offline Goal-Conditioned Reinforcement Learning](/20260517-20260615/2605.22711v1-abstraction-for-offline-goal-conditioned-reinforcement-learning)  
-   标签：评分：7.0/10、query:skill-rl
-   evidence：层次化策略与相对化选项作为技能进行抽象
-6. [Skill-RM: Unifying Heterogeneous Evaluation Criteria via Agent Skill](/20260517-20260615/2606.03980v1-skill-rm-unifying-heterogeneous-evaluation-criteria-via-agent-skill)  
-   标签：评分：7.0/10、query:skill-rl
-   evidence：通过智能体技能统一异构评估标准用于强化学习
-7. [Implicit Safety Alignment from Crowd Preferences](/20260517-20260615/2605.21822v1-implicit-safety-alignment-from-crowd-preferences)  
+1. [Fast and Highly Expressive Policy Learning for Offline Reinforcement Learning via Bootstrapped Flow Q-Learning](/202606/15/2606.10613v1-fast-and-highly-expressive-policy-learning-for-offline-reinforcement-learning-via-bootstrapped-flow-q-learning)  
+   标签：评分：7.0/10、query:opd
+   evidence：提出避免策略蒸馏的离线RL方法，与策略蒸馏技术直接相关
+2. [CLARITree: Cholesky and Lookahead Accelerations for Regression with Interpretable Piecewise Linear Trees](/202606/15/2606.12840v1-claritree-cholesky-and-lookahead-accelerations-for-regression-with-interpretable-piecewise-linear-trees)  
+   标签：评分：7.0/10、query:sr
+   evidence：可解释的分段线性回归树，作为符号回归的竞争模型
+3. [Structure-Conditioned Actor-Critic Branches for Quality-Diversity Reinforcement Learning](/202606/15/2606.08735v1-structure-conditioned-actor-critic-branches-for-quality-diversity-reinforcement-learning)  
    标签：评分：6.0/10、query:skill-rl
-   evidence：层次化框架提取安全对齐技能用于迁移
-8. [From Correctness to Preference: A Framework for Personalized Agentic Reinforcement Learning](/20260517-20260615/2605.23382v1-from-correctness-to-preference-a-framework-for-personalized-agentic-reinforcement-learning)  
-   标签：评分：6.0/10、query:skill-rl
-   evidence：智能体强化学习中的个性化技能检索
+   evidence：质量多样性强化学习用于技能发现
 
 
 <div class="dpr-home-promo-card">
