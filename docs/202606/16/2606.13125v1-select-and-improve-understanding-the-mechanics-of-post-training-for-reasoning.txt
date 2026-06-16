@@ -1,0 +1,600 @@
+Title: Select and Improve: Understanding the Mechanics of Post-Training for Reasoning
+
+URL Source: https://arxiv.org/pdf/2606.13125v1
+
+Published Time: Fri, 12 Jun 2026 00:45:28 GMT
+
+Number of Pages: 15
+
+Markdown Content:
+# Select and Improve: Understanding the Mechanics of Post-Training for Reasoning 
+
+## Akshay Krishnamurthy 1 Audrey Huang 2 Nived Rajaraman 1
+
+Abstract 
+
+Reinforcement learning has rapidly emerged as a key component in the training of reasoning and coding models, yet it remains poorly understood from a mechanistic perspective. We study how and through what underlying processes capabilities are acquired or enhanced via reinforcement learning post-training. Our analysis, based on controlled math reasoning experiments with Qwen-2.5-1.5B , reveals two core mechanisms: strategy selection and strategy improvement. Our results highlight the role of SFT data and reinforcement learning data in activating these mechanisms, in particular showing how supervising the model on diverse reasoning strategies can enable strategy selection and how increasing difficulty in reinforcement learning data can enable strategy improvement. Taken together, our results provide mechanistic insight into RL training and suggest practical interventions to continue scaling reasoning capabilities. 
+
+# 1 Introduction 
+
+Recent progress in advanced reasoning and coding models is largely driven by reinforcement learning (RL) post-training, where a pre-trained base model is further improved through interaction with math, programming, or software engineering problems. It is well documented that this interactive training paradigm leads to significant improvements in model capabilities and state-of-the-art performance. Correspondingly, a rapidly growing body of work has proposed algorithmic and data-centric interventions to the reinforcement learning pipeline, with promising experimental results on academic and industry benchmarks. Despite this progress, much of the recent research focuses on improving the RL recipe through interventions. By contrast, comparatively little is understood about the mechanisms by which RL improves the capabilities of the base model. Thus, we ask two central questions: 
+
+Through what mechanisms does RL lead to improved model capabilities? What is the role of data in enabling these mechanisms? 
+
+We answer these questions via a mechanistic study of RL post-training, focusing on math reasoning. Our experiments reveal two core mechanisms: strategy selection which routes problems to existing reasoning patterns learned during pre-training and strategy improvement which improves existing reasoning patterns. We also find that whether these mechanisms activate during training depends strongly on both the pre-training and reinforcement learning datasets. Notably, strategy selection—the largest driver of performance in our experiments—requires that the pre-training data contains reasoning patterns to select among; we do not observe novel patterns emerging through reinforcement learning. Meanwhile, strategy improvement requires that the RL dataset consists of more difficult questions than those seen during SFT; RL training with similar problem difficulty does not improve OOD generalization. Our experimental setup also elicits two previously-observed phenomena, strategy amplification , where particular reasoning patterns appear more frequently after RL, and strategy composition , where, through RL training, the model improves its ability to chain together multiple complex reasoning steps. However, we find that strategy amplification is an observable effect of strategy selection, and strategy composition is a    
+
+> 1Microsoft Research NYC, akshaykr@microsoft.com ,nrajaraman@microsoft.com
+> 2UIUC, audreyh5@illinois.edu
+
+1
+
+> arXiv:2606.13125v1 [cs.LG] 11 Jun 2026
+
+particular instance of strategy improvement. Thus, we do not view these as separate mechanisms but rather as phenomena that can emerge from the core mechanisms of selection and improvement. Our findings offer a new perspective into the behavior of RL post-training. We find that RL in the language model setting largely operates by refining reasoning patterns acquired during pre-training. Such refinements can significantly improve performance, but do not induce entirely new behaviors. Thus, our results emphasize the role of high-quality pre-training data as an essential component in scaling reinforcement learning. We hope our findings inspire a more holistic approach to model training and provide a mechanistic foundation for future advances in RL post-training. 
+
+## 1.1 Related Work 
+
+Reinforcement learning is now a central component in modern language model training pipelines, and a growing body of work studies its behavior, identifying recurring phenomena such as policy sharpening [ YCL +25 ,WXL +25 ], entropy reduction, dependence on the pre-trained model, and sensitivity to reward and data designs [ DA25 , LDL +25 , SLX +25 , LCL +25 ]. Our results build on this line of work by introducing a clear taxonomy of mechanisms, and a single experimental setup that manifests several mechanisms, unifying and clarifying prior observations. Among the specific mechanisms identified in our work, strategy selection was observed to some extent in prior work [ ZMK +25 , TMUK25 , MTM +25 , CLZ25 ]. In contrast with these works, our findings go beyond convergence to a single strategy: we find that RL can route problems to different strategies observed in the pretraining data, thereby emphasizing the role of data diversity in pretraining. Strategy amplification has been prominently observed through the emergence of backtracking in DeepSeek-R1 [ DA25 ], and has been studied through the lens of distributional sharpening [ HBF +24 , YCL +25 , WXL +25 ]. Complementary analyses show that amplification can occur through entropy reduction [ CZC +25 ], high-entropy branching tokens [ WYG +25 ], and implicit biases in trajectory ranking [ HFW25 ]. Distributional amplification can emerge even under spurious rewards, which triggers amplification of pretraining behaviors [ SLX +25 ]. Our experiments associate amplification with selection, offering a mechanistic explanation. Regarding strategy improvement and composition, [ ZNY25 , YCZ +25 ] demonstrate extrapolative generalization and composition in controlled settings that are closely related to strategy improvement. We observe similar findings and further show that strategy improvement can sometimes be a secondary driver of RL performance relative to strategy selection. We survey and discuss other work related to these aspects in Section A. 
+
+# 2 Setup 
+
+We consider a standard language model post-training setup involving both supervised fine-tuning (SFT) and reinforcement learning (RL). We adopt the following reinforcement learning notation: prompts x and responses 
+
+y belong to prompt and response spaces X , Y respectively and a language model π : X → ∆( Y) associates a distribution over responses to any prompt. Supervised fine-tuning takes a dataset DSFT := {(xi, y i)i} of prompt-response pairs and maximizes 1
+
+LSFT (π; DSFT ) := X
+
+> (x,y )∈DSFT
+
+log π(y | x) (1) using gradient-based optimization, initialized from a pre-trained language model πbase . In RL, we have a dataset DRL := {(xi)i} of prompts and a reward function R : X × Y → { 0, 1} determining correctness (or quality) of response y to prompt x. Using these, we seek to maximize 
+
+LRL (π; DRL ) := X
+
+> x∈DRL
+
+Ey∼π(·| x)[R(x, y )] , (2) 
+
+> 1Our experiments operate in a chain-of-thought setting where both prompts and responses are sequence of tokens. Eq. (1) corresponds to standard token-level cross entropy loss minimization in this case.
+
+2again using gradient-based optimization, initialized now from the policy πSFT obtained from the SFT stage. Models are primarily evaluated via the reinforcement learning objective Eq. (2) on a held out dataset of prompts Dval := {(xi)i}.
+
+## 2.1 Experimental setup: Finite-field arithmetic task 
+
+Throughout our experiments, we focus on a synthetic finite-field arithmetic task, which captures a surprising depth of behaviors through subtle changes to the basic version of the task and the training setup. Following the protocol above, we always SFT a base model ( Qwen2.5-1.5B-Instruct ) on some SFT dataset, and continue training via RL on some RL dataset, which may be from a different distribution. First we describe the task. 
+
+Prompts. Towards building a mechanistic understanding, it is essential to carefully control the set of reasoning strategies available to the model before RL training. At the same time, we want to operate at a reasonable scale so must rely on open source pre-trained models. To break away from the math reasoning ability contained within such pre-trained base models, we construct a finite-field arithmetic task where integers are replaced by abstract symbols, and the goal is to manipulate them to compute the answer. The problem begins with a randomly generated permutation to define the elements of the finite field. The subsequent computational problem takes one of two forms: evaluation or inversion (see Fig. 1). 
+
+• Evaluation problems. Evaluation problems are those where the model is given a sequence of arithmetic operations, and is tasked with performing them in order. 
+
+• Inversion problems. Inversion problems, on the other hand, correspond to solving for an unknown variable. The model is given an unknown input x, and a sequence of arithmetic operations which manipulate x in various ways resulting in a numerical value. The model must solve for the value of x.For both evaluation and inversion problems, the difficulty of the task is captured by the number of steps of arithmetic manipulation required to compute the final answer. For the main experiments, we operate over GF(11) as shown in Fig. 1 and we provide some results with GF(13) in Section B for robustness. We always SFT under the uniform distribution over evaluation and inversion problems with number of arithmetic steps chosen uniformly from 2-5. 
+
+SFT data. We next describe the responses y utilized in the SFT data. These comprise the main reasoning strategies we embed into the model, which can be applied regardless of the problem type (evaluation or inversion), and can be thought of as different ways to solve the same problem. We focus on two broad strategies, which we refer to as forward and backward reasoning (See Fig. 1). 
+
+• Forward reasoning. In forward reasoning, the model’s chain of thought proceeds by starting from the initial input and performing the arithmetic operations in order, until it reaches the final answer. Forward reasoning is the natural strategy for evaluation problems, where the model is given an initial input and a sequence of operations to perform. The model can simply read off the operations and apply them in order to compute the final answer. For inversion problems, forward reasoning is less natural, as the model must first read off the operations and then figure out how to undo them in order to solve for the unknown input. 
+
+• Backward reasoning. In backward reasoning, the model’s chain of thought proceeds by starting from the final answer and working backwards through the arithmetic operations to determine the initial input. Backward reasoning is the natural strategy for inversion problems, as it can be viewed as applying forward reasoning on an associated evaluation problem (that of applying inverse operations on the final output). 
+
+RL data and rewards. To better understand the interplay between SFT and RL data, we perform RL training under a variety of distribution shifts: 
+
+• Extended difficulty. In our main setting, the prompts in the RL dataset have 6-9 arithmetic steps (chosen uniformly), reflecting more challenging reasoning problems. We conduct further experiments where problems have 6-15 arithmetic steps, representing an extreme distribution shift in difficulty. 3Example evaluation problem over GF (11) 
+
+In a number system where arithmetic on {0, · · · , 10 } is relabeled as: 0 → e0 , 1 → e1 , 2 → e9 , 3 → e2 , 4 → e5 ,
+
+5 → e7 , 6 → e3 , 7 → e10 , 8 → e4 , 9 → e6 , 10 → e8 . All addition and multiplication follow modular arithmetic (mod 
+
+11 ). I apply these steps to e10 :Step 1: Add e2 ,Step 2: Add e8 ,Step 3: Multiply by e5 .What is the result? 
+
+Example inversion problem over GF (11) 
+
+In a number system where arithmetic on {0, · · · , 10 } is relabeled as: 0 → e1 , 1 → e4 , 2 → e5 , 3 → e8 , 4 → e6 ,
+
+5 → e3 , 6 → e9 , 7 → e0 , 8 → e10 , 9 → e2 , 10 → e7 . All addition and multiplication follow modular arithmetic (mod 
+
+11 ). I apply these steps to an unknown element x:Step 1: Add e8 ,Step 2: Add e4 .The result is e8 .What is x?
+
+Forward reasoning on evaluation example 
+
+Read off the inverse mapping: e0 = 0 , e1 = 1 , e9 = 2 , e2 =3, e5 = 4 , e7 = 5 , e3 = 6 , e10 = 7 , e4 = 8 , e6 = 9 , e8 = 10 
+
+Start: e10 = 7 
+
+Apply Step 1, Add e2 (= 3) : 7 + 3 mod 11 = 10 
+
+Apply Step 2, Add e8 (= 10) : 10 + 10 mod 11 = 9 
+
+Apply Step 3, Multiply by e5 (= 4) : 9 ∗ 4 mod 11 = 3 
+
+Convert back: 3 → e2 
+
+#### e2 
+
+Forward reasoning on inversion example 
+
+Read off the inverse mapping: e1 = 0 , e4 = 1 , e5 = 2 , e8 =3, e6 = 4 , e3 = 5 , e9 = 6 , e0 = 7 , e10 = 8 , e2 = 9 , e7 = 10 
+
+Apply Step 1, Add e8 (e8 = 3) : x + 3 
+
+Apply Step 2, Add e4 (e4 = 1) : x + 3 + 1 
+
+Equation: 1 ∗ x + 4 ≡ 3 (mod 11) 1 ∗ x ≡ 10 (mod 11) 
+
+x ≡ 10 ∗ 1 ≡ 10 (mod 11) 
+
+Convert back: 10 → e7 
+
+#### e7 
+
+Backward reasoning on evaluation example 
+
+Read off the inverse mapping: e0 = 0 , e1 = 1 , e9 = 2 , e2 =3, e5 = 4 , e7 = 5 , e3 = 6 , e10 = 7 , e4 = 8 , e6 = 9 , e8 = 10 
+
+Undo Step 3, Multiply by e5 (e5 = 4) : (x) ∗ 3
+
+Undo Step 2, Add e8 (e8 = 10) : (x) ∗ 3 − 10 
+
+Undo Step 1, Add e2 (e2 = 3) : (x) ∗ 3 − 10 − 3
+
+Equation: 3 ∗ x + 9 ≡ 7 (mod 11) 3 ∗ x ≡ 9 (mod 11) 
+
+x ≡ 9 ∗ 4 ≡ 3 (mod 11) 
+
+Convert back: 3 → e2 
+
+#### e2 
+
+Backward reasoning on inversion example 
+
+Read off the inverse mapping: e1 = 0 , e4 = 1 , e5 = 2 , e8 =3, e6 = 4 , e3 = 5 , e9 = 6 , e0 = 7 , e10 = 8 , e2 = 9 , e7 = 10 
+
+Result e8 = 3 
+
+Undo Step 2, Add e4 : 3 − 1 mod 11 = 2 
+
+Undo Step 1, Add e8 : 2 − 3 mod 11 = 10 
+
+Convert back: 10 → e7 
+
+#### e7 
+
+Figure 1: Examples of evaluation and inversion problems and forward and backward solutions over GF(11). 
+
+• Tilting. In our main setting, we maintain a uniform distribution over evaluation and inversion problems, reflecting no tilting relative to the SFT dataset. In subsequent experiments, we tilt toward evaluation problems at 75-25 and 90-10 proportions. For rewards, we always consider outcome level reward, that is, whether the final answer reported by the model is correct for the given arithmetic question. 
+
+## 2.2 Training 
+
+We take Qwen2.5-1.5B-Instruct as the base pre-trained model. For training, we use LoRA with rank 64, α = 128 , and dropout 0.05. For SFT, we use a dataset of 2048 prompt-response pairs, and train for 20 epochs with AdamW with learning rate 2 × 10 −4, batch size 16, and warmup-stable learning rate schedule with linear warmup for 1 epoch. For RL, we use datasets of 1024 prompts and always use GRPO with outcome rewards, batch size 32, group size 8, KL parameter β = 0 .05 , and temperature 0.7 for rollout generation. We train with AdamW with learning rate 1 × 10 −5 for 500-1000 steps, saving checkpoints every 25 steps. For each experiment, we use 3 seeds for SFT and a single RL run starting from each SFT checkpoint, for 3 total RL runs. In Section B we demonstrate via ablations that our results are robust to various modifications to hyperparameters. 4500 1000 1500 2000 2500           
+
+> SFT step
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Accuracy
+> SFT
+> Backward reasoning
+> Forward reasoning
+> Mixed reasoning
+> 0200 400 600 800 1000
+> RL step
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Accuracy
+> RL
+> 0.2
+> 1.0
+> Reward
+> 020 40 60 80 100
+> RL step
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Fraction
+> Strategy selection
+> Correctly routed
+> Routed, correct
+> Routed, wrong
+
+Figure 2: Main results in GF (11) setting, demonstrating both strategy selection and improvement. Left panel shows accuracy on held-out 2-5 step problems over the course of SFT training. Center panel shows accuracy on held-out 6-9 step problems over the course of RL training, with inset showing per step (in-sample) reward curves. Right panel focuses on the learning dynamics of FB models. A simple rule-based classifier identifying strategy type shows that performance improvements are largely driven by strategy selection with strategy improvement contributing to a lesser degree. 
+
+# 3 Experimental results 
+
+In this section, we present our experimental results, identifying strategy selection and strategy improvement as the two central mechanisms by which RL improves reasoning performance. 
+
+## 3.1 Mechanism 1: Strategy Selection 
+
+The first experiment identifies both strategy selection and strategy improvement mechanisms. In this experiment, we generate three SFT datasets by adjusting the responses to contain (a) forward-only reasoning (F), (b)
+
+backward-only reasoning (B), and (c) mixed forward+backward (FB) reasoning, where in the latter each problem is solved with one of the two strategies chosen uniformly. We train SFT variants on each of these three datasets, and then perform RL training on harder 6-9 step problems over GF (11) and GF (13) . Results are visualized in Figures 2 to 4. Recall that forward reasoning is the natural strategy for evaluation problems (direct step-by-step computation), while backward reasoning is natural for inversion problems (undoing operations from the known result). This design is reflected in the experimental results, where each single-strategy model masters its natural problem type but struggles on the other: the F-only model achieves ∼100% on 2-5 step evaluation but only ∼60 -65% on inversion, while the B-only model achieves ∼100% on inversion but only ∼55 -60% on evaluation. Both models achieve ∼80% accuracy in aggregate. The FB model, also achieves ∼80% accuracy in aggregate (left panel of Fig. 2) but for a different reason: it selects strategies at random for each problem and has a 50% chance of picking the “wrong” strategy. However, the emergent behavior after RL training is very different. For the F-only (resp. B-only) model, RL learns to master the forward (resp. backward) strategy that it has already seen in the SFT data, enabling the accuracy to improve on evaluation (resp. inversion) problems. The other problem type sees essentially no improvement in performance over RL training. Overall, for the F-/B-models, RL learns to transfer the ∼80% 
+
+SFT performance on 2-5 step problems to the harder 6-9 step problems, but the accuracy plateaus at ∼60% 
+
+for F-models and ∼50% for B-models thereafter. 2 Without access to an alternative reasoning strategy, there is no better strategy for RL to select. In contrast, the FB model tells a strikingly different story. Despite starting from an SFT checkpoint with comparable performance, RL rapidly drives accuracy to ⩾95% on both problem types across all seeds. This is 
+
+> 2Examining the left and center panels of Fig. 3, this drop in performance arises because backward (resp. forward) reasoning is worse on the harder evaluation (resp. inversion) problems than on the easier ones. Further, backward reasoning is slightly harder to learn in general than forward reasoning.
+
+51 2 4 8 16 32             
+
+> k
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> pass@k
+> Backward Reasoning
+> Inversion
+> Evaluation
+> 124816 32
+> k
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Forward Reasoning
+> Inversion Evaluation
+> SFT
+> RL
+> 124816 32
+> k
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Mixed Reasoning
+> Inversion Evaluation
+
+Figure 3: Pass@k results for the best SFT and RL checkpoints in the main GF (11) setting. Main panels visualize aggregated results for Backward (left), Forward (center) and mixed (right) reasoning, with insets displaying results for inversion and evaluation problem subsets. Backward reasoning, particularly on inversion problems, improves substantially through RL. Forward reasoning on evaluation problems is already saturated despite increased problem difficulty. Backward on evaluation (resp. forward on inversion) show no improvement through RL. Finally mixed reasoning improves on both subsets and achieves near-perfect pass@1 performance in aggregate. 50 100 150 200       
+
+> RL step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Accuracy
+> Backward Reasoning
+> 50 100 150 200
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Forward Reasoning
+> 50 100 150 200
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Mixed Reasoning
+> 6-step inv
+> 7-step inv
+> 8-step inv
+> 9-step inv
+> 6-step eval
+> 7-step eval
+> 8-step eval
+> 9-step eval
+
+Figure 4: Breakdown of RL training dynamics in the main GF (11) setting. We visualize the running average reward for each problem type (inversion/evaluation) and each number of steps (6-9). Backward reasoning on evaluation problems (resp. forward reasoning on inversion problems) shows no improvement with RL training. For mixed reasoning, we see improvements in all problem subgroups. depicted for GF (11) in the center panel of Fig. 2. The right panel shows that the mechanism behind this is 
+
+strategy selection : the SFT mixture exposes the model to both forward and backward reasoning patterns, and RL rapidly learns to dispatch each problem to the appropriate strategy—forward for evaluation, backward for inversion. This routing is the dominant driver of improvement. The FB model succeeds not because it learns a new reasoning strategy during RL, but because the SFT data endowed it with a richer repertoire of strategies to choose from. 
+
+3.1.1 Case Study: Strategy Amplification 
+
+Strategy amplification occurs when a reasoning pattern appears much more frequently after reinforcement learning than before. To study strategy amplification in our setting, we focus on FB models on RL datasets that over-represent evaluation problems (i.e., tilted datasets). In Fig. 5, we find that in three different RL dataset compositions (50-50, 75-25, and 90-10 evaluation-inversion proportions), RL post-training an FB model yields near-perfect accuracy. In all cases, analysis of the roll-outs shows that the fraction of forward-style reasoning closely matches the fraction of evaluation problems in the dataset, reflecting strategy amplification in the tilted settings. However, the underlying mechanism is strategy selection; RL training routes problems to 60 100 200 300 400 500      
+
+> RL step
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Reward
+> RL Training
+> 50-50
+> 75-25
+> 90-10
+> 0100 200 300 400 500
+> RL step
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Forward fraction
+> Strategy selection
+
+Figure 5: Results for mixed reasoning models in the skewed setting with GF(11). Left: The (smoothed) reward under three RL problem distributions reflecting skew toward evaluation problems. Right: the fraction of forward generations over time precisely matches the fraction of evaluation problems in the dataset. the best reasoning pattern, so a skew in problems results in a skew in observable reasoning patterns. Strategy amplification is an observable effect of strategy routing. This finding may shed light on prior works identifying amplification of reasoning patterns such as backtracking and the so-called “aha moments” [ DA25 ]. Consistent with our results, these prior works show that RL can amplify reasoning patterns obtained through pre-training and SFT. Our controlled experiments identify strategy selection as a potential cause for amplification: the process of identifying useful strategies for the RL dataset leads to increases in observable features such as backtracking. 
+
+> Strategy selection takeaways
+
+• Strategy selection occurs when RL associates problems to reasoning patterns. 
+
+• Strategy selection leads to rapid performance improvements during RL. 
+
+• Strategy selection is an underlying cause of strategy amplification. 
+
+• Strategy selection relies on diverse reasoning in pre-training and SFT data. 
+
+## 3.2 Mechanism 2: Strategy Improvement 
+
+Strategy improvement occurs when the basic reasoning patterns learned during pretraining/SFT are enhanced during RL training. In our setting, we train on problems of increased difficulty to probe strategy improvement. Indeed, this mechanism can already be seen in the main experiments visualized in Figs. 2 to 4. Specifically, in the right panel of Fig. 2 we see that the fraction of correctly routed but incorrect solution attempts decreases over training, reflecting improvement in the underlying reasoning pattern. This is corroborated by the RL training dynamics visualized in Fig. 4 where disaggregated performance—broken down into segments of question type and difficulty—is monotonically improving for all segments. Moreover, comparing the time scales of strategy selection (40 steps) and disaggregated reward, we see substantial performance improvements occur well after selection is completed. Finally, focusing on the B-only models, where strategy selection is suppressed, RL improves to perfect accuracy on inversion problems (upper inset of left panel of Fig. 3). We validate the robustness of these results by considering the even harder RL dataset comprising problems with 6-15 arithmetic steps. As the findings are similar, we defer the details to the appendix. In Table 1 we study the role of the RL dataset in eliciting strategy improvement. Initializing from the same SFT checkpoints, we perform RL on an easy dataset consisting of 2-5 arithmetic step problems, which matches the distribution of the SFT data. We evaluate the SFT checkpoints, these easy post-RL models, and the models that were RL-trained on 6–9 step problems, on a validation set of 6–9 step problems and record the pass@1 performance in aggregate and disaggregated into problem type. We see that RL training on easy data does not lead to performance improvements for Backward- and Forward-only models, where strategy selection 7Backward Forward Mixed Training All Inv Eval All Inv Eval All Inv Eval SFT 24.5 38.9 11.9 57.0 10.7 97.1 47.0 27.1 64.3 RL (2–5) 18.4 25.6 10.1 48.0 9.3 91.7 60.0 32.2 91.5 RL (6–9) 50.8 96.0 11.6 58.3 11.0 99.3 95.7 94.1 97.1 
+
+Table 1: Pass@1 accuracy on 6–9 step problems for different models. SFT models trained on 2–5 step data, models trained via RL on both 2–5 step and 6–9 step problems. For forward and backward reasoning, RL on 2–5 step problems (in distribution) degrades performance slightly, while RL on 6-9 step performance induces strategy improvement (especially for backward models). For mixed reasoning, in-distribution RL only induces strategy selection, while RL on 6–9 step problems induces both strategy selection and improvement. is suppressed; no strategy improvement occurs in these settings. For mixed reasoning, RL on easy data does lead to performance improvements, but this can be attributed to strategy selection; strategy improvement only appears when RL training on the harder dataset, where it yields further performance improvements. 
+
+3.2.1 Case Study: Strategy Improvement for Composition 
+
+We consider an alternate setting demonstrating strategy improvement through skill composition. Here, we introduce composition problems , where a prompt chains together n evaluation and inversion sub-problems over the same finite field. The model must solve each sub-problem sequentially and propagate intermediate results across the full chain, testing a qualitatively different capability from solving individual problems. Examples of such problems are described in the appendix in Fig. 11. We compare two SFT configurations: one including 2-part composition problems (each part is a 1-step evaluation or inversion problem) alongside standard length 2-5 evaluation and inversion problems, and the other with only length 2-5 evaluation and inversion problems. In both cases, we perform RL on harder 3-5 part composition problems (each part is a 1- or 2-step inversion or evaluation sub-problem). Results are visualized in Fig. 6. When 2-part composition is present in the SFT data (left panel of Fig. 6), RL yields substantial improvements on 3-5 part problems, where each part may also have more steps. Thus RL extends the composition skill seeded by the 2-part SFT examples to longer chains. In contrast, without any composition data in the SFT mix (right panel), RL yields no improvement, despite the model possessing the individual sub-skills. This illustrates strategy improvement for composition: RL strengthens and generalizes the ability to compose to harder instances, but does not learn composition from scratch. Our results are in tension with [ YCZ +25 ] who show that RL can teach the model to compose atomic skills when they are already present in the model. This phenomenon appears to be nuanced: in our setting, some degree of compositional data in the SFT dataset appears essential for RL to improve compositional reasoning. 
+
+> Strategy improvement takeaways
+
+• Strategy improvement occurs when RL improves existing reasoning patterns. 
+
+• Strategy improvement operates on a slower timescale than selection. 
+
+• Composition benefits from strategy improvement, but RL does not learn composition from scratch. 
+
+• Strategy improvement relies on increasing difficulty in RL data. 
+
+# 4 Discussion 
+
+In this paper, we present a study of reinforcement learning for math reasoning through controlled experiments on a finite-field arithmetic task, and identify two core mechanisms by which RL improves performance: strategy selection and strategy improvement. The emergence of these mechanisms depends strongly on the pre-training / SFT datasets and what kinds of solution strategies they expose to the model. When SFT data exposes the model to multiple reasoning strategies, RL rapidly learns to route problems to the 80 100 200 300 400 500 
+
+> RL Step
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> Accuracy  SFT with 2-part comp (3-part eval)
+> SFT with 2-part comp (4-part eval)
+> SFT with 2-part comp (5-part eval)
+> SFT with 2-part comp (overall)
+> SFT without comp (overall)
+> random (0.091)
+
+Figure 6: Main results in the GF (11) setting with composition, demonstrating strategy improvement. The 
+
+red , green and blue curves show accuracy on held-out 3-5 part composition problems over the course of RL training when the SFT mix contains 2-part composition problems. The purple curve tracks the average evaluation performance on 3-5 part problems over the course of RL training, when the SFT dataset only contains inversion and evaluation problems. most effective one, achieving near-perfect accuracy. In our setting, models trained with a single strategy are fundamentally limited and RL cannot compensate. This underscores that efforts to scale RL-based reasoning should prioritize diversity in pre-training and SFT data, not only the downstream RL recipe. Strategy improvement is essential for generalization to harder problems, but requires the RL dataset to present problems of greater difficulty than those seen during SFT; training on problems of comparable difficulty yields no improvement. This suggests that RL datasets should be designed to contain a difficulty curriculum. While our experiments do not identify settings where RL induces novel reasoning capabilities, a phenomenon that appears to emerge from continued RL on challenging datasets [ LDL +25 ], understanding the mechanisms through which RL moves beyond selection and refinement of pre-existing strategies is perhaps the most important open question raised by our work. More broadly, our results suggest that viewing RL post-training in isolation is insufficient. The effectiveness of RL is tightly coupled with the quality and diversity of supervision in the pre-RL stages, which determine the repertoire of strategies available for selection and improvement. We hope that this study encourages more integrated approaches to the full training pipeline, and provides a foundation for principled interventions that continue to scale reasoning capabilities. 
+
+# References 
+
+[CLZ25] Xingwu Chen, Tianle Li, and Difan Zou. Reshaping reasoning in LLMs: A theoretical analysis of RL training dynamics through pattern selection. arXiv:2506.04695 , 2025. 2 [CZC +25] Ganqu Cui, Yuchen Zhang, Jiacheng Chen, Lifan Yuan, Zhi Wang, Yuxin Zuo, Haozhan Li, Yuchen Fan, Huayu Chen, Weize Chen, Zhiyuan Liu, Hao Peng, Lei Bai, Wanli Ouyang, Yu Cheng, Bowen Zhou, and Ning Ding. The entropy mechanism of reinforcement learning for reasoning language models. arXiv:2505.22617 , 2025. 2 [DA25] DeepSeek-AI. Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. 
+
+arXiv:2501.12948 , 2025. 2, 7, 11 [HBF +24] Audrey Huang, Adam Block, Dylan J Foster, Dhruv Rohatgi, Cyril Zhang, Max Simchowitz, Jordan T Ash, and Akshay Krishnamurthy. Self-improvement in language models: The sharpening mechanism. arXiv:2412.01951 , 2024. 2, 11 [HFW25] Andre He, Daniel Fried, and Sean Welleck. Rewarding the unlikely: Lifting GRPO beyond distribution sharpening. arXiv:2506.02355 , 2025. 2 9[LCL +25] Zichen Liu, Changyu Chen, Wenjun Li, Penghui Qi, Tianyu Pang, Chao Du, Wee Sun Lee, and Min Lin. Understanding R1-zero-like training: A critical perspective. arXiv:2503.20783 , 2025. 2, 11 [LDL +25] Mingjie Liu, Shizhe Diao, Ximing Lu, Jian Hu, Xin Dong, Yejin Choi, Jan Kautz, and Yi Dong. ProRL: Prolonged reinforcement learning expands reasoning boundaries in large language models. 
+
+arXiv:2505.24864 , 2025. 2, 9, 11 [MTM +25] Kohsei Matsutani, Shota Takashiro, Gouki Minegishi, Takeshi Kojima, Yusuke Iwasawa, and Yutaka Matsuo. RL squeezes, SFT expands: A comparative study of reasoning LLMs. arXiv:2509.21128 ,2025. 2 [SCH +25] Yiyou Sun, Yuhan Cao, Pohao Huang, Haoyue Bai, Hannaneh Hajishirzi, Nouha Dziri, and Dawn Song. RL grokking recipe: How does RL unlock and transfer new algorithms in LLMs? 
+
+arXiv:2509.21016 , 2025. 11 [SHZ +25] Yiyou Sun, Shawn Hu, Georgia Zhou, Ken Zheng, Hannaneh Hajishirzi, Nouha Dziri, and Dawn Song. Omega: Can LLMs reason outside the box in math? evaluating exploratory, compositional, and transformative generalization. arXiv:2506.18880 , 2025. 11 [SLX +25] Rulin Shao, Shuyue Stella Li, Rui Xin, Scott Geng, Yiping Wang, Sewoong Oh, Simon Shaolei Du, Nathan Lambert, Sewon Min, Ranjay Krishna, Yulia Tsvetkov, Hannaneh Hajishirzi, Pang Wei Koh, and Luke Zettlemoyer. Spurious rewards: Rethinking training signals in RLVR. arXiv:2506.10947 ,2025. 2 [TMUK25] Nikolaos Tsilivis, Eran Malach, Karen Ullrich, and Julia Kempe. How reinforcement learning after next-token prediction facilitates learning. arXiv:2510.11495 , 2025. 2, 11 [WLZ +25] Xumeng Wen, Zihan Liu, Shun Zheng, Shengyu Ye, Zhirong Wu, Yang Wang, Zhijian Xu, Xiao Liang, Junjie Li, Ziming Miao, Jiang Bian, and Mao Yang. Reinforcement learning with verifiable rewards implicitly incentivizes correct reasoning in base LLMs. arXiv:2506.14245 , 2025. 11 [WXL +25] Fang Wu, Weihao Xuan, Ximing Lu, Mingjie Liu, Yi Dong, Zaid Harchaoui, and Yejin Choi. The invisible leash: Why RLVR may or may not escape its origin. arXiv:2507.14843 , 2025. 2, 11 [WYG +25] Shenzhi Wang, Le Yu, Chang Gao, Chujie Zheng, Shixuan Liu, Rui Lu, Kai Dang, Xionghui Chen, Jianxin Yang, Zhenru Zhang, Yuqiong Liu, An Yang, Andrew Zhao, Yang Yue, Shiji Song, Bowen Yu, Gao Huang, and Junyang Lin. Beyond the 80/20 rule: High-entropy minority tokens drive effective reinforcement learning for LLM reasoning. arXiv:2506.01939 , 2025. 2 [YCL +25] Yang Yue, Zhiqi Chen, Rui Lu, Andrew Zhao, Zhaokai Wang, Shiji Song, and Gao Huang. Does reinforcement learning really incentivize reasoning capacity in LLMs beyond the base model? 
+
+arXiv:2504.13837 , 2025. 2, 11 [YCZ +25] Lifan Yuan, Weize Chen, Yuchen Zhang, Ganqu Cui, Hanbin Wang, Ziming You, Ning Ding, Zhiyuan Liu, Maosong Sun, and Hao Peng. From f (x) and g(x) to f (g(x)) : LLMs learn new skills in RL by composing old ones. arXiv:2509.25123 , 2025. 2, 8, 11 [ZMK +25] Rosie Zhao, Alexandru Meterez, Sham Kakade, Cengiz Pehlevan, Samy Jelassi, and Eran Malach. Echo chamber: RL post-training amplifies behaviors learned in pretraining. arXiv:2504.07912 ,2025. 2, 11 [ZNY25] Charlie Zhang, Graham Neubig, and Xiang Yue. On the interplay of pre-training, mid-training, and RL on reasoning language models. arXiv:2512.07783 , 2025. 2, 11 10 A Extended Related Work 
+
+RL for language models. The rapid adoption of RL in language model pipelines has spurred a large body of empirical and algorithmic work on training recipes, data curation, and scalable implementations [ DA25 ,LDL +25 , LCL +25 ]. Alongside these efforts, several studies have attempted to characterize recurring phenomena in RL-trained models: policy distributions tend to sharpen over training [ YCL +25 , WXL +25 ], entropy decreases monotonically, and final performance depends heavily on the quality of the pre-trained checkpoint and the design of the reward signal. Notably, [ LCL +25 ] critically examine R1-Zero-like training (RL directly on base models without SFT) and find that behaviors such as “Aha moments” are already present in base models prior to RL, and that Qwen2.5 base models exhibit strong reasoning capabilities even without structured prompting, suggesting significant pretraining biases. These observations underscore a recurring theme in the literature, and a central finding of our work: the effectiveness of RL post-training is tightly coupled with what the base model has already learned. 
+
+Strategy selection. Several prior works have observed that RL concentrates probability mass on a subset of reasoning behaviors available in the base model. [ ZMK +25 ] shows that, when pre-training data contains multiple output formats, RL consistently converges to a single format, which may not be the most performant. [ TMUK25 ] study a controlled setting where the model is pretrained with multiple solution strategies, and observe that RL converges to the single most accurate one. Our work differs from these in an important respect: rather than convergence to a single dominant strategy, we observe that RL learns to route different problem types to different strategies present in the pretraining data, highlighting that data diversity in pre-training is what enables this richer form of selection. 
+
+Strategy improvement. A number of works demonstrate that RL can yield sustained performance gains, particularly with well-designed data mixtures [ LDL +25 , SHZ +25 , SCH +25 ], though the mechanisms driving these gains are often left unexamined. In controlled settings, [ ZNY25 ] identify what they term extrapolative generalization: when RL data difficulty slightly exceeds that of pre-training, the model’s reasoning patterns strengthen and transfer to harder problems. [ YCZ +25 ] provide a complementary perspective, showing that RL can compose pre-existing atomic skills into new composite capabilities in a synthetic math reasoning task. From a different angle, [ WLZ +25 ] argue that RLVR can genuinely extend the reasoning boundary beyond pure distribution sharpening. Our controlled experiments place them in a broader context: we show that strategy improvement, while important for out-of-distribution generalization, often plays a secondary role relative to strategy selection when both mechanisms are active. 
+
+Strategy amplification. The amplification of certain reasoning behaviors during RL—most visibly back-tracking and self-correction—was brought to wide attention by DeepSeek-R1 [ DA25 ] and has since been examined from multiple angles. [ HBF +24 ] introduced the sharpening framework, formalizing how RL con-centrates probability mass on successful trajectories already accessible to the base model; subsequent work confirmed this picture empirically [ YCL +25 , WXL +25 ]. Our experiments offer a unifying perspective: we show that amplification can be understood as an observable consequence of strategy selection, where the model’s learned routing toward effective strategies naturally increases the prevalence of associated reasoning patterns. 
+
+# B Additional Experimental Results 
+
+In this section we discuss several additional experimental results. 
+
+Ablations. First, we ran several ablations to our SFT and RL training recipes to evaluate robustness of our findings. In our setting, training (especially SFT) is substantially less compute-intensive than downstream evaluation, which requires collecting a large number of generations from the model. Consequently, for the ablation study we focus on evaluation metrics that are less compute intensive to collect, specifically validation cross entropy for SFT and online reward for RL. Results are displayed in Table 2 and Table 3 respectively. For SFT, we consider two alternative learning rates from our default choice of 2 ×10 −4 and find that results are extremely robust to this choice. As we always select 11 Table 2: SFT learning rate ablation on GF(11). Best validation cross-entropy and corresponding epoch across 20 epochs of training. All learning rates achieve nearly identical performance. ⋆ denotes the default configuration used in all main experiments. 
+
+lr=1e-4 lr=2e-4 ⋆ lr=5e-4 
+
+B 0.0856 (ep 6) 0.0859 (ep 5) 0.0863 (ep 6) F 0.0857 (ep 6) 0.0858 (ep 3) 0.0862 (ep 5) FB 0.0879 (ep 5) 0.0879 (ep 6) 0.0884 (ep 6) Table 3: RL hyperparameter ablation on GF(11). Final reward (smoothed over the last 100 training steps) on 6–9 step problems. ⋆ denotes the default configuration used in all main experiments. Observe that these choices are near optimal for forward, backward, and mixed reasoning models. 
+
+group_size=8 group_size=16 
+
+β=0.05 β=0.1 β=0.05 β=0.1 B, lr=1e-5 53% ⋆ 53% — 58% B, lr=5e-5 14% 55% 51% 53% F, lr=1e-5 60% ⋆ 58% 51% 52% F, lr=5e-5 54% 56% 51% 48% FB, lr=1e-5 97% ⋆ 96% 98% 97% FB, lr=5e-5 54% 96% 51% 52% the best SFT checkpoint using generation-based evaluation, the differences in best epoch are not meaningful for our experiments. For RL, we vary learning rate, KL regularization coefficient β and the group size used in GRPO. We find that our defaults (learning rate 1 × 10 −5, β = 0 .05 and group size 8) are essentially the best performing choices for all three types of reasoning models. 
+
+Extension to GF(13). As a further robustness check, we also experiment with arithmetic reasoning over a larger field, namely GF(13). Here we reproduce the main experiments, where we SFT on problems requiring 2-5 arithmetic steps, and RL on problems requiring 6-9 arithmetic steps, where both datasets have a uniform mixture of inversion and evaluation questions. The findings, visualized in Figs. 7 and 8, echo those in Figs. 2 and 3. Namely, all three models achieve similar performance on the 2-5 step dataset after SFT, but only the mixed reasoning model is able to achieve near-perfect performance on the harder 6-9 step dataset after RL. 
+
+Extension to 6-15 arithmetic steps. We also extend the main GF(11) setting, where the RL dataset consists of problems with 6-9 arithmetic steps, to a more challenging setting where the RL data requires 6-15 steps of arithmetic reasoning (chosen uniformly). Here we only trained mixed-reasoning models. The results, displayed in Figs. 9 and 10, are similar to those in the main setting (Figs. 2 and 3). We see that after RL training the model nearly saturates even this harder dataset and, notably, the performance on inversion problems reflects substantial strategy improvement. 
+
+# C Additional details 
+
+All experiments in this paper were run on 1-4 A100-40GB GPUs. Each SFT run took 1-2 hours to complete. The RL experiments took 2-3 hours per run. In Fig. 11 we provide an example of a 2-part composition problem and its solution over GF (11) . The problem chains two inversion sub-problems, where the answer from Part 1 ( y1) is propagated to Part 2. 12 500 1000 1500 2000 2500 
+
+SFT step 
+
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Accuracy
+
+SFT      
+
+> Backward reasoning
+> Forward reasoning
+> Mixed reasoning
+> 0200 400 600 800 1000
+
+RL step 
+
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Accuracy
+
+RL 
+
+> 0.2
+> 1.0
+> Reward
+
+Figure 7: Main results for GF(13). Left: accuracy (measured via outcome correctness on model rollouts) over the course of SFT on the easier (2-5 step) SFT validation dataset, showing that all models saturate at 70-80% accuracy. Right: accuracy over the course of RL training on the harder (6-9 step) RL validation dataset with inset showing individual run reward curves. As in the main GF(11) setting, mixed reasoning during pre-training enables substantial improvements with RL and this is largely driven by strategy selection. 1 2 4 8 16 32             
+
+> k
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> pass@k
+> Backward Reasoning
+> Inversion
+> Evaluation
+> 124816 32
+> k
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Forward Reasoning
+> Inversion Evaluation
+> SFT
+> RL
+> 124816 32
+> k
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Mixed Reasoning
+> Inversion Evaluation
+
+Figure 8: Pass@k results and per-problem-type breakdown for GF(13), paralleling the results in Fig. 3. Improvements for backward (resp. forward) reasoning models are entirely driven by improvements in inversion (resp. evaluation) problems. Mixed reasoning models achieve near-perfect accuracy on both problem types. 13 0 100 200 300 400 500        
+
+> RL step
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> Reward
+> RL Training
+> 124816 32
+> k
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> 0.8
+> 0.9
+> 1.0
+> pass@k
+> pass@k
+> SFT
+> Best RL
+> 6-9 10-12 13-15
+> Arithmetic steps
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Accuracy
+> Pass@1 by difficulty
+> SFT
+> Best RL
+
+Figure 9: Results for RL training of mixed reasoning models in the extended setting, where the RL dataset contains problems with 6-15 arithmetic steps. Left: reward curves for three independent seeds of RL training. Center: pass@k curves for the SFT initialization and the best RL checkpoint showing substantial performance improvements with RL. Right: pass@1 performance across problem types, stratified by number of arithmetic steps. Consistent with the findings in the main GF(11) experiments, we see that RL rapidly learns to get near-perfect accuracy on this much harder dataset, substantially improving on the SFT initialization. 1 2 4 8 16 32 
+
+k
+
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> pass@k
+
+Evaluation      
+
+> SFT
+> Best RL
+> 124816 32
+
+k
+
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> pass@k
+
+Inversion 
+
+Figure 10: Pass@k results and per-problem-type breakdown for the extended GF(11) setting, where the RL training data consists of problems with 6-15 arithmetic steps. Consistent with findings from the main experiments, RL rapidly achieves near-perfect accuracy, in particular eliciting substantial performance gains on inversion problems. 14 Example 2-part composition problem over GF (11) where each part is unit length 
+
+In a number system where arithmetic on {0, · · · , 10 } is relabeled as: 0 → e1 , 1 → e0 , 2 → e3 , 3 → e9 , 4 → e2 ,
+
+5 → e4 , 6 → e5 , 7 → e7 , 8 → e8 , 9 → e10 , 10 → e6 . All addition and multiplication follow modular arithmetic (mod 
+
+11 ). 
+
+Part 1 : I apply the following step to an unknown element 
+
+x1:Step 1: Multiply by e4 .The result is e4 . What is x1? Call the answer y1.
+
+Part 2 : I apply the following step to an unknown element 
+
+x2:Step 1: Add y1.The result is e0 . What is x2?
+
+Solution to 2-part composition example 
+
+Read off the inverse mapping: e1 = 0 , e0 = 1 , e3 = 2 , e9 =3, e2 = 4 , e4 = 5 , e5 = 6 , e7 = 7 , e8 = 8 , e10 = 9 , e6 = 10 
+
+Part 1 : Result e4 (= 5) .Undo Step 1, Multiply by e4 (e4 = 5) : 5 × 5−1 mod 11 = 5 × 9 mod 11 = 1 
+
+x1 = 1 → e0 , so y1 = e0 .
+
+Part 2 : Result e0 (= 1) .Apply Step 1, Add e0 (e0 = 1) : x + 1 
+
+Equation: 1 · x + 1 ≡ 1 (mod 11) 1 · x ≡ 0 (mod 11) 
+
+x ≡ 0 (mod 11) 
+
+Convert back: 0 → e1 
+
+#### e1 
+
+Figure 11: Example of a 2-part composition problem over GF (11) and its solution. The problem chains two inversion sub-problems, where the answer from Part 1 ( y1) is propagated to Part 2. The model must correctly solve both sub-problems to get the final answer. 15
