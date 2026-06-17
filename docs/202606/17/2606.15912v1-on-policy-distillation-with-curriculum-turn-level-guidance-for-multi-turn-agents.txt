@@ -1,0 +1,527 @@
+Title: On-Policy Distillation with Curriculum Turn-level Guidance for Multi-turn Agents
+
+URL Source: https://arxiv.org/pdf/2606.15912v1
+
+Published Time: Tue, 16 Jun 2026 01:43:28 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+Working in Progress 
+
+# On-Policy Distillation with Curriculum Turn-level Guidance for Multi-turn Agents 
+
+Gengsheng Li 1,2 ∗, Mao Zheng 3∗, Mingyang Song 3∗, Ruiqi Liu 2,Tianyu Yang 1,2 , Jie Sun 4, Qiyong Zhong 5, Haiyun Guo 1,2 ,
+
+Junfeng Fang 6, Dan Zhang 6, Jinqiao Wang 1,2,7 
+
+> 1
+
+Foundation Model Research Center, Institute of Automation, Chinese Academy of Sciences 
+
+> 2
+
+School of Artificial Intelligence, University of Chinese Academy of Sciences 
+
+> 3
+
+Large Language Model Department, Tencent, 4University of Science and Technology of China 
+
+> 5
+
+Zhejiang University, 6National University of Singapore, 7Wuhan AI Research 
+
+> ligengsheng2024@ia.ac.cn
+
+Abstract 
+
+Multi-turn agents that plan, invoke tools, and interact with environments offer a promising paradigm for solving complex tasks, yet their capabilities typically rely on very large mod-els whose inference cost is prohibitive in prac-tice. On-Policy Distillation (OPD) is a natu-ral recipe for transferring such capabilities to smaller students, but we find that it suffers a characteristic failure mode in this setting: small student errors compound across turns and push the trajectory out of the teacher’s familiar state distribution, so the teacher’s supervision be-comes least reliable precisely where the student needs it most. We propose Guided On-Policy Distillation (Guided-OPD), a simple yet effec-tive algorithm that mixes teacher- and student-generated turns within each rollout and sched-ules the teacher’s intervention probability along a curriculum that decays to zero. Strong guid-ance keeps early trajectories close to the teacher distribution and is then gradually withdrawn to recover the purely on-policy regime used at inference. On ALFWorld, ScienceWorld, and WebShop, distilling Qwen3 students from a Qwen3-30B-A3B teacher, Guided-OPD im-proves Score by 21.1% and Success Rate by 25.5% over vanilla OPD on average, with larger gains on smaller students. 
+
+1 Introduction 
+
+Multi-turn agents that autonomously plan (Wang et al., 2023), use tools (Schick et al., 2023; Singh et al., 2025), and interact with their environ-ment (Yao et al., 2023; Chen et al., 2025) are be-coming an essential paradigm for solving complex   
+
+> ∗Equal contribution. Code: https://github.com/ Zzzz-166/Guided-OPD
+
+Figure 1: Failure mode of vanilla OPD on multi-turn agents and how Guided-OPD addresses it. (a) Teacher PPL on student-generated tokens versus interaction turn at different training steps: under vanilla OPD, PPL grows with the turn index and remains high even af-ter 200 steps, while Guided-OPD lowers PPL across all turns, with the gap widening at later turns. (b) Schematic of the rollout dynamics. The teal region denotes the teacher’s familiar distribution, where black and red segments denote student- and teacher-generated turns. Vanilla OPD samples every turn from the student and quickly leaves this region, while Guided-OPD in-tersperses teacher turns to anchor the rollout, with the curriculum schedule injecting more teacher turns early and fewer as training proceeds. 
+
+tasks (Xi et al., 2023; Yu et al., 2025b). Such capa-bilities, however, are typically realized by models 
+
+1
+
+> arXiv:2606.15912v1 [cs.LG] 14 Jun 2026
+
+with very large parameter counts (Team, 2025), which incur substantial inference cost and deploy-ment overhead (Xu et al., 2024a). A central ques-tion for building practical agents is therefore how to stably transfer the strong agentic capabilities of a large teacher model to a much smaller student (Xu et al., 2024b; Kang et al., 2025; Qiu et al., 2025; Liu et al., 2025; Li et al., 2025). On-Policy Distil-lation (OPD) has recently emerged as an effective paradigm for transferring complex reasoning abil-ities (Lu and Lab, 2025; Xiao et al., 2026; Sun et al., 2026; Zhong et al., 2026). By aligning the teacher distribution directly on trajectories sampled from the student itself (Agarwal et al., 2024; Gu et al., 2024), OPD combines the training-inference consistency of on-policy learning with the dense supervision of token-level distillation (Ross et al., 2011b; Gudibande et al., 2023), and yields strong results on static reasoning tasks such as mathemat-ics (Jin et al., 2026; Xu et al., 2026) and question answering (Hou et al., 2026). Nevertheless, previ-ous work points out that OPD often suffers from noisy supervision signals (Fu et al., 2026; Li et al., 2026b) and unstable optimization (Zhu et al., 2026; Luo et al., 2026; Song and Zheng, 2026; Li et al., 2026a; Yang et al., 2026a). Since multi-turn agents constitute a dynamic interactive setting that differs sharply from static reasoning (Yu et al., 2025b; Zhou et al., 2024) and can plausibly amplify the is-sues already reported there (Xue et al., 2025; Wang et al., 2026a), whether OPD remains effective in this regime is an urgent open question. In this paper, we apply OPD to multi-turn agents and identify a characteristic failure mode. For ev-ery agent turn, we compute the cross-entropy of the teacher with respect to the tokens generated by the student, and exponentiate it to obtain the teacher perplexity (PPL). As shown in Figure 1(a), under vanilla OPD the teacher PPL grows with the turn index, indicating that the reliability of the teacher’s supervision degrades as the agent interacts more extensively with the environment. We attribute this behavior to a form of distribution drift that is in-trinsic to the multi-turn setting. Within a single rollout, each student action triggers unpredictable environment feedback, and small biases introduced in early turns can propagate and compound across the trajectory, so that within only a handful of turns the student may steer the rollout out of the state distribution familiar to the teacher. On such trajec-tories the teacher itself becomes uncertain, and its output distribution no longer serves as a reliable distillation target. More critically, this effect is not naturally alleviated by longer training: as shown in Figure 1(a), the overall PPL drops only marginally from step 100 to step 200, suggesting that the el-evated PPL early in training already constitutes a bottleneck that obstructs efficient knowledge trans-fer from the teacher to the student. To address this issue, we propose Guided On-Policy Distillation (Guided-OPD), a simple yet ef-fective training paradigm. Instead of letting the student complete an entire trajectory on its own, Guided-OPD samples each turn from the teacher with probability β and from the student with proba-bility 1−β, with both models sharing the same con-text. Building on this design, we further introduce a curriculum schedule that decays β as training pro-ceeds. Early in training, when the student is weak and prone to drift, a relatively large β injects more teacher guidance and keeps the trajectory within the teacher’s familiar distribution as much as pos-sible, thereby securing reliable supervision. As the student improves and becomes less likely to push the rollout out of distribution, the decay of β
+
+encourages broader self-exploration and gradually returns training to a purely on-policy regime, which avoids the training-inference mismatch. As shown in Figure 1(a), Guided-OPD substantially lowers the teacher PPL and provides the student with more reliable supervision, while Figure 1(b) presents an intuitive schematic of the method. We systematically validate Guided-OPD on three representative multi-turn agentic bench-marks: ALFWorld (Shridhar et al., 2020), Science-World (Wang et al., 2022), and WebShop (Yao et al., 2022), under three distillation settings that transfer a Qwen3-30B-A3B teacher to 0.6B, 1.7B, and 4B students. Across the three configurations Guided-OPD delivers average relative gains of +21 .1% in Score and +25 .5% in Success Rate over vanilla OPD, while reducing the average number of in-teraction turns by 6.0% . The improvement grows as the student becomes smaller: on the 0.6B stu-dent, the relative gains reach +35 .3% in Score and 
+
++32 .8% in Success Rate, with a 7.9% reduction in interaction turns. Our main contributions are summarized as follows: • We identify a characteristic failure mode of OPD on multi-turn agents, in which the teacher PPL over student-generated tokens grows steadily along the trajectory and is not relieved by longer training, exposing rollout-2level distribution drift as a fundamental obsta-cle to reliable distillation. • We propose Guided-OPD, which mixes teacher- and student-sampled turns within each rollout and equips this mixture with a curriculum schedule, keeping early trajecto-ries close to the teacher distribution while smoothly converging to a purely on-policy regime in later training stage. • We validate Guided-OPD on ALFWorld, Sci-enceWorld, and WebShop across 0.6B, 1.7B, and 4B students distilled from Qwen3-30B-A3B, observing consistent gains in Score and Success Rate, fewer interaction turns, and larger benefits on smaller students. 
+
+2 Preliminary 
+
+Multi-turn Agent. We consider an agent interact-ing with an environment over a finite horizon T ,indexed by t ∈ { 0, . . . , T − 1}. At each turn t,the agent receives an observation ot and produces a response at that consists of a reasoning trace fol-lowed by an executable action (Yao et al., 2023), after which the environment returns the next obser-vation ot+1 . We use turn t to refer to one such in-teraction round (i.e., the cycle ot → at → ot+1 ), and reserve at for the agent-produced segment within it. Since the environment is partially observable, we define the agent state as the full interaction history up to the current observation, 
+
+ht = ( o0, a 0, . . . , o t−1, a t−1, o t), (1) and a complete trajectory as τ =(h0, a 0, . . . , h T −1, a T −1), which terminates when a termination action is executed or when 
+
+T is reached. The agent is parameterized as an autoregressive language model πθ(at | ht).
+
+On-Policy Distillation. Given a frozen teacher policy πϕ and a student policy πθ, OPD aligns the student with the teacher under the student’s own state distribution : the student rolls out a trajectory 
+
+τ ∼ πθ, and the teacher then scores τ via a token-level divergence at each visited state. The training objective is 
+
+LOPD (θ) = Eτ ∼πθ
+
+" T −1X
+
+> t=0
+
+D
+
+
+
+πϕ(at | ht),
+
+¯πθ(at | ht)
+
+#
+
+.
+
+(2) where D(·, ·) is a token-level divergence be-tween the teacher and student conditional dis-tributions, generally including three standard instantiations: (i) forward KL DKL 
+
+ πϕ ∥ πθ
+
+,
+
+(ii) reverse KL DKL 
+
+ πθ ∥ πϕ
+
+, and (iii) Jensen– Shannon divergence , the symmetric interpola-tion 12 DKL (πϕ ∥ M ) + 12 DKL (πθ ∥ M ) with M = 
+
+> 12
+
+(πϕ + πθ).
+
+3 Method 
+
+In this section, we propose Guided-OPD, an on-policy distillation algorithm designed for multi-turn agents and illustrated in Figure 2. Its central idea is to inject teacher guidance during the stu-dent rollout at the granularity of a single turn and to schedule this guidance in a curriculum fashion. Early in training, the teacher takes over a complete turn with relatively high probability, pulling the trajectory back toward the state distribution famil-iar to the teacher and alleviating the supervision degradation that vanilla OPD suffers from when errors accumulate over the long-horizon interaction of a multi-turn agent. As training progresses, the probability of teacher intervention decays along a predefined schedule and eventually reaches zero, so the training process converges smoothly to a pure OPD regime that is fully consistent with in-ference. Concretely, Guided-OPD consists of two complementary components. Turn-level Guidance (§3.1) specifies the granularity of teacher interven-tion and the distillation loss assigned to turns gen-erated by each role, while Curriculum Guidance (§3.2) specifies how the teacher intervention proba-bility β decays with the training step. The unified optimization objective is then presented in §3.3. 
+
+3.1 Turn-level Guidance The turn as the unit of guidance. We refer to the complete ReAct (Yao et al., 2023) style thought-plus-action response at that the agent produces con-ditioned on history ht, excluding the subsequent en-vironment observation ot+1 , as a turn. We choose the turn rather than the token as the unit of guid-ance because, in a multi-turn agent, the quantity that actually shifts the subsequent state distribution is not an individual token but a complete action together with the observation it triggers (Zhong et al., 2026). Switching between teacher and stu-dent at turn boundaries therefore aligns the role transitions with the underlying state transitions of the environment. 3Figure 2: Overview of Guided-OPD. The central grid traces a rollout across training as a sequence of turns. Within each turn, a response A is generated token by token from the history H and triggers a new observation O, sampled from either the student (reverse-KL target, blue) or the teacher (forward-KL target, orange). The role of every turn is drawn independently at probability β for the teacher and 1 − β for the student, where β is set by the curriculum schedule shown in the top-right inset and decays smoothly from βstart to zero (cosine by default). Early in training (Step 1, high β), most turns are produced by the teacher and the rollout is anchored within the teacher’s familiar distribution. As training proceeds (Step 2 and Step 3), β decreases and the share of student turns grows. Once β 
+
+> reaches zero in the pure-OPD stage (Step K), every turn is generated by the student and the procedure coincides with standard OPD.
+
+Role assignment within a turn. At this granu-larity, we draw on the stochastic mixing idea from imitation learning (Ross et al., 2011a) and intro-duce a mixing parameter β ∈ [0 , 1] that controls the strength of teacher intervention during rollout. Independently at each turn of every trajectory, at is generated by the teacher with probability β and by the student with probability 1 − β,
+
+at ∼
+
+(
+
+πθ(· | ht), w.p. 1 − β (student turn) ,πϕ(· | ht), w.p. β (teacher turn) .
+
+(3) The value of β is supplied by the curriculum schedule of §3.2 according to the current training progress and is held fixed within a single trajectory. Regardless of which role produces at, the response is appended to the shared interaction history, so that the next-turn history ht+1 retains an identical prompt structure under both roles. 
+
+Loss on a student turn. When a turn is produced by the student, we minimize the reverse KL be-tween the student and the teacher on that turn, 
+
+L(t) 
+
+> stu
+
+(θ) = DKL 
+
+ πθ(· | ht) ∥ πϕ(· | ht). (4) 
+
+Loss on a teacher turn. When a turn is produced by the teacher, we minimize the forward KL be-tween the teacher and the student on that turn, 
+
+L(t) 
+
+> tea
+
+(θ) = DKL 
+
+ πϕ(· | ht) ∥ πθ(· | ht). (5) 
+
+Why this asymmetry? The choice of divergence is not arbitrary; it is matched to the role that drives generation on each turn. On a student turn, the student is the party actually advancing the trajectory, and what we care about is whether every action the student produces is one that the teacher would endorse. The reverse KL is mode-seeking (Agarwal et al., 2024; Song and Zheng, 2026): it requires the actions sampled by the student to lie in high-probability regions of the teacher, while not requiring the student to cover every action the teacher would support. This concentrates the training signal on correcting what the student currently outputs, tightening the student on its own turns toward the modes preferred by the teacher. On a teacher turn, the teacher is demonstrating an alternative way of behaving in that state, and we want the student to absorb the full demonstra-tion into its own repertoire. The forward KL is mass-covering: it penalizes the student for placing too little probability on the actions that the teacher actually produces, requiring the support of the stu-dent to cover all behaviors the teacher chooses in that state. Applying reverse KL on a teacher turn would instead encourage the student to evaluate the demonstration through the lens of its current preferences and to discard those actions that the student has not yet learned to appreciate but that the teacher considers reasonable, which contradicts the very purpose of introducing demonstrations. 4In short, the asymmetry aligns the divergence with the role of the turn: a student turn uses re-verse KL to tighten the student output onto modes preferred by the teacher, while a teacher turn uses forward KL to make the student cover all reason-able behaviors demonstrated by the teacher. 
+
+3.2 Curriculum Guidance 
+
+In the previous subsection, β governs the probabil-ity that any given turn is produced by the teacher or by the student. We now specify how β varies with training progress, so that the strong teacher guidance applied at the start of training gradually fades and the procedure eventually reverts to pure OPD. 
+
+Curriculum stage. Out of the total Ttotal training steps, we reserve the first fraction ρ (the curricu-lum ratio, with default ρ = 0 .8) as the curriculum stage, comprising Tdecay := ρT total steps. During this stage, β decays smoothly from its initial value 
+
+βstart along a predefined curve to zero. Over the remaining steps, β is held at zero, so that the tail of training is strictly equivalent to standard OPD. 
+
+Decay schedules. Let the decay progress be 
+
+ξt = min( t/T decay , 1) . We consider three candi-date schedules, Linear: βt = βstart + ( βend − βstart )ξt, (6) Cosine: βt = βstart + ( βend − βstart )
+
+· 1 − cos( πξ t)2 , (7) Exp: βt = βstart 
+
+ βend 
+
+βstart 
+
+ξt
+
+, (8) 
+
+βstart , β end > 0.
+
+All three schedules satisfy the boundary conditions 
+
+β0 = βstart and βTdecay = βend , and they differ only in their curvature inside the curriculum. The linear schedule decays at a constant rate, and the expo-nential schedule decays multiplicatively. We adopt the cosine schedule by default because the cosine schedule changes slowly near both endpoints and faster in between, which matches the intuition of retaining strong guidance early on while exiting gently near the end. 
+
+3.3 Final Objective 
+
+Combining the per-turn loss of §3.1 with the β
+
+schedule of §3.2 gives the full Guided-OPD objec-tive. At training step t, we sample a trajectory τ
+
+from the turn-level mixed rollout distribution πβt
+
+> θ,ϕ
+
+induced by Eq. 3 and accumulate the corresponding per-turn losses, 
+
+LGuided-OPD (θ; t) = Eτ ∼πβtθ,ϕ 
+
+" 
+
+> T−1
+
+X
+
+> u=0
+
+
+
+(1 − zu)L(u) 
+
+> stu
+
+(θ) + zuL(u) 
+
+> tea
+
+(θ)
+
+#
+
+.
+
+(9) where the role indicator zu ∈ { 0, 1} is sampled together with au according to Eq. 3, and the two per-turn losses L(u) 
+
+> stu
+
+and L(u) 
+
+> tea
+
+are defined in Eq. 4 and Eq. 5. Taking expectations turn by turn, Eq. 9 admits the equivalent form        
+
+> LGuided-OPD (θ;t) = (1 −βt)Jπθ
+> rKL (θ) + βtJπϕ
+> fKL (θ).(10)
+
+which decomposes Guided-OPD into reverse-KL distillation on the student-induced state distribu-tion and forward-KL distillation on the teacher-induced state distribution, weighted by 1 − βt and 
+
+βt respectively. As βt → 0, the objective recov-ers standard OPD (Eq. 2) and is fully consistent with the student-only rollout used at inference. As 
+
+βt → 1, it reduces to forward-KL distillation on teacher trajectories, a safe imitation regime that an-chors the student in the teacher’s state distribution. The curriculum schedule starts training from the latter regime and transitions smoothly to the for-mer, jointly addressing the trajectory drift and the training-inference mismatch identified in §1. The complete procedure is summarized in Algorithm 1. 
+
+3.4 Experimental Setup Implementation. We distill three Qwen3 stu-dents of size 0.6B, 1.7B, and 4B from the same teacher Qwen3-30B-A3B (Team, 2025). For Guided-OPD, we use a cosine β schedule (Eq. 7) with βstart = 1 , βend = 0 , and curriculum ratio 
+
+ρ = 0 .8. All methods are implemented on Trinity-RFT (Pan et al., 2025) and run on 8× NVIDIA H20 GPUs. Full hyperparameters are deferred to Appendix A.4. 
+
+Baselines. We compare Guided-OPD against four baselines spanning training-free evaluation, standard OPD, teacher guidance, and curriculum learning: (i) Zero-shot , the untrained student; (ii) 
+
+Vanilla OPD (Agarwal et al., 2024; Lu and Lab, 2025), the standard on-policy distillation of §2; (iii) AdaSwitch (Peng et al., 2025), which hands the rest of a generation to the teacher whenever the 5Algorithm 1: Guided-OPD step                                                                                     
+
+> Input: Teacher πϕ, student πθ, environment E, step t.
+> Hyperparameters: ρ,Ttotal ,βstart , schedule S.
+> 1Tdecay ←ρT total
+> 2βt← S (t, T decay )// default cosine
+> 3Mixed rollout.
+> 4h0← E .RESET () ;τ←[ ]
+> 5for u= 0 ,1, . . . until terminal do
+> 6Sample zuwith Pr( zu= tea) = βt
+> 7if zu= tea then
+> 8au∼πϕ(· | hu)
+> 9else
+> 10 au∼πθ(· | hu)
+> 11 ou+1 ← E .STEP (au)
+> 12 hu+1 ←(hu, a u, o u+1 )
+> 13 Append (hu, a u, z u)to τ
+> 14 Asymmetric distillation.
+> 15 Lstu ←P
+> u:zu=stu L(u)stu (θ)
+> 16 Ltea ←P
+> u:zu=tea L(u)tea (θ)
+> 17 L(θ)← L stu +Ltea // Eqs. (4) ,(5)
+> 18 Optimizer step.
+> 19 θ←θ−η∇θL(θ)
+
+token-level divergence exceeds an adaptive thresh-old; and (iv) TCOD (Wang et al., 2026b), a cur-riculum method that linearly grows the number of turns k participating in the KL computation. Full implementation details are in Appendix A.3. 
+
+Evaluation. We evaluate on three multi-turn agent benchmarks covering embodied naviga-tion, scientific reasoning, and e-commerce: ALF-World (Shridhar et al., 2020), ScienceWorld (Wang et al., 2022), and WebShop (Yao et al., 2022); for ALFWorld we use its official seen /unseen splits as IID and OOD evaluations. We report three metrics: 
+
+Score ↑ (continuous task score in [0 , 100] , unavail-able on ALFWorld), Success Rate (SR ↑, binary completion rate), and Round ↓ (average interaction steps per task). All methods are evaluated on the full validation set of each benchmark under the same decoding configuration. See Appendix A.1 for benchmark details (including Table 3) and Ap-pendix A.2 for metric definitions. 
+
+3.5 Main Results 
+
+Table 1 reports the full results on ALFWorld, Sci-enceWorld, and WebShop. Across the 0.6B, 1.7B, and 4B students, Guided-OPD strictly outperforms all baselines on the three aggregate metrics (aver-age Score, SR, Round) within every student-model group and is best on the vast majority of fine-grained metrics. Against Vanilla OPD, the most direct counterpart, it improves average Score by 
+
++35 .3% , +17 .6% , and +10 .3% , and average SR by +32 .8% , +23 .7% , and +20 .1% on the 0.6B, 1.7B, and 4B students, while reducing average Round by 7.9% , 7.3% , and 2.8% . The simulta-neous gain in task quality, success, and interac-tion efficiency indicates that turn-level guidance combined with a curriculum schedule both corrects long-horizon trajectory drift and yields a more com-pact policy. Neither teacher guidance nor curriculum learn-ing alone is sufficient. AdaSwitch provides guid-ance but lacks any scheduling tied to training progress: its average Score is only marginally above Vanilla OPD on 0.6B and 1.7B, and even drops to 37 .08 on 4B. TCOD provides a curriculum but still samples from the student’s own rollouts, with gains concentrated on Round while SR and Score barely improve. Guided-OPD unifies both under a single objective and consequently domi-nates AdaSwitch and TCOD in average Score and SR at every student size. The relative gain of Guided-OPD grows as the student shrinks, from +10 .3% in Score on the 4B student to +35 .3% on the 0.6B student. This matches the drift analysis of Section 1: smaller stu-dents push trajectories further out of the teacher’s familiar distribution, so turn-level anchoring brings a larger marginal benefit. Notably, the 4B student even surpasses the 7.5× larger 30B-A3B teacher in average Score ( 42 .64 vs. 41 .40 ), and independently on ScienceWorld ( 29 .50 vs. 27 .73 ) and WebShop (55 .78 vs. 55 .07 ). On the ALFWorld OOD split, Guided-OPD also attains the best SR at every stu-dent size; although its IID–OOD gap is not always the smallest, the consistently stronger OOD SR shows that teacher guidance helps the student in-herit the teacher’s decision structure without sacri-ficing generalization to unseen layouts and object combinations. 
+
+3.6 Ablation Study 
+
+To quantify the contribution of each design choice in Guided-OPD, we ablate the three core compo-nents introduced in §3 on the Qwen3-1.7B student, keeping the teacher, benchmarks, hyperparameters, and evaluation script identical to the main exper-iments. The three blocks of Table 2 mirror the bottom-up construction of the method: block (a) ablates the asymmetric loss assignment from Turn-level Guidance (§3.1), block (b) ablates whether β
+
+must follow a curriculum at all (§3.2), and block (c) ablates the shape of the decay curve. We discuss 6Table 1: Main results on three multi-turn agent benchmarks (ALFW ORLD , S CIENCE WORLD , W EB SHOP ). For ALFW ORLD we report Success Rate (SR ↑) and average interaction Round (Round ↓) under both IID and OOD evaluation settings. For S CIENCE WORLD and W EB SHOP we additionally report task Score ↑. The teacher (Qwen3-30B-A3B) is shown for reference. Within each student-model group, the best result is highlighted in bold .                                                                                                                                                                                                                                  
+
+> Params Method ALFWorld ScienceWorld WebShop Avg
+> IID OOD Score ↑SR ↑Round ↓Score ↑SR ↑Round ↓Score ↑SR ↑Round ↓
+> SR ↑Round ↓SR ↑Round ↓
+> Teacher Models from the Qwen3 Series
+> 30B-A3B Zero-Shot 43.57 22.46 40.80 22.78 27.73 7.25 21.62 55.07 19.25 4.96 41.40 27.72 17.96
+> Student Models from the Qwen3 Series
+> 0.6B Zero-shot 0.24 30.00 0.25 29.75 5.19 2.25 20.26 10.37 3.75 14.03 7.78 1.62 23.51 Vanilla OPD 19.29 26.24 16.42 26.67 10.42 1.50 26.87 39.89 8.00 6.95 25.16 11.30 21.68 AdaSwitch 25.11 24.93 17.91 26.27 9.56 1.25 29.43 43.41 7.75 5.08 26.49 13.01 21.43 TCOD 24.29 25.32 14.93 27.14 15.71 3.00 27.48 46.37 8.25 3.83 31.04 12.62 20.94
+> Guided-OPD 27.14 24.50 19.40 25.90 19.63 3.75 24.63 48.44 9.75 4.80 34.04 15.01 19.96
+> 1.7B Zero-shot 8.10 28.35 7.10 27.93 6.48 0.75 24.10 28.71 10.25 9.11 17.60 6.55 22.37 Vanilla OPD 23.57 25.45 26.87 24.54 16.94 3.00 25.27 47.59 11.00 5.54 32.27 16.11 20.20 AdaSwitch 25.71 24.83 23.13 25.26 17.02 2.75 26.45 46.79 10.50 5.81 31.91 15.52 20.59 TCOD 27.86 23.87 24.63 25.01 19.08 3.25 25.26 49.47 14.25 4.39 34.28 17.50 19.63
+> Guided-OPD 32.86 23.34 29.85 23.60 23.24 5.25 23.84 52.63 11.75 4.14 37.94 19.93 18.73
+> 4B Zero-shot 28.57 24.25 27.86 24.73 16.21 3.75 15.97 20.59 8.25 12.23 18.40 17.11 19.30 Vanilla OPD 31.43 23.36 32.09 23.34 26.45 7.50 23.88 50.87 13.50 4.53 38.66 21.13 18.78 AdaSwitch 29.29 23.59 29.10 23.96 25.24 6.25 24.48 48.91 12.35 5.57 37.08 19.25 19.40 TCOD 32.86 23.18 31.34 24.04 25.86 9.25 23.36 53.13 19.00 4.26 39.50 23.11 18.71
+> Guided-OPD 37.14 22.76 35.08 23.15 29.50 11.50 22.86 55.78 17.75 4.28 42.64 25.37 18.26
+
+Table 2: Ablation study on Qwen3-1.7B distilled from Qwen3-30B-A3B. All variants share the same training configuration as Guided-OPD; the three blocks ablate the asymmetric loss design, the curriculum schedule, and the decay shape, respectively. Score, SR, and Round are averaged across ALFWorld, ScienceWorld, and Web-Shop following the protocol of Table 1. 
+
+Variant Score ↑ SR ↑ Round ↓
+
+Guided-OPD (Ours) 37.94 19.93 18.73 
+
+(a) Asymmetric loss design fKL on stu, rKL on tea 33.32 15.47 23.30 rKL on both turns 36.58 17.83 20.77 fKL on both turns 34.56 17.02 21.13 (b) Curriculum vs fixed mixing Fixed β = 0 .25 34.41 16.09 19.97 Fixed β = 0 .50 35.17 15.62 20.05 Fixed β = 0 .75 35.85 14.82 19.36 (c) Decay shape Linear 36.12 17.01 20.45 Exp 34.44 15.79 19.58 
+
+the three blocks in turn. 
+
+Reverse and forward KL are not interchange-able. We first examine the asymmetric loss as-signment within a turn (Table 2(a)). Swapping the two KL roles—forward KL on student turns and reverse KL on teacher turns—drops Score and SR sharply from 37 .94 /19 .93 to 33 .32 /15 .47 and raises Round from 18 .73 to 23 .30 , the worst Score and Round across all variants. This swap misuses both divergences at once: forward KL on student turns asks the student to mass-cover the teacher while it is actively driving the rollout, encouraging it to emit unfamiliar teacher actions and acceler-ating the trajectory drift identified in §1; reverse KL on teacher turns lets the student re-weight the demonstration through its current preferences, par-tially discarding the high-quality behaviors it is meant to inject. Reverse KL on both turns ( 36 .58 
+
+Score, 17 .83 SR) clearly beats forward KL on both (34 .56 , 17 .02 ), confirming that tightening the stu-dent with mode-seeking reverse KL on its own trajectories matters more than forcing it to cover the full teacher behavior. The default asymmet-ric pairing outperforms both symmetric variants, showing that matching each divergence to the role that drives generation is what makes the loss design effective. 
+
+The curriculum is not replaceable by fixed mix-ing. We then examine whether β needs to decay with training. Table 2(b) shows that all fixed-β
+
+variants trail the cosine schedule (Score 37 .94 )by 2.1–3.5 points, with an even larger SR gap: the best, fixed-β = 0.25 , reaches only 16 .09 ,
+
+3.84 points below our 19 .93 . Strikingly, as fixed 7β grows from 0.25 to 0.75 , Score keeps rising (34 .41 → 35 .17 → 35 .85 ) while SR moves in the opposite direction ( 16 .09 → 15 .62 → 14 .82 ). More teacher intervention is thus not always better: a persistent teacher exposure trains the student into an imitator that reproduces intermediate teacher behaviors—scoring higher under the partial-credit Score—but never operates on its own rollouts long enough to learn how to recover without a teacher hint, which costs it on the stricter binary SR and is mirrored by a Round that stays near 20 for ev-ery fixed β. The cosine curriculum resolves this dilemma by concentrating guidance in the early stage when the student is weakest and OOD drift most likely, and gradually withdrawing it as the student matures, achieving the best Score, SR, and Round simultaneously. 
+
+The cosine shape strikes the best trade-off. Fi-nally, we compare the three decay shapes while keeping all other configurations fixed. As shown in Table 2(c), cosine ( 37 .94 Score) strictly outper-forms linear ( 36 .12 ) and exp ( 34 .44 ), with exp suf-fering the largest drop on both Score and SR. The cosine curve decays slowly near both endpoints and faster in the middle, matching the intuition of §3.2: retain a strong teacher anchor while the student is still fragile, transfer the bulk of supervision in the middle phase, and exit smoothly so that late train-ing is indistinguishable from pure OPD. The linear schedule preserves moderate guidance throughout and is a reasonable but suboptimal backup. The exponential schedule, in contrast, decays β too ag-gressively in the early stage and removes teacher support precisely at the phase where OOD errors accumulate most easily—the same regime as the teacher-PPL spike in Figure 1(a)—which explains its largest drop and its inability to recover even though β later passes through the same intermedi-ate values as cosine. 
+
+3.7 Training Time Efficiency 
+
+A natural concern about Guided-OPD is that, be-cause the rollout invokes a much larger teacher model whenever a teacher turn is sampled, each training step may become substantially more ex-pensive than that of Vanilla OPD, and the per-step gain reported in §3.5 could in principle be offset by longer wall-clock training. To examine this, we compare the two methods under identical training configurations on the Qwen3-1.7B student and plot the ALFWorld seen evaluation against wall-clock                  
+
+> Figure 3: Training-time efficiency of Guided-OPD ver-sus Vanilla OPD on the Qwen3-1.7B student, evaluated on the ALFWorld seen split as wall-clock training time elapses. (a) Success Rate ( env_done ) versus training hours: Guided-OPD reaches the asymptotic Success Rate of Vanilla OPD at around 2.5hours, while Vanilla OPD only reaches the same level near 10 hours, roughly a4×speedup at matched performance. (b) Average interaction Round ( env_rounds ) versus training hours: the Guided-OPD round curve starts descending almost from the beginning and converges to ≈25 before 3
+> hours, while Vanilla OPD stays near its initial value of
+> ≈28 –30 for the first ≈6hours and only starts descend-ing afterwards.
+
+training time. The results are summarized in Fig-ure 3. 
+
+Guided-OPD trains faster, not slower, at matched quality. Figure 3(a) tracks Success Rate as training time elapses. Guided-OPD en-ters the high-performance regime almost immedi-ately: it crosses the Success Rate level at which Vanilla OPD eventually plateaus ( ≈ 0.20 –0.25 ) af-ter roughly 2.5 hours of training, whereas Vanilla OPD only reaches the same level after around 10 
+
+hours. In other words, Guided-OPD attains the final quality of Vanilla OPD with roughly 1/4 of the wall-clock training time, despite the fact that a fraction of its turns are generated by the 30 B-A3B teacher rather than the 1.7B student. The per-step overhead introduced by teacher invocation is there-fore more than compensated by the reduction in the number of steps required to reach the same Success Rate. 
+
+Fewer interaction rounds explain the wall-clock speedup. The mechanism behind this speedup becomes clear from Figure 3(b), which plots the average number of interaction Rounds per task on the same wall-clock axis. The Guided-OPD round curve begins descending almost from the start of training, falling from ≈ 28 to ≈ 25 within the first 
+
+3 hours and remaining low thereafter, while Vanilla OPD stays near its initial value of ≈ 28 –30 for the first ≈ 6 hours and only starts to descend after that point. This early collapse of the round curve has a 8direct effect on wall-clock cost: the dominant time of each training step is rollout, and shorter trajecto-ries mean fewer turns to generate per episode for both the teacher and the student. We attribute this early efficiency to the turn-level teacher guidance applied in the early stage of the curriculum: when the student is still weak, teacher turns inject com-petent actions that quickly drive episodes toward termination, so the student learns from rollouts that are already much shorter than those generated by the unguided student alone. In contrast, Vanilla OPD relies on the student to discover short solu-tions by itself, and during the early stage the student tends to wander and exhaust the 30 -step budget on a large fraction of episodes, which keeps its rollouts long and its per-step wall-clock cost high. Thus, even though Guided-OPD calls a larger model dur-ing some turns, its rollouts are short enough from the start that one wall-clock hour of Guided-OPD training accomplishes substantially more learning than one wall-clock hour of Vanilla OPD. Taken together, these two views resolve the apparent paradox: by anchoring early trajecto-ries with teacher turn-level guidance, Guided-OPD shortens every rollout from the very beginning, which more than offsets the cost of invoking the larger teacher model and yields a roughly 4× wall-clock speedup at matched Success Rate. 
+
+4 Related Work 
+
+On-Policy Distillation for Multi-turn Agents. 
+
+Standard OPD (Agarwal et al., 2024; Lu and Lab, 2025) excels on single-turn reasoning (Jin et al., 2026; Xu et al., 2026) but suffers in multi-turn set-tings as early errors compound (Gudibande et al., 2023; Ross et al., 2011b) and degrade subsequent supervision (Fu et al., 2026; Li et al., 2026b); re-cent work either augments the token-level KL with reward-aligned signals from verifiable rewards or reward models (Zhong et al., 2026; Wang et al., 2026a; Li et al., 2026a; Wang et al., 2026b), which depends on a reliable verifier or critic (DeepSeek-AI, 2025; Shao et al., 2024; Yu et al., 2025a) and weakens the purity of distillation (Yang et al., 2026b), or schedules trajectory depth via a tempo-ral curriculum (Wang et al., 2026b) that operates only at the macro level and does not repair the state distribution along trajectories the student has already entered (Luo et al., 2026). We instead in-tervene inside the rollout through explicit teacher guidance (Ross et al., 2011b), pulling the state dis-tribution back into the teacher-familiar region with-out any extra reward or critic. 
+
+Teacher Guidance during Distillation Rollout. 
+
+A more direct line of work injects teacher guidance into the rollout itself (Xu et al., 2025; Peng et al., 2025), but existing methods sit at two unbalanced extremes: token-level bidirectional switching (Koo et al., 2025; Xu et al., 2025) alternates at every token and produces chimeric trajectories (Peng et al., 2025), while sequence-tail one-shot han-dover (Peng et al., 2025) transfers the remainder of generation to the teacher upon a single deviation and prevents the student from recovering from local errors in later turns. Both keep the teacher present throughout training and leave a persistent training-inference mismatch when the teacher is removed at inference (Gudibande et al., 2023; Fu et al., 2026). Guided-OPD intervenes at the turn level, the gran-ularity aligned with the environment’s state transi-tions (Xue et al., 2025; Zhou et al., 2024), and de-cays this intervention to zero by the end of training, so that the late stage returns to pure OPD (Agarwal et al., 2024) and the mismatch is eliminated. 
+
+5 Conclusion 
+
+We studied On-Policy Distillation in the multi-turn agent setting and identified a characteristic fail-ure mode in which small student errors compound across turns and push the rollout out of the teacher’s familiar state distribution, so that the teacher’s su-pervision becomes least reliable where the student needs it most. We addressed this with Guided-OPD, a simple yet effective algorithm that mixes teacher- and student-generated turns within a roll-out and schedules the teacher’s intervention along a curriculum decaying smoothly to zero. Turn-level mixing aligns role transitions with environ-ment state transitions, the asymmetric pairing of reverse and forward KL matches each divergence to the role driving generation, and the curricu-lum preserves the training-inference consistency. Across ALFWorld, ScienceWorld, and WebShop, and across Qwen3 students of three scales dis-tilled from Qwen3-30B-A3B, Guided-OPD consis-tently outperforms vanilla OPD and strong teacher-guidance and curriculum baselines, with the largest gains on the smallest student. We hope the rollout-drift perspective and turn-level curriculum view will inform future work on transferring agentic ca-pabilities to compact, deployable models. 9Limitations 
+
+Our study has several limitations that point to nat-ural directions for future work. First, the evalua-tion suite covers only three multi-turn agent bench-marks, namely ALFWorld, ScienceWorld, and WebShop, all of which expose the agent through purely text-based observations and a discrete ac-tion set. Although these environments already span embodied navigation, scientific reasoning, and e-commerce, they leave out a number of regimes that are increasingly important for practical agents, including tool-use agents with open-ended API calls, software engineering agents that operate on real codebases, GUI agents that perceive screen-shots, and embodied agents that act in continuous physical environments. Whether Guided-OPD re-mains effective under these richer observation and action spaces is an open question. Second, all dis-tillation experiments are conducted within a sin-gle model family. We distill Qwen3 students of three different scales from the same Qwen3-30B-A3B teacher, so the conclusions reflect intra-family transfer with aligned tokenizers and similar induc-tive biases. Cross-family distillation, for example from a Qwen teacher to a Llama or Mistral student, may introduce tokenizer mismatches and distribu-tional gaps that further amplify the rollout-drift problem and possibly require adjustments to the curriculum schedule; combining Guided-OPD with recent cross-tokenizer distillation techniques (Sun et al., 2026) is a promising direction. Third, the cur-riculum hyperparameters, including the initial mix-ing probability βstart , the curriculum ratio ρ, and the cosine decay shape, are chosen once and shared across all student sizes and benchmarks. Although our ablation suggests that the default configuration is robust, an adaptive schedule that reacts to teacher perplexity along the trajectory could in principle remove these manual choices and yield additional gains. Finally, our experiments are run on a single 8-GPU node with students up to 4B parameters and a 30B-A3B teacher. Verifying the trends at substantially larger student or teacher scales, and on longer-horizon tasks where rollout drift is likely to be more severe, requires resources beyond those available for this study and is left to future work. 
+
+References 
+
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Pi-otr Stanczyk, Sabela Ramos Garea, Matthieu Geist, and Olivier Bachem. 2024. On-policy distillation of language models: Learning from self-generated mistakes. In The twelfth international conference on learning representations .Kevin Chen, Marco Cusumano-Towner, Brody Hu-val, Aleksei Petrenko, Jackson Hamburger, Vladlen Koltun, and Philipp Krähenbühl. 2025. Reinforce-ment learning for long-horizon interactive llm agents. 
+
+arXiv preprint arXiv:2502.01600 .DeepSeek-AI. 2025. Deepseek-r1: Incentivizing rea-soning capability in llms via reinforcement learning. 
+
+arXiv preprint arXiv:2501.12948 .Yuqian Fu, Haohuan Huang, Kaiwen Jiang, Yuanheng Zhu, and Dongbin Zhao. 2026. Revisiting on-policy distillation: Empirical failure modes and simple fixes. 
+
+arXiv preprint arXiv:2603.25562 .Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. 2024. Minillm: Knowledge distillation of large language models. In The twelfth international conference on learning representations .Arnav Gudibande, Eric Wallace, Charlie Snell, Xinyang Geng, Hao Liu, Pieter Abbeel, Sergey Levine, and Dawn Song. 2023. The false promise of imitating proprietary llms. arXiv preprint arXiv:2305.15717 .Wenjin Hou, Shangpin Peng, Weinong Wang, Zheng Ruan, Yue Zhang, Zhenglin Zhou, Mingqi Gao, Yifei Chen, Kaiqi Wang, Hongming Yang, and 1 oth-ers. 2026. Uni-opd: Unifying on-policy distilla-tion with a dual-perspective recipe. arXiv preprint arXiv:2605.03677 .Woogyeol Jin, Taywon Min, Yongjin Yang, Swanand Ravindra Kadhe, Yi Zhou, Dennis Wei, Nathalie Baracaldo, and Kimin Lee. 2026. Entropy-aware on-policy distillation of language models. arXiv preprint arXiv:2603.07079 .Minki Kang, Jongwon Jeong, Seanie Lee, Jaewoong Cho, and Sung Ju Hwang. 2025. Distilling llm agent into small models with retrieval and code tools. arXiv preprint arXiv:2505.17612 .Jahyun Koo, Yerin Hwang, Yongil Kim, Taegwan Kang, Hyunkyung Bae, and Kyomin Jung. 2025. Switch: Studying with teacher for knowledge distillation of large language models. In Findings of the Associ-ation for Computational Linguistics: NAACL 2025 ,pages 3733–3746. Gengsheng Li, Tianyu Yang, Junfeng Fang, Mingyang Song, Mao Zheng, Haiyun Guo, Dan Zhang, Jinqiao Wang, and Tat-Seng Chua. 2026a. Unifying group-relative and self-distillation policy optimization via sample routing. arXiv preprint arXiv:2604.02288 .Weizhen Li, Jianbo Lin, Zhuosong Jiang, Jingyi Cao, Xinpeng Liu, Jiayu Zhang, Zhenqiang Huang, Qian-ben Chen, Weichen Sun, Qiexiang Wang, and 1 oth-ers. 2025. Chain-of-agents: End-to-end agent foun-dation models via multi-agent distillation and agentic rl. arXiv preprint arXiv:2508.13167 .
+
+10 Yaxuan Li, Yuxin Zuo, Bingxiang He, Jinqian Zhang, Chaojun Xiao, Cheng Qian, Tianyu Yu, Huan-ang Gao, Wenkai Yang, Zhiyuan Liu, and 1 others. 2026b. Rethinking on-policy distillation of large language models: Phenomenology, mechanism, and recipe. 
+
+arXiv preprint arXiv:2604.13016 .Jun Liu, Zhenglun Kong, Peiyan Dong, Changdi Yang, Tianqi Li, Hao Tang, Geng Yuan, Wei Niu, Wenbin Zhang, Pu Zhao, and 1 others. 2025. Structured agent distillation for large language model. arXiv preprint arXiv:2505.13820 .Kevin Lu and Thinking Machines Lab. 2025. On-policy distillation. Thinking Machines Lab: Con-nectionism . Https://thinkingmachines.ai/blog/on-policy-distillation. Feng Luo, Yu-Neng Chuang, Guanchu Wang, Zicheng Xu, Xiaotian Han, Tianyi Zhang, and Vladimir Braverman. 2026. Demystifying opd: Length in-flation and stabilization strategies for large language models. arXiv preprint arXiv:2604.08527 .Xuchen Pan, Yanxi Chen, Yushuo Chen, Yuchang Sun, Daoyuan Chen, Wenhao Zhang, Yuexiang Xie, Yilun Huang, Yilei Zhang, Dawei Gao, and 1 others. 2025. Trinity-rft: A general-purpose and unified framework for reinforcement fine-tuning of large language mod-els. arXiv preprint arXiv:2505.17826 .Jingyu Peng, Maolin Wang, Hengyi Cai, Yuchen Li, Kai Zhang, Shuaiqiang Wang, Dawei Yin, and Xi-angyu Zhao. 2025. Adaswitch: Adaptive switching generation for knowledge distillation. arXiv preprint arXiv:2510.07842 .Jiahao Qiu, Xinzhe Juan, Yimin Wang, Ling Yang, Xuan Qi, Tongcheng Zhang, Jiacheng Guo, Yifu Lu, Zixin Yao, Hongru Wang, and 1 others. 2025. Agentdis-till: Training-free agent distillation with generaliz-able mcp boxes. arXiv preprint arXiv:2506.14728 .Stéphane Ross, Geoffrey Gordon, and Drew Bagnell. 2011a. A reduction of imitation learning and struc-tured prediction to no-regret online learning. In Pro-ceedings of the fourteenth international conference on artificial intelligence and statistics , pages 627– 635. JMLR Workshop and Conference Proceedings. Stéphane Ross, Geoffrey J. Gordon, and Drew Bag-nell. 2011b. A reduction of imitation learning and structured prediction to no-regret online learning. In 
+
+AISTATS .Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettle-moyer, Nicola Cancedda, and Thomas Scialom. 2023. Toolformer: Language models can teach themselves to use tools. In NeurIPS .Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, and 1 others. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 .Mohit Shridhar, Xingdi Yuan, Marc-Alexandre Côté, Yonatan Bisk, Adam Trischler, and Matthew Hausknecht. 2020. Alfworld: Aligning text and em-bodied environments for interactive learning. arXiv preprint arXiv:2010.03768 .Joykirat Singh, Raghav Magazine, Yash Pandya, and Akshay Nambi. 2025. Agentic reasoning and tool integration for llms via reinforcement learning. arXiv preprint arXiv:2505.01441 .Mingyang Song and Mao Zheng. 2026. A survey of on-policy distillation for large language models. arXiv preprint arXiv:2604.00626 .Jie Sun, Mao Zheng, Mingyang Song, Qiyong Zhong, Yilin Cheng, Bichuan Feng, Pengfei Liu, Junfeng Fang, and Xiang Wang. 2026. Simct: Recovering lost supervision for cross-tokenizer on-policy distillation. 
+
+arXiv preprint arXiv:2605.07711 .Qwen Team. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Hao Wang, Guozhi Wang, Han Xiao, Yufeng Zhou, Yue Pan, Jichao Wang, Ke Xu, Yafei Wen, Xiaohu Ruan, Xiaoxin Chen, and 1 others. 2026a. Skill-sd: Skill-conditioned self-distillation for multi-turn llm agents. 
+
+arXiv preprint arXiv:2604.10674 .Jiaqi Wang, Wenhao Zhang, Weijie Shi, Yaliang Li, and James Cheng. 2026b. Tcod: Exploring temporal curriculum in on-policy distillation for multi-turn au-tonomous agents. arXiv preprint arXiv:2604.24005 .Lei Wang, Wanyu Xu, Yihuai Lan, Zhiqiang Hu, Yunshi Lan, Roy Ka-Wei Lee, and Ee-Peng Lim. 2023. Plan-and-solve prompting: Improving zero-shot chain-of-thought reasoning by large language models. In Pro-ceedings of the 61st annual meeting of the associa-tion for computational linguistics (volume 1: long papers) , pages 2609–2634. Ruoyao Wang, Peter Jansen, Marc-Alexandre Côté, and Prithviraj Ammanabrolu. 2022. Scienceworld: Is your agent smarter than a 5th grader? In Proceedings of the 2022 Conference on Empirical Methods in Natural Language Processing , pages 11279–11298. Zhiheng Xi, Wenxiang Chen, Xin Guo, Wei He, Yiwen Ding, Boyang Hong, Ming Zhang, Junzhe Wang, Senjie Jin, Enyu Zhou, and 1 others. 2023. The rise and potential of large language model based agents: A survey. arXiv preprint arXiv:2309.07864 .Bangjun Xiao, Bingquan Xia, Bo Yang, Bofei Gao, Bowen Shen, Chen Zhang, Chenhong He, Chiheng Lou, Fuli Luo, Gang Wang, and 1 others. 2026. Mimo-v2-flash technical report. arXiv preprint arXiv:2601.02780 .Jiajun Xu, Zhiyuan Li, Wei Chen, Qun Wang, Xin Gao, Qi Cai, and Ziyuan Ling. 2024a. On-device language models: A comprehensive review. arXiv preprint arXiv:2409.00088 .
+
+11 Wenda Xu, Rujun Han, Zifeng Wang, Long Le, Dhruv Madeka, Lei Li, William Wang, Rishabh Agarwal, Chen-Yu Lee, and Tomas Pfister. 2025. Speculative knowledge distillation: Bridging the teacher-student gap through interleaved sampling. In International Conference on Learning Representations , volume 2025, pages 64616–64646. Xiaohan Xu, Ming Li, Chongyang Tao, Tao Shen, Reynold Cheng, Jinyang Li, Can Xu, Dacheng Tao, and Tianyi Zhou. 2024b. A survey on knowledge distillation of large language models. arXiv preprint arXiv:2402.13116 .Yuanda Xu, Hejian Sang, Zhengze Zhou, Ran He, Zhipeng Wang, and Alborz Geramifard. 2026. Tip: Token importance in on-policy distillation. arXiv preprint arXiv:2604.14084 .Zhenghai Xue, Longtao Zheng, Qian Liu, Yingru Li, Xiaosen Zheng, Zejun Ma, and Bo An. 2025. Simpletir: End-to-end reinforcement learning for multi-turn tool-integrated reasoning. arXiv preprint arXiv:2509.02479 .Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weiping Wang, Jiaqi Wang, and Nan Duan. 2026a. Self-distilled rlvr. 
+
+arXiv preprint arXiv:2604.03128 .Wenkai Yang, Weijie Liu, Ruobing Xie, Kai Yang, Saiyong Yang, and Yankai Lin. 2026b. Learn-ing beyond teacher: Generalized on-policy distil-lation with reward extrapolation. arXiv preprint arXiv:2602.12125 .Shunyu Yao, Howard Chen, John Yang, and Karthik Narasimhan. 2022. Webshop: Towards scalable real-world web interaction with grounded language agents. 
+
+Advances in Neural Information Processing Systems ,35:20744–20757. Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik R. Narasimhan, and Yuan Cao. 2023. React: Synergizing reasoning and acting in language models. In ICLR .Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xi-aochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gao-hong Liu, Lingjun Liu, and 1 others. 2025a. Dapo: An open-source llm reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 .Zhaochen Yu, Ling Yang, Jiaru Zou, Shuicheng Yan, and Mengdi Wang. 2025b. Demystifying reinforce-ment learning in agentic reasoning. arXiv preprint arXiv:2510.11701 .Qiyong Zhong, Mao Zheng, Mingyang Song, Xin Lin, Jie Sun, Houcheng Jiang, Xiang Wang, and Junfeng Fang. 2026. Sod: Step-wise on-policy distillation for small language model agents. arXiv preprint arXiv:2605.07725 .Yifei Zhou, Andrea Zanette, Jiayi Pan, Sergey Levine, and Aviral Kumar. 2024. Archer: Training language model agents via hierarchical multi-turn rl, 2024. 
+
+URL https://arxiv. org/abs/2402.19446 .Siqi Zhu, Xuyan Ye, Hongyu Lu, Weiye Shi, and Ge Liu. 2026. The many faces of on-policy distilla-tion: Pitfalls, mechanisms, and fixes. arXiv preprint arXiv:2605.11182 .
+
+A Experimental Setup Details 
+
+This appendix provides the full experimental de-tails that complement §3.4. The five subsections describe the benchmark environments (§A.1), the evaluation metrics (§A.2), the baselines (§A.3), the training and evaluation hyperparameters (§A.4), and the prompt templates used for each environ-ment (§A.5). 
+
+A.1 Benchmark Environments 
+
+We evaluate Guided-OPD on three text-based multi-turn interactive environments that cover three com-plementary task families: embodied navigation, scientific reasoning, and e-commerce. The dataset-level statistics are summarized in Table 3. 
+
+ALFWorld. ALFWorld (Shridhar et al., 2020) is a text-based embodied environment that requires the agent to complete six categories of household tasks: picking a target object and placing it at a destination; picking and placing after cleaning, heating, or cooling the object; examining an ob-ject under a light source; and picking and placing two objects of the same type. The agent perceives the environment through natural-language observa-tions and acts through high-level commands such as moving to a location, opening containers, taking and putting objects, heating, cooling, and examin-ing items, with a maximum of 30 interaction steps per episode. ALFWorld provides two official evalu-ation splits: the seen split shares room layouts and object combinations with the training distribution and serves as our IID evaluation, while the unseen 
+
+split contains novel room layouts and object combi-nations never observed during training and serves as our OOD evaluation. The OOD split therefore probes whether the policy learned by Guided-OPD generalizes beyond the specific environments en-countered during distillation. 
+
+ScienceWorld. ScienceWorld (Wang et al., 2022) is a text-based interactive environment that tests sci-entific reasoning across 30 task types aligned with 12 Table 3: Summary of the benchmarks used. “Max Turns” is the maximum number of agent–environment interac-tion rounds per task.               
+
+> Benchmark Type Difficulty Max Turns
+> ALFWorld (IID) Embodied Easy 30
+> ALFWorld (OOD) Embodied Medium 30
+> ScienceWorld Scientific Reasoning Hard 30
+> WebShop E-commerce Medium 15
+
+an elementary-school science curriculum, cover-ing topics such as thermodynamics, electric cir-cuits, chemistry, biology, and matter classification. The environment exposes a large action space (e.g., 
+
+focus on , activate , mix , wait , move . . . to . . . ) together with a structured observation that lists the agent’s current location, visible objects, and inventory. Each episode allows at most 30 in-teraction steps, and at the end of each episode the environment returns a continuous score in [0 , 100] 
+
+that reflects the fraction of subgoals completed. Sci-enceWorld is the most challenging benchmark in our suite because successful trajectories typically require long-horizon planning, multi-step tool use, and a non-trivial chain of cause–effect reasoning. 
+
+WebShop. WebShop (Yao et al., 2022) is a simu-lated e-commerce environment in which the agent must satisfy a natural-language shopping instruc-tion (e.g., specific product type, color, size, and price range) by interacting with a structured web interface. The agent observes a rendered HTML page that includes a search bar, product listings, and product detail pages, and acts through two ac-tion primitives: search[query] for issuing search queries and click[button_name] for navigating links, applying filters, or completing a purchase. Each episode allows at most 15 interaction steps. After purchase, the environment returns a contin-uous score in [0 , 100] that measures how well the purchased product matches the requested attributes, and a binary success signal when the score reaches 
+
+100 .
+
+A.2 Metrics 
+
+We report three metrics in a unified manner across the three benchmarks. 
+
+Score ( ↑). The continuous task score natively pro-vided by ScienceWorld and WebShop, bounded in 
+
+[0 , 100] . On ScienceWorld it is computed from the fraction of subgoals completed during the episode, and on WebShop it is computed from the attribute-level match between the purchased product and the requested specification. Score offers a partial-credit, fine-grained measurement that lets us distin-guish between failures that are close to completion and failures that are entirely off the mark. ALF-World only provides a binary success signal, so Score is not reported on it. 
+
+Success Rate (SR ↑). The task completion rate, treated as a binary outcome on every task and bounded above by SR = 100% and below by 0% .On ALFWorld and ScienceWorld an episode is counted as successful when the environment emits a terminal success flag; on WebShop an episode is counted as successful when the purchased product receives a Score of 100 .
+
+Round ( ↓). The average number of environment interaction steps consumed per task, which reflects the efficiency of the learned policy. Failed episodes are charged the maximum number of steps allowed by the environment ( 30 for ALFWorld and Science-World, 15 for WebShop), so an inefficient or stuck policy is penalized. When SR is similar across methods, a smaller Round is preferred because it indicates that the policy completes the task with fewer interactions. For ALFWorld we additionally report SR and Round separately on the IID and OOD splits, so that in-distribution performance and OOD general-ization are measured at the same time. All metrics are averaged over the full validation set of each benchmark, and all methods use the same decoding configuration to ensure a fair comparison. 
+
+A.3 Baselines 
+
+We benchmark Guided-OPD against four base-lines that span training-free evaluation, the stan-dard OPD paradigm, the teacher-guidance family, and the curriculum-learning family. All baselines share the same teacher (Qwen3-30B-A3B), the same training hyperparameters (Table 4), and the same evaluation script as Guided-OPD to ensure a fair comparison. 
+
+Zero-Shot Student (Lower Bound). The un-trained student πθ evaluated directly on the interac-tive tasks without any task-specific fine-tuning or distillation. This establishes the absolute starting point of the student’s capability in each environ-ment, and serves as a sanity-check lower bound for all distillation methods. 
+
+Vanilla OPD. The standard multi-turn adaptation of recent OPD methods (Agarwal et al., 2024; Lu 13 Table 4: Training hyperparameters across all environments. The left block lists the configuration shared by all methods; the right block lists the system-level setup and the hyperparameters specific to Guided-OPD and to the two strongest baselines (AdaSwitch, TCOD).                                                               
+
+> Hyperparameter Value Algorithm
+> Algorithm type On-Policy Distillation KL coefficient 1.0
+> Learning rate 1×10 −6
+> Optimizer AdamW Gradient clipping 1.0
+> Repeat times 1
+> Sample strategy Staleness ctrl ( ∆max = 2 )
+> Training
+> Total training steps 250
+> Batch size 16
+> Train batch size 64
+> Save interval 250
+> Evaluation interval 5steps
+> Model Configuration
+> Max prompt tokens 10 ,240
+> Max response tokens 512
+> Inference (Rollout)
+> Temperature (training) 1.0
+> Temperature (evaluation) 0.4
+> Logprobs Enabled (all tokens) Seed 42
+> Environment-Specific
+> ALFWorld max steps 30
+> ScienceWorld max steps 30
+> WebShop max steps 15
+> Hyperparameter Value Distributed Training
+> Number of nodes 1
+> GPUs per node 8(NVIDIA H20, 96 GB) GPU allocation 4act. / 2tea. / 2lrn. Tensor parallel size 2
+> Sequence parallel size 2(Ulysses) Max tokens per GPU 16 ,384
+> GPU memory utilization 0.7
+> Data type BFloat16
+> Guided-OPD (Ours)
+> Init. mixing βstart 1.0
+> Term. mixing βend 0
+> Curriculum ratio ρ0.8
+> Decay schedule Cosine (Eq. 7) Student-turn loss rKL (Eq. 4) Teacher-turn loss fKL (Eq. 5)
+> AdaSwitch (Peng et al., 2025)
+> Expand threshold ρexpand 0.8
+> Rollback threshold ρrollback 1.5
+> EMA decay γ0.95
+> TCOD (Wang et al., 2026b)
+> Variant F2B Starting horizon kstart 1
+> Pacing factor η2
+
+and Lab, 2025), defined in §2. The student samples the entire trajectory by itself and the teacher KL is applied at every token of the agent-generated segments, with no teacher intervention during roll-out. This serves as the direct counterpart against which we measure the effect of introducing turn-level teacher guidance and a curriculum schedule. 
+
+AdaSwitch. AdaSwitch (Peng et al., 2025) is the most recent representative of the teacher-guidance family. It maintains an exponential moving average of the token-level student–teacher divergence and, whenever the instantaneous divergence exceeds an adaptive threshold derived from a sliding window, it hands the remainder of the current generation to the teacher. We follow its officially recommended threshold settings ρexpand = 0 .8, ρrollback = 1 .5,and EMA decay γ = 0 .95 . The switching is fully triggered by sample-level divergence signals and is independent of training progress, so there is no curriculum tied to the training step. 
+
+TCOD. TCOD (Wang et al., 2026b) is a recent curriculum-based method tailored to multi-turn agent OPD. It uses the number of turns k participat-ing in the KL computation within each trajectory as a proxy for difficulty and increases k linearly with the training step via the fixed pacing sched-ule kn+1 = min( Tmax , k start + ⌊n/η ⌋), so that the student gradually expands from short-horizon deci-sions to full trajectories. We follow its officially rec-ommended fixed pacing with η = 2 and kstart = 1 ,and adopt its F2B variant because it does not re-quire pre-collected successful teacher trajectories. The curriculum acts purely on trajectory depth, and no turn-level teacher intervention is introduced in-side the rollout. 
+
+A.4 Hyperparameters 
+
+We conduct training across the three text-based interactive environments described in §A.1. The training configuration shared by all methods is sum-marized in Table 4, where the last two blocks list the hyperparameters specific to Guided-OPD and to the two strongest baselines (AdaSwitch, TCOD). Evaluation hyperparameters are summarized in Ta-ble 5. 14 Table 5: Evaluation hyperparameters across all environ-ments. 
+
+Hyperparameter Value Generation 
+
+Maximum tokens 4,096 
+
+Temperature 0.4
+
+Top-p / Top-k / MinP 1.0 / −1 / 0.0
+
+Environment 
+
+Max env. steps 30 (ALFW. / SciW.) / 15 (WebS.) History length 2 steps 
+
+Parallelization 
+
+Number of workers 8
+
+Process timeout 3,600 sSynchronization style Dynamic by explorer 
+
+Data Splits 
+
+ALFWorld test / test_unseen 
+
+ScienceWorld Test split WebShop Test split 
+
+A.5 Prompt Templates 
+
+This subsection lists the prompt templates used for the three environments during both training and evaluation. All prompts follow a consistent structure: task description, observation–action his-tory, current observation, admissible actions, and a thinking/action format requirement. The agent is required to first produce its reasoning inside 
+
+<thought> tags and then emit an executable com-mand inside <action> tags, so that the reasoning and the environment-bound action are syntactically separable. 
+
+ALFWorld. ALFWorld is an embodied task that requires the agent to navigate household environ-ments and complete object-manipulation goals. The prompt emphasizes step-by-step reasoning within <thought> tags followed by an executable action within <action> tags selected from a dy-namically updated admissible-action set. 
+
+You are an expert agent operating in the ALFRED Embodied Environment. Your task is to: {task_description} Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation} Your admissible actions of the current situation are: [{admissible_actions}]. Now it’s your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <thought> tags. Once you’ve finished your reasoning, you should choose an admissible action for the current step and present it within <action> </action> tags. 
+
+ScienceWorld. ScienceWorld focuses on scien-tific reasoning tasks in a text-based laboratory en-vironment. The prompt guides the agent through multi-step experiments that require domain knowl-edge and procedural reasoning. 
+
+Your ScienceWorld task is: {task_description} Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation} Your valid actions of the current situation are: [{admissible_actions}]. Now it’s your turn to take an action. You should first reason step-by-step about the current situation. This reasoning process MUST be enclosed within <thought> tags. Once you’ve finished your reasoning, you should choose a valid action for the current step and present it within <action> </action> tags. 
+
+WebShop. WebShop presents e-commerce shop-ping tasks that require the agent to navigate product listings, apply filters, and make purchasing deci-sions according to natural-language instructions. The prompt emphasizes matching user preferences to available product attributes. 
+
+You are an expert autonomous agent operating in the WebShop e-commerce environment. Your task is to: {task_description}. Prior to this step, you have already taken {step_count} step(s). Below are the most recent {history_length} observations and the corresponding actions you took: {action_history} You are now at step {current_step} and your current observation is: {current_observation}. Your admissible actions of the current situation are: [{available_actions} ]. Now it’s your turn to take one action for the current step. You should first reason step-by-step about the current situation, then think carefully which admissible action best 
+
+15 advances the shopping goal. This reasoning process MUST be enclosed within <thought> tags. Once you’ve finished your reasoning, you should choose an admissible action for the current step and present it within <action> </action> tags. 
+
+WebShop uses a specific action format with two primary action types: search[<query>] , which issues a search using a free-text query and is only available when the search bar is present, and 
+
+click[<button_name>] , which clicks an interac-tive element such as a product link, a filter button, or a pagination button. The set of available clicks is regenerated from the current page state at every step. 16
