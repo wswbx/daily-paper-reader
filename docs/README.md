@@ -6,62 +6,49 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-18
-- 运行时间：2026-06-18 22:36:57 UTC
+- 最新运行日期：2026-06-19
+- 运行时间：2026-06-19 22:08:20 UTC
 - 运行状态：成功
-- 本次总论文数：14
-- 精读区：7
-- 速读区：7
+- 本次总论文数：9
+- 精读区：5
+- 速读区：4
 
 ### 今日简报（AI）
-今日推荐14篇论文，其中7篇精读、7篇速读，重点关注Agent技能进化与奖励监督两大方向。最值得精读的是《SkillCAT》（9.0分）和《Rethinking Reward Supervision》（9.0分），分别聚焦LLM Agent的拓扑感知技能自进化与基于评分的自蒸馏奖励设计。建议优先阅读这两篇高分论文，其方法对提升Agent泛化能力和训练效率具有直接参考价值。
-- 详情：[/202606/18/README](/202606/18/README)
+今日推荐9篇论文，精读5篇，速读4篇，其中两篇获得9.0高分。
+最值得关注的方向：LLM代理的组合技能路由（分解-检索-组合）与超越手工表达式的智能体符号搜索。
+建议重点阅读这两篇高分论文，了解如何提升代理的灵活性与符号推理能力。
+- 详情：[/202606/19/README](/202606/19/README)
 
 ### 精读区论文标签
-1. [SkillCAT: Contrastive Assessment and Topology-Aware Skill Self-Evolution for LLM Agents](/202606/18/2606.13317v1-skillcat-contrastive-assessment-and-topology-aware-skill-self-evolution-for-llm-agents)  
-   标签：评分：9.0/10、query:skill-rl
-   evidence：基于轨迹的LLM智能体技能自我演化
-2. [Rethinking Reward Supervision: Rubric-Conditioned Self-Distillation](/202606/18/2606.19327v1-rethinking-reward-supervision-rubric-conditioned-self-distillation)  
-   标签：评分：9.0/10、query:opd
-   evidence：提出基于评分标准的在线自蒸馏方法，用于推理语言模型
-3. [Orion: Towards Lab Automation with Computer-Using Agents](/202606/18/biorxiv-10-64898-2026-06-13-732095-v1-orion-towards-lab-automation-with-computer-using-agents)  
+1. [Compositional Skill Routing for LLM Agents: Decompose, Retrieve, and Compose](/202606/19/2606.18051v1-compositional-skill-routing-for-llm-agents-decompose-retrieve-and-compose)  
    标签：评分：9.0/10、query:cli-agent
-   evidence：结合大型语言模型与终端执行实现实验室自动化
-4. [HERO: Hindsight-Enhanced Reflection from Environment Observations for Agentic Self-Distillation](/202606/18/2606.11559v1-hero-hindsight-enhanced-reflection-from-environment-observations-for-agentic-self-distillation)  
-   标签：评分：8.0/10、query:opd
-   evidence：在线策略自蒸馏方法用于多轮智能体
-5. [Knowledge Reutilization in Meta-Reinforcement Learning](/202606/18/2606.18132v1-knowledge-reutilization-in-meta-reinforcement-learning)  
-   标签：评分：8.0/10、query:skill-rl
-   evidence：元强化学习框架，跨智能体迁移任务知识
-6. [Learning from Own Solutions: Self-Conditioned Credit Assignment for Reinforcement Learning with Verifiable Rewards](/202606/18/2606.18810v1-learning-from-own-solutions-self-conditioned-credit-assignment-for-reinforcement-learning-with-verifiable-rewards)  
-   标签：评分：8.0/10、query:opd
-   evidence：在强化学习信用分配中提到了On-Policy Distillation
-7. [OmicOS: A Comprehensive Omics Ecosystem Infrastructure and Agent System for the AI Era](/202606/18/biorxiv-10-64898-2026-06-11-731775-v1-omicos-a-comprehensive-omics-ecosystem-infrastructure-and-agent-system-for-the-ai-era)  
+   evidence：LLM智能体路由技能用于任务自动化
+2. [Agentic Symbolic Search: Characterizing PDEs Beyond Hand-crafted Expressions, Meshes, and Neural Networks](/202606/19/2606.20467v1-agentic-symbolic-search-characterizing-pdes-beyond-hand-crafted-expressions-meshes-and-neural-networks)  
+   标签：评分：9.0/10、query:sr
+   evidence：提出ASYS框架进行符号形式的搜索，属于符号回归方法
+3. [Beyond Static Endpoints: Tool Programs as an Interface for Flexible Agentic Web Services](/202606/19/2606.19992v1-beyond-static-endpoints-tool-programs-as-an-interface-for-flexible-agentic-web-services)  
    标签：评分：8.0/10、query:cli-agent
-   evidence：利用LLM代理自动执行组学命令行工具
+   evidence：ToolPro框架通过可执行工具程序实现复杂多步服务交互
+4. [Hierarchical Control in Multi-Agent Games: LLM-based Planning and RL Execution](/202606/19/2606.20014v1-hierarchical-control-in-multi-agent-games-llm-based-planning-and-rl-execution)  
+   标签：评分：8.0/10、query:skill-rl
+   evidence：LLM在分层多智能体系统中选择专门的RL技能策略
+5. [Beyond Global Replanning: Hierarchical Recovery for Cross-Device Agent Systems](/202606/19/2606.20487v1-beyond-global-replanning-hierarchical-recovery-for-cross-device-agent-systems)  
+   标签：评分：8.0/10、query:cli-agent
+   evidence：提出H-RePlan框架，统一API-CLI-GUI执行，用于跨设备代理恢复
 
 ### 速读区论文标签
-1. [APPO: Agentic Procedural Policy Optimization](/202606/18/2606.12384v1-appo-agentic-procedural-policy-optimization)  
+1. [SkillCAT: Contrastive Assessment and Topology-Aware Skill Self-Evolution for LLM Agents](/202606/19/2606.13317v1-skillcat-contrastive-assessment-and-topology-aware-skill-self-evolution-for-llm-agents)  
    标签：评分：7.0/10、query:skill-rl
-   evidence：代理强化学习策略优化用于多轮工具使用；可优化技能
-2. [Performance-Driven Environment Abstraction with Multi-Timescale Learning](/202606/18/2606.17377v1-performance-driven-environment-abstraction-with-multi-timescale-learning)  
+   evidence：LLM智能体的技能自演进与基于技能的智能体学习相关
+2. [A Gradient Perspective on RLVR Stability and Winner Advantage Policy Optimization](/202606/19/2606.16154v1-a-gradient-perspective-on-rlvr-stability-and-winner-advantage-policy-optimization)  
    标签：评分：7.0/10、query:skill-rl
-   evidence：提出性能驱动的环境抽象方法用于多时间尺度强化学习，支持层次化技能学习
-3. [Cordon: Semantic Transactions for Tool-Using LLM Agents](/202606/18/2606.17573v1-cordon-semantic-transactions-for-tool-using-llm-agents)  
+   evidence：强化学习策略优化以提升技能
+3. [Uncertainty Decomposition for Clarification Seeking in LLM Agents](/202606/19/2606.19559v1-uncertainty-decomposition-for-clarification-seeking-in-llm-agents)  
    标签：评分：7.0/10、query:cli-agent
-   evidence：工具使用LLM智能体的事务运行时，与shell智能体相关
-4. [Compositional Skill Routing for LLM Agents: Decompose, Retrieve, and Compose](/202606/18/2606.18051v1-compositional-skill-routing-for-llm-agents-decompose-retrieve-and-compose)  
-   标签：评分：7.0/10、query:cli-agent
-   evidence：适用于命令行智能体的技能路由框架
-5. [Parallel processing of orthogonal manifolds enables zero-shot composition in recurrent networks](/202606/18/biorxiv-10-64898-2026-06-14-732142-v1-parallel-processing-of-orthogonal-manifolds-enables-zero-shot-composition-in-recurrent-networks)  
-   标签：评分：7.0/10、query:skill-rl
-   evidence：展示了通过正交反馈向量实现学习行为的零样本组合，与强化学习技能迁移相关
-6. [PhoneHarness: Harnessing Phone-Use Agents through Mixed GUI, CLI, and Tool Actions](/202606/18/2606.14832v1-phoneharness-harnessing-phone-use-agents-through-mixed-gui-cli-and-tool-actions)  
-   标签：评分：6.0/10、query:cli-agent
-   evidence：手机上的命令行代理用于任务自动化
-7. [Pareto Q-Learning with Reward Machines](/202606/18/2606.19134v1-pareto-q-learning-with-reward-machines)  
-   标签：评分：6.0/10、query:skill-rl
-   evidence：结合奖励机器的多目标强化学习，支持任务分解
+   evidence：基于提示的不确定性分解，使LLM智能体具备主动澄清能力
+4. [MSC-CMA-ES: Structure-Aware Restarts for CMA-ES via Cyclic Nearest-Better Basin Discovery](/202606/19/2606.15830v1-msc-cma-es-structure-aware-restarts-for-cma-es-via-cyclic-nearest-better-basin-discovery)  
+   标签：评分：6.0/10、query:sr
+   evidence：优化重启策略，可应用于符号回归方法
 
 
 <div class="dpr-home-promo-card">
