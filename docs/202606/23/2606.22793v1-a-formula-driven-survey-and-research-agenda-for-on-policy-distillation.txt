@@ -1,0 +1,1269 @@
+Title: A Formula-Driven Survey and Research Agenda for On-Policy Distillation
+
+URL Source: https://arxiv.org/pdf/2606.22793v1
+
+Published Time: Tue, 23 Jun 2026 02:35:36 GMT
+
+Number of Pages: 45
+
+Markdown Content:
+# A Formula-Driven Survey and Research Agenda for On-Policy Distillation 
+
+Bowen Zhang 
+
+Tsinghua University 
+
+zbw23@mails.tsinghua.edu.cn 
+
+Abstract 
+
+On-policy distillation (OPD) samples complete or partial trajectories from the current or re-cent student policy, uses a teacher or self-teacher to score the resulting rollout tokens under their generated contexts, and converts dense log-probability, logit, or distributional signals into post-training updates. This makes OPD a natural interface for modern LLM post-training, but its effectiveness depends on how feedback on student-induced states is made sta-ble and actionable: such feedback can be unre-liable, support-truncated, given poor temporal credit across a rollout, used to move proba-bility mass toward weak vocabulary alterna-tives, or destabilizing. This survey studies OPD as a feedback-to-update problem rather than as a single loss family. We develop a formula-driven taxonomy from two routes, di-rect distributional losses and policy-gradient-style log-ratio updates, and use it to orga-nize core OPD methods, hybrids with veri-fiers or outcome signals, industrial reports, framework implementations, failure modes, and stabilization recipes while keeping their evidence levels separate. The taxonomy is also generative. It separates temporal credit assignment from vocabulary-level support and probability-routing choices, which are some-times bundled together in sampled-token OPD stability discussions. On the temporal-credit axis, we compare immediate, return-to-go, dis-counted, and baseline-corrected log-ratio esti-mators, and introduce GAE-OPD as a value-based hypothesis for teacher-student log-ratio returns. On the vocabulary-routing axis, we show why negative sampled-token feedback suppresses a token without specifying a teacher-supported replacement, and introduce Counter-factual Routed OPD (CR-OPD) as a hypothesis for routing probability mass toward teacher-supported, student-reachable alternatives. We close with diagnostics, case-study boundaries, open problems, and a reporting checklist for auditable OPD systems. 
+
+1 Introduction 
+
+Modern LLM post-training mixes supervised imita-tion, distillation, and reinforcement learning, with feedback ranging from verifiable rewards (Shao et al., 2024; DeepSeek-AI, 2025) to rubrics (Fang et al., 2026) and teacher signals (Qwen Team, 2025; MiMo Core Team, 2026). On-policy distillation (OPD) occupies a specific part of this landscape. The current student, or a replay from a recent stu-dent policy, first generates a complete or partial tra-jectory. A teacher or self-teacher then scores tokens along that trajectory, conditioned on the generated history, using dense token-level or distributional feedback. This differs from SFT or teacher-forced KD, where supervision is mostly observed on exter-nal or teacher-forced histories. OPD therefore com-bines the state-coverage motivation of on-policy learning with the information density of distilla-tion. This interface has growing practical importance. Recent public technical reports describe OPD-style strong-to-weak transfer, multi-teacher ex-pert consolidation, cross-stage anti-regression, and full-vocabulary teacher distillation in several post-training pipelines (Qwen Team, 2025; MiMo Core Team, 2026; GLM-5 Team, 2026; DeepSeek-AI, 2026). Public frameworks expose related con-trols for rollout or replay source, teacher serving, support approximation, divergence choice, rollout buffering, and policy-gradient aggregation (Mod-elScope Team, 2026b,a; verl Project, 2026; Hug-ging Face, 2026b,a; Zhang et al., 2026c; Think-ing Machines Lab, 2026). Together, these re-ports and interfaces show that OPD has become implementation-facing post-training infrastructure, where state source, teacher serving, support fidelity, and estimator choice are practical knobs. The central difficulty is that OPD turns feed-back collected along student-induced trajectories into parameter updates. These trajectories reveal 1
+
+> arXiv:2606.22793v1 [cs.AI] 22 Jun 2026
+
+the distribution the learner must handle, but they also create an actionability problem: flawed in-termediate states, shifted reasoning patterns, tok-enizer or support mismatches, and long horizons can make teacher feedback noisy or misaligned (Fu et al., 2026; Li et al., 2026f; Zhu et al., 2026); dense local agreement can fail to improve final task success (Armandpour et al., 2026); support trun-cation can hide teacher-supported alternatives (Fu et al., 2026; Jia et al., 2026); and sampled-token log-ratio updates can be high variance or suppress a token without specifying a replacement (Oh et al., 2026). OPD is therefore not merely a choice among KL directions or teacher access regimes. It is a feedback-to-update problem in which reliability, support, temporal credit, vocabulary-level routing, and regularization must be specified together. 
+
+Why another OPD survey? Existing surveys and overviews organize the field by access regime, signal type, divergence family, application domain, or the relationship between off-policy learning, on-policy learning, and reinforcement learning (Song and Zheng, 2026; Zhao et al., 2026b; Cui et al., 2026). Those views are useful for positioning a fast-moving literature, but they do not directly identify which part of the feedback-to-update path a method changes or which failure it addresses. The same surface label, such as sampled-token, top-k, full-vocabulary, black-box, or multi-teacher OPD, can correspond to different state distributions, support choices, credit estimators, gates, update routes, and regularizers. Conversely, methods with different la-bels may intervene on the same feedback-to-update variable. We therefore start from the objective and estimator formulas, because formulas expose the variables that make OPD methods comparable and composable. 
+
+Working definition. In this survey, core OPD 
+
+means that student rollouts or recent-policy re-play determine the states to be scored, while dense teacher, self-teacher, checkpoint, or support-expanded distributional feedback supplies local to-ken or distributional signals on those states. The re-sulting update may be a direct local distillation loss, a policy-gradient-style teacher-student log-ratio up-date, or a hybrid of those two routes. This defini-tion covers GKD-style on-policy distillation (Agar-wal et al., 2024), reverse-KL policy-optimization views (Gu et al., 2023), recent sampled-token or support-expanded OPD analyses (Fu et al., 2026), and the RL-compatible sampled-token framing pop-ularized in the Thinking Machines exposition (Lu and Thinking Machines Lab, 2025). 
+
+OPD hybrids keep a dense OPD-style signal but use verifiers, rubrics, reward models, outcome re-wards, discriminators, or environment feedback to gate, weight, check, or combine it with more global quality signals (MiMo Core Team, 2026; Fang et al., 2026; Ye et al., 2025; Zhou et al., 2026; Xu et al., 2025; Tan and Hong, 2026b). OPD-adjacent 
+
+methods, including pure RLVR, ordinary teacher-forced KD, SFT, or generic verifier training, are out-side the core scope unless they explicitly create or modulate dense feedback on student-induced states. Privileged-teacher variants are included when extra context, answers, traces, tools, or visual views are converted into deployable student behavior through dense feedback on student-induced states (Zhao et al., 2026c; Ye et al., 2026b; Yuan et al., 2026). This survey also fixes a scope boundary: the en-vironment, evaluator, tool sandbox, and interaction harness are treated as given, and we study what hap-pens after student rollouts or replay have produced states to score. Figure 1 visualizes this boundary. Table 1 states the evidence boundary used through-out the paper. Where compact labels are useful, E0 denotes direct-source papers or reports, E1 official framework documentation, E2 official expositions or blogs, and E3 this survey’s synthesis or design hypothesis; section F gives the detailed audit. Core OPD papers provide evidence about objectives, es-timators, support choices, diagnostics, and stabi-lizers. Industrial and framework reports document public usage and implementation interfaces. Hy-brid and adjacent work is used when it changes how dense feedback is gated, weighted, or localized. Multimodal, agentic, online, and cross-tokenizer work is used mainly as scope-expanding evidence unless it provides an explicit dense-feedback mech-anism on student-induced states. 
+
+Main view. We analyze OPD as a feedback-to-update path. First, a method constructs feedback on states induced by student rollouts or replay. Sec-ond, it declares the support on which the student and teacher are compared. Third, it allocates that feedback through temporal credit, gates or weights, and vocabulary-level routing. Fourth, it chooses an update route and regularizers that turn the al-located signal into parameter changes. Section 3 derives these variables from direct-loss and policy-gradient formulas, and fig. 2 summarizes the result-ing map. This formula-driven view is classificatory 2Evidence tier Representative evidence How it is used in this survey Core OPD evidence GKD, MiniLLM, Revisiting/Rethinking/Many Faces/Unmasking, AOPD, vOPD, OPD+, TIP, SCOPE, StableOPD, EOPD, OPCD, OPSD. Grounds objectives, estimators, support choices, diagnostics, and stabilization mechanisms. Industrial/system evidence Qwen3, MiMo, GLM-5, DeepSeek-V4, SWIFT, verl, TRL, KDFlow, Tinker. Documents public usage, support/cost knobs, teacher-serving constraints, and implementation boundaries. Hybrid/adjacent evidence KDRL, SSOPD, RLSD, SRPO, SD-Zero, Distributional DAgger, verifier/rubric/outcome-routed methods. Used when sparse or global feedback gates, weights, or localizes dense OPD-style updates. Agenda and extension evidence Cross-tokenizer, multimodal, VLA, agentic, online, cached-teacher, and test-time speculation variants. Treated as scope-expanding signals and open-problem evidence unless dense feedback on student-induced states is explicit. 
+
+Table 1: Evidence tiers used to keep core OPD claims separate from system reports, hybrids, adjacent methods, and agenda-setting extensions. 
+
+because it maps existing methods to common de-sign choices, and generative because new OPD variants can be derived by changing or combining variables rather than by naming another global loss. The clearest generative example appears in sec-tion 4. Sampled-token OPD stability discussions often place temporal credit, support expansion, and estimator baselines in the same design neighbor-hood: Revisiting OPD couples the sequence/token credit tradeoff with teacher top-k local matching, whereas vOPD separates top-k loss approximation from detached-baseline use (Fu et al., 2026; Oh et al., 2026). We separate two mechanisms that enter different parts of the update. Temporal credit asks which scalar should multiply a sampled-token score term: an immediate log-ratio, a return-to-go, a deliberately discounted or windowed surrogate, a state-only baseline, a control variate, or our pro-posed value-based GAE-OPD advantage. Vocab-ulary routing asks a different question: after an update decides that local probability should move, which token alternatives should receive the proba-bility mass? Support and vocabulary routing are re-lated but distinct: support determines which alterna-tives are visible, whereas routing determines where probability mass moves under the selected update. This distinction lets us formulate two taxonomy-derived hypotheses (E3): GAE-OPD for temporal credit assignment and Counterfactual Routed OPD (CR-OPD) for negative-update replacement targets. The middle of the paper carries these variables into diagnostics. Section 5 defines feedback action-ability as the question of whether a signal should become a gradient on a particular student-induced state. Section 6 reads OPD failures as breakdowns in state compatibility, support reachability, tempo-ral credit, vocabulary routing, privilege compress-ibility, evaluation alignment, or regularization. Sec-tion 7 maps those failures to conservative stabiliza-tion responses using the same variable vocabulary. 
+
+Contributions. The paper makes the following contributions. • We provide an up-to-date, evidence-tiered sur-vey of OPD for LLM post-training, separat-ing core mechanisms from industrial reports, implementation interfaces, hybrids, adjacent methods, and open-problem evidence. • We introduce a formula-driven taxonomy that derives OPD variables from direct-loss and policy-gradient routes, making method comparisons auditable beyond labels such as sampled-token, top-k, full-vocabulary, or multi-teacher OPD. • We use the taxonomy to separate temporal credit from vocabulary-level support and prob-ability routing. This yields bias boundaries for immediate, return-to-go, discounted, and baseline-corrected estimators, and motivates GAE-OPD and CR-OPD as two design hy-potheses. • We reinterpret actionability diagnostics, fail-ure mechanisms, stabilization recipes, case studies, and open problems as interventions on 3Figure 1: Scope boundary of this survey. Environment and harness fidelity are outside the main OPD scope. Given a fixed interface, the survey studies the feedback-to-update path after student rollouts or replay have produced states to score. 
+
+the same feedback-to-update variables, end-ing with a reporting checklist for future OPD work. 
+
+Roadmap and reading guide. Section 2 posi-tions OPD relative to KD, SFT, and RLVR. Sec-tion 3 derives the taxonomy; readers mainly inter-ested in method design should read it together with section 4, which contains the temporal-credit and vocabulary-routing analysis. Sections 5 to 7 form the diagnostic core: when feedback is actionable, how it fails, and which stabilizers target which vari-ables. Section 8 is for readers interested in indus-trial reports and framework knobs under explicit evidence boundaries. Section 9 turns the taxonomy into future directions, and section 10 summarizes the reporting checklist. 
+
+2 From Distillation to On-Policy Behavioral Intervention 
+
+Classical post-training already contains two ingre-dients that OPD recombines, but they should not be collapsed. SFT is local in the sense that ev-ery supervised target position can receive a loss, but its target is a one-hot token from the dataset. Ordinary teacher-forced KD is also usually off-policy with respect to the student rollout, yet it is a richer signal than SFT: the teacher distribu-tion can expose alternatives, relative preferences, and uncertainty beyond the observed token (Hinton et al., 2015). The shared limitation is not spar-sity. It is that these signals are mostly observed on ground-truth, teacher-forced, teacher-generated, or otherwise external histories. During deploy-ment the student conditions on its own previous tokens. This is the classical exposure-bias or state-distribution gap in autoregressive sequence predic-tion: teacher-forced sequence-to-sequence training provides the canonical baseline against which the mismatch is visible, not itself a direct correction for that gap (Sutskever et al., 2014). More direct mismatch responses include scheduled sampling, which mixes model-generated prefixes into training (Bengio et al., 2015), and DAgger-style imitation learning, which queries expert feedback on states visited by the learner (Ross et al., 2011). Sequence-level training (Ranzato et al., 2015) and sequence-level knowledge distillation (Kim and Rush, 2016) support the same lesson: dense imitation on expert states can still leave the learner poorly prepared for the states created by its own mistakes. The on-policy move is therefore a state-coverage intervention. OPD lets the current student, or a recent replay policy, produce complete or partial trajectories, and then scores the generated tokens under the histories that the student actually created. This is different from prefix-masked SFT: the roll-4out determines the visited states, while the local autoregressive contexts along that rollout are the query points for teacher or self-teacher feedback. The benefit is coverage of self-induced behavior; the cost is that the teacher is now asked to evaluate states that may contain student mistakes, shifted reasoning patterns, or unusual tokenization arti-facts. The distillation move is a feedback-design inter-vention. A hard SFT label says which token was ob-served, whereas a soft teacher signal can say which nearby alternatives are plausible, how confident the teacher is, and whether the sampled token is merely suboptimal or outside the teacher’s support. OPD inherits this information-density advantage from KD, but using it on student-induced states requires extra choices: which support is visible, which divergence is optimized, whether feedback is used as a direct local loss or as a sampled-token score, how temporal credit is assigned over the tra-jectory, and whether gates or regularizers should block unreliable feedback. Reverse-KL OPD is therefore a principled default rather than only a naming convention. The sequence-level objective DKL (πθ(·| x)∥q(·| x)) 
+
+places the expectation under the student distribu-tion, so student rollouts are naturally matched to the objective. Its score-function gradient can be written with a detached teacher-student log-ratio reward, which connects reverse-KL distillation to policy-gradient tools and focuses updates on student-supported behavior (Gu et al., 2023; Lu and Think-ing Machines Lab, 2025). Forward KL or Jensen-Shannon choices, top-k or full-vocabulary support, and direct-loss versus sampled-token routes answer different support and routing questions: they can preserve teacher-supported alternatives when the support is available, but they are not the same esti-mator and do not impose the same behavioral bias. Later work makes the choice conditional rather than fixed; for example, EOPD adapts the diver-gence to token-level distributional properties such as teacher entropy, and AOPD changes the route in non-positive regions where sampled-token reverse-KL feedback is least informative (Jin et al., 2026; Jia et al., 2026). Table 2 uses this logic to separate state source from feedback-to-update pattern. RLVR and GRPO-style methods (Shao et al., 2024; DeepSeek-AI, 2025; Yu et al., 2025) already train on student rollouts, but their feedback is often an outcome or group-relative signal rather than a token-local teacher distribution. GLM-5.2 provides recent in-dustrial evidence for the same credit-granularity issue on the neighboring RL side: its official blog reports that long-horizon, compacted traces motivated a move from group-wise optimization to critic-based PPO with token-level advantages rather than group-relative comparisons (Z.ai, 2026). We treat this as evidence that rollout training can still require finer temporal credit than trajectory-level or group-relative feedback provides. Core OPD occupies the design point where student-induced states receive dense teacher or self-teacher feedback that is converted into local distillation or policy-gradient-style updates. OPD hybrids keep that local distillation update but use verifiers, out-come rewards, rubrics, discriminators, or environ-ment feedback to gate, weight, or combine it with global quality signals (MiMo Core Team, 2026; Fang et al., 2026; Ye et al., 2025; Zhou et al., 2026; Xu et al., 2025; Tan and Hong, 2026b). Recent state-distribution analyses support this separation. Nie (2026) argue that SFT, RL, and OPD differ not only by loss but also by the state distribution on which supervision is applied: fixed data states for SFT, student-induced states with sparse rewards for RL, and student-induced states with richer local feedback for OPD. Distributional DAgger provides an adjacent rich-feedback view in which a learner can query or approximate an expert distribution on states visited by the current policy (Agrawal et al., 2026). These works support our use of states as a taxonomy variable, while leaving open how OPD should weight, route, and regularize the feedback observed on those states. Given an input x, the student samples a trajec-tory y ∼ πθ(·| x) and thereby induces local con-texts ct = ( x, y <t ). We use “context” or “prefix” here only for the autoregressive conditioning vari-able at a token position, not for a prefix-masked SFT training unit. In core OPD, the feedback ob-ject is usually a next-token distribution, a support-truncated distribution, or a sampled-token log-ratio supplied by a larger teacher, a domain expert check-point, a previous-stage checkpoint, or a context-conditioned self-teacher (Agarwal et al., 2024; Gu et al., 2023; Ye et al., 2026b; Zhao et al., 2026c; GLM-5 Team, 2026; MiMo Core Team, 2026). Privileged variants differ by what the teacher conditions on, such as extra context, verified traces, answers, tools, or visual views, and by whether that advantage can be compressed into deployable behavior. Verifiers, rubrics, discriminators, and 5environment-derived outcomes define hybrid OPD signals when they gate, weight, or localize dense feedback on student-induced states (Fang et al., 2026; Ye et al., 2025; Zhou et al., 2026; Xu et al., 2025; Tan and Hong, 2026b). The historical path to this view passes through several moves. Reverse-KL distillation emphasizes mode-seeking, student-support-focused behavior and connects distillation to policy optimization (Gu et al., 2023); DistiLLM (Ko et al., 2024) and DistiLLM-2 (Ko et al., 2025) further show that loss geometry and data source should be co-designed. GKD moves distillation onto states induced by self-generated outputs rather than only teacher-forced examples (Agarwal et al., 2024). Recent OPD work then changes specific variables: sampled-token re-wards and top-k support matching (Fu et al., 2026), closed-form control variates (Oh et al., 2026), non-positive-region support matching (Jia et al., 2026), token selection (Xu et al., 2026b), entropy-aware divergence choice (Jin et al., 2026), and context-conditioned teachers (Ye et al., 2026b). These pa-pers motivate the variables formalized next: state source, support, divergence, estimator, gate, rout-ing, and regularizer. Two axes should therefore be kept separate. One axis asks which process induces the states receiving supervision: teacher-forced data, student rollouts, recent-policy replay, draft-induced states, or en-vironment states. The other asks how feedback is allocated and updated on those states: hard-label imitation, forward KL, reverse KL, Jensen-Shannon divergence, sampled-token log-ratio re-wards, support-truncated local matching, outcome-augmented losses, gates, weights, or route switches. A method becomes core or hybrid OPD only af-ter both questions are answered: student-induced states must be paired with dense teacher, self-teacher, checkpoint, or support-expanded feedback, and the route from that feedback to a gradient must be specified. The next section writes these choices as objective variables so that OPD is analyzed as a feedback-to-update interface rather than as a single loss family. 
+
+3 A Formula-Driven Taxonomy of OPD 
+
+OPD methods are often described by labels such as sampled-token, top-k, full-vocabulary, forward-KL, reverse-KL, white-box, black-box, self-distillation, or multi-teacher. In this survey, we treat these labels as surface descriptions and organize them by variables in the underlying ob-jectives and estimators. We use formulas to ex-pose those variables because they are the handles by which methods respond to OPD failure modes documented in section 6: unreliable feedback on student-induced states, support mismatch, long-horizon credit variance, directionless negative up-dates, and drift. Figure 2 gives the pipeline view used throughout this section: each method can be read as choosing a state source, feedback source, support, temporal-credit estimator, gate or weight, vocabulary-routing rule, update route, and regular-izer. We use feedback-to-update path as the umbrella term. It has four linked decisions: feedback con-  
+
+> Feedback-to-update pattern External or teacher-forced states Student-induced states or rollouts Hard token imitation SFT uses one-hot dataset targets on fixed histories. It is a supervised-imitation baseline, not a soft distillation signal. DAgger-style queried labels or self-corrections can move hard supervision onto learner states, but this is adjacent unless dense teacher distributions are added. Soft distributional distillation Teacher-forced KD uses teacher probabilities on external histories, preserving more information than hard labels but not correcting the student’s rollout distribution. Core OPD queries teacher, self-teacher, checkpoint, or support-expanded distributions on student rollouts or recent-policy replay. Sparse or global outcome signal Off-policy preference, reward-model, or verifier training can supply global labels, but it is not OPD without dense feedback on visited states. RLVR and GRPO-style methods train on student rollouts with verifiable, rule-based, or reward-model outcomes; they are adjacent unless they shape dense OPD updates. Soft distillation gated by global signal Usually a data-filtered or verifier-filtered KD baseline. The state source remains mostly external. OPD hybrids keep the local OPD signal but gate, weight, split, or mix it with verifier, rubric, ORM, discriminator, execution, or outcome feedback.
+
+Table 2: Boundary between OPD, neighboring post-training regimes, and OPD hybrids. The relevant axes are the source of states receiving supervision and the pattern by which feedback is allocated and converted into updates. 
+
+6struction on student-induced states; support con-struction and comparison, which determine which teacher and student alternatives are observable; allocation through temporal credit and gates or weights; and vocabulary routing plus update and regularization through a chosen gradient route. Support and vocabulary routing are coupled but not identical. Support says which alternatives can be compared; vocabulary routing says where prob-ability mass should move once an update is se-lected. Within the same path, an update route is the differentiation path by which feedback becomes a parameter update, such as a direct local loss, a score-function loss, or a hybrid of the two. A 
+
+gate or weight decides whether and how strongly a feedback signal is used, often from correctness, entropy, disagreement, privilege, or verifier infor-mation. Temporal credit is the allocation of log-ratio returns across sampled actions. This distinc-tion matters because changing a gate, changing the temporal-credit scalar, changing token alternatives, and changing the differentiation route are different interventions even when all are informally called routing. 
+
+3.1 Direct-Loss Route 
+
+For a prefix ct = ( x, y <t ), let πθ(v|ct) be the student next-token distribution over vocabulary V,and let q(v|ct) be a target distribution or feedback-induced distribution. We use the same policy sym-bol for token and sequence probabilities; the ar-gument identifies the level. Thus πθ(v|ct) is a one-step conditional distribution, while πθ(y|x) is the full autoregressive probability of a completion 
+
+y = ( y1, . . . , y T ). We write a fixed length for read-ability; practical implementations either include EOS as an ordinary action or pad to a maximum horizon with masking, so termination and length control remain part of the regularization and state-definition choices: 
+
+πθ(y|x) = 
+
+> T
+
+Y
+
+> t=1
+
+πθ(yt|x, y <t ). (1) When q is an autoregressive teacher or target policy, 
+
+q(y|x) = Q 
+
+> t
+
+q(yt|x, y <t ) analogously; otherwise 
+
+q(·| ct) denotes only the local feedback distribution. A broad class of direct-loss OPD objectives can be written as 
+
+Ldirect = Ect∼d [wtDΩt [πθ(·| ct), q (·| ct)]] , (2) where d is the prefix distribution, Ωt is the sup-port over which feedback is compared, DΩt is a divergence or local matching objective, and wt is a weight or mask. The argument order in DΩt [·, ·] is symbolic: the direction of the divergence is itself a design variable. We use d as the rollout or re-play distribution from which prefixes are collected; unless stated otherwise, direct-loss updates differ-entiate the local distributional objective conditional on these prefixes, not the sampling process that pro-duced them. When the prefixes are generated by the current student but treated as fixed training data, direct-loss OPD is a semi-gradient with respect to the full on-policy objective. 
+
+Degrees of freedom. In summary, direct-loss OPD names the differentiation route rather than the KL direction. Equation (2) exposes the prefix law d; the local target q and any teacher privilege used to construct it; the comparison support Ωt and its normalization; the local objective DΩt , includ-ing argument order and KL direction; the mask or weight wt; and the gradient path, namely which of 
+
+d, q, Ωt, and wt are treated as fixed rollout data ver-sus differentiated quantities. Regularizers such as reference KL, entropy control, clipping, or golden-data mixing are separate outer choices that may be added to this local matching term. 
+
+3.2 Policy-Gradient Route 
+
+The policy-gradient route starts from the sequence-level reverse-KL objective and uses the fact that its gradient has a score-function form. Among the works covered in this survey, MiniLLM (Gu et al., 2023) is a central early LLM-distillation precursor for this route. It casts sequence-level reverse-KL distillation as a policy-gradient estimator and uses stabilization for the resulting high-variance update. For a single input, the sequence objective is 
+
+Jx(θ) = DKL (πθ(·| x)∥q(·| x)) = Ey∼πθ [log πθ(y|x) − log q(y|x)] . (3) Because the sampling distribution depends on θ,differentiating eq. (3) is not the same as backpropa-gating through a fixed supervised loss. Applying the score-function identity yields 
+
+∇θJx = Ey∼πθ
+
+h  log πθ(y|x) − log q(y|x) + 1 
+
+· ∇ θ log πθ(y|x)
+
+i
+
+.
+
+(4) The additional +1 term is a zero-mean constant score term because the expected score is zero. 7Figure 2: Formula-variable map for OPD. The direct-loss route in eq. (2) and the PG-style route in eqs. (5) and (9) expose the variables summarized in table 3: state distribution, feedback source, support, temporal credit, gate or weight, vocabulary routing, update route, and regularizer. 
+
+Equivalently, the reverse-KL update can be written with reward R(y) = log q(y|x) − log πθ(y|x) after dropping this constant-score control-variate term. Dropping it preserves the expected gradient under exact on-policy sampling, but it can change finite-sample variance. In practical PG-style OPD losses, this reward or advantage is detached before mul-tiplying the student log-probability; otherwise the implementation silently changes the differentiated objective. At token granularity, sampled-token implemen-tations often use the immediate teacher-student log-ratio 
+
+rt = log q(yt|ct) − log πθ(yt|ct), (5) for a sampled token yt ∼ πθ(·| ct). Positive rt
+
+means that the teacher assigns higher probability to the sampled token than the student does. This log-ratio assumes that the teacher assigns positive mass on the sampled or declared support. If teacher probabilities can be zero, hidden by an API, or truncated away, the implementation must state its smoothing, clipping, or support convention before 
+
+rt can be interpreted as a finite reward. 
+
+Fixed-prefix local objective. It is useful to sep-arate a token-local distributional objective from the sequence objective above. With fixed prefix 
+
+ct and detached teacher distribution q(·| ct), full-vocabulary reverse KL is finite only if q(v|ct) > 0
+
+whenever πθ(v|ct) > 0 on the active vocabulary. Under this absolute-continuity convention, the lo-cal objective is 
+
+DRKL  
+
+> t
+
+= DKL (πθ(·| ct)∥q(·| ct)) = X
+
+> v∈V
+
+πθ(v|ct) log πθ(v|ct)
+
+q(v|ct) . (6) This is the finite-KL condition, not an extra mod-eling preference. It usually holds for full-logit softmax teachers on a shared unmasked vocabu-lary. If it fails, eq. (6) is no longer a finite full-vocabulary KL: smoothing keeps the same form with a smoothed target, while truncation changes the object to a normalized restricted-support diver-gence DΩt .Writing Et for expectation over a ∼ πθ(·| ct),use the shorthand 
+
+gt(a) = ∇θ log πθ(a|ct),ρt(a) = log q(a|ct) − log πθ(a|ct).
+
+8Under the same conventions, the score identity is 
+
+−∇ θDRKL  
+
+> t
+
+= Et [( ρt(a) − 1) gt(a)] = Et [ρt(a)gt(a)] ,
+
+Et[gt(a)] = 0 .
+
+(7) The second equality uses the zero-mean score iden-tity in the last line, so the constant −1 term has zero expectation. Thus a sampled-token immedi-ate update is an unbiased one-sample estimator of the fixed-prefix local reverse-KL descent direc-tion, while it is generally a biased surrogate for the sequence-level reverse-KL direction because it omits future log-ratio terms. Full-vocabulary local OPD computes eq. (6) with Ωt = V and 
+
+q(v|ct) > 0 for all student-supported v. Support-truncated variants replace V by a declared Ωt and must state smoothing and whether q, πθ, or both are renormalized. Sampled-token OPD estimates eq. (7); sequence-level PG-style OPD uses return-to-go credit over the whole trajectory. The score-function form is the reason PG-style OPD naturally inherits the RL estimator stack. Writing Et for expectation over yt ∼ πθ(·| ct), any state-only baseline b(ct) satisfies 
+
+Et[b(ct)∇θ log πθ(yt|ct)] = b(ct) X
+
+> yt
+
+∇θπθ(yt|ct)= b(ct)∇θ
+
+X
+
+> yt
+
+πθ(yt|ct)= 0 ,
+
+(8) so log-ratio returns can be replaced by baseline-subtracted advantages without changing the ex-act conditional on-policy expectation. This expectation-preserving property is specific to state-only additive baselines. Multiplying future log-ratios by a discount, truncating the horizon, or us-ing bootstrapped residuals with an approximate critic changes the estimator unless the correspond-ing objective and value-function assumptions are stated. Baselines, control variates, PPO-style clip-ping (Schulman et al., 2017), and trust regions (Schulman et al., 2015) are therefore not cosmetic additions; they are the natural variance-control and stability interface once reverse-KL distillation is estimated as a policy gradient. A general sampled-token OPD parameter-update direction can be written as 
+
+∆θOPD ∝ X
+
+> t
+
+At∇θ log πθ(yt|ct), (9) where the expression corresponds to descending reverse KL when At estimates teacher-student log-ratio reward. At may be an immediate log-ratio reward, a return-to-go, a deliberately discounted or windowed surrogate, a baseline-corrected advan-tage, or a control-variate estimator; we also analyze a value-based GAE-style design point (Schulman et al., 2016) in section 4. These choices and de-sign points differ in bias conditions: immediate, truncated, or discounted returns are generally bi-ased relative to the undiscounted sequence-level reverse-KL direction, whereas state-only baselines preserve the exact on-policy expectation; the pro-posed value-based GAE-style design point would preserve that direction under exact on-policy values and detached rewards, while λ = 1 has the special terminal Monte Carlo property of telescoping to a return minus a state-only baseline even when the baseline value is approximate. If implemented as a loss minimized by gradient descent, the corre-sponding policy term has the opposite sign, 
+
+LPG = − X
+
+> t
+
+sg( At) log πθ(yt|ct), (10) where sg( ·) denotes stop-gradient. 
+
+Degrees of freedom. In summary, PG-style OPD exposes the rollout policy used to collect actions, such as current, cached, replayed, or importance-corrected policies; the reward definition, such as sequence log-ratio, immediate token log-ratio, clipped or normalized variants, or mixtures with outcome rewards; the credit estimator, such as im-mediate, return-to-go, discounted or windowed, value-baseline, control-variate, or proposed GAE-style advantages; the stop-gradient and old-policy treatment of rewards; the support used when feed-back goes beyond the sampled token; and stabi-lizers such as PPO-style clipping, trust regions, reference KL, entropy control, and length control. These choices are independent of the surface label “sampled-token”: two sampled-token methods can differ mainly in baseline, credit horizon, reward clipping, or route switching. 
+
+3.3 Variables Exposed by the Formulas 
+
+The variables in Table 3 separate optimization routes from divergence choices. They also sub-sume several recurring second-order handles. Out-come or verifier coupling is a choice of feedback source, weight, and update route rather than a sepa-rate OPD axis (MiMo Core Team, 2026; Xu et al., 92025; Tan and Hong, 2026b; Zou et al., 2026). Teacher assignment and teacher freshness change the feedback distribution q, its mixture weights, and the rollout or cache schedule (DeepSeek-AI, 2026; Wang et al., 2026b; Wu et al., 2026; Rang et al., 2026). Granularity chooses whether wt, At, and support masks act at token, span, step, trajectory, or skill level (Li et al., 2026h; Zhong et al., 2026a; Li et al., 2026d). Calibration and uncertainty ob-jectives are regularization or evaluation-alignment choices distinct from better local imitation (Zhang et al., 2026b; Ke et al., 2026). We keep these han-dles nested under the main variables so that the taxonomy remains compact while still explaining multi-teacher, verifier-guided, agentic, and online variants. Direct-loss OPD differentiates a local distribu-tional objective on a chosen support. PG-style OPD treats teacher-student log-ratios as rewards on sam-pled actions. The two routes can be combined: for example, methods may use policy-gradient up-dates for positive-advantage samples and switch to teacher-support matching in non-positive regions (Jia et al., 2026). Table 5 summarizes the opera-tional difference and the minimum variables that make a reported OPD loop auditable. 
+
+Implementation assumptions. Several imple-mentation choices change the mathematical ob-ject being optimized. First, q(·| ct) is treated as detached feedback unless a method explicitly trains a co-evolving teacher; external teachers, previous checkpoints, self-teachers, and privileged teachers may be constructed differently, but the student loss should state whether teacher logits, masks, and weights are stop-gradient. Second, direct-loss OPD on student rollouts is usually a local semi-gradient: the collected prefixes are fixed data for the update, even if a current or recent student generated them. Third, support truncation requires an explicit nor-malization convention. Forward KL on teacher top-k support, for example, may renormalize only the teacher target, or renormalize both teacher and student on the restricted support; these choices dif-fer from full-softmax KL because omitted vocab-ulary mass receives different gradients. Fourth, PG-style OPD must distinguish rewards computed          
+
+> Variable Question Observed choices and design points Main risk State / rollout source Which process induces the states being scored? Teacher-forced states, student rollouts, mixed data/rollout states, recent-policy replay, or environment states. Exposure gap or flawed-state trap. Feedback source Who provides local targets? Teacher logits, self-teacher logits, previous checkpoint, domain expert, support-truncated target, or a global signal used to gate dense feedback. Fluent but wrong local feedback. Teacher privilege What does the feedback source know? Larger model, previous checkpoint, domain expert, answer, context, tool trace, or visual crop. Uncompressible privilege or leakage. Support Where is feedback compared? Sampled token, teacher top-k, student top-k, overlap, full vocabulary, aligned text/span support, hidden-state support, or logit-free surrogate. Truncation, mismatch, or missing alternatives. Update route How does feedback become gradient? Direct KL, PG log-ratio, hybrid KL+PG, sign-conditioned switch, or global-feedback-gated dense update. High variance or objective-support mismatch. Temporal credit estimator How far do log-ratio returns propagate? Immediate token, return-to-go, discounted or windowed return, baseline, control variate, or proposed GAE-style advantage (Schulman et al., 2016). Bias-variance failure, critic error, or off-policy drift. Gate or weight Which feedback is used, and how strongly? Entropy/disagreement weights, correctness weights, verifier gates, privilege gates, trajectory filters, or token masks. Overweighted noise or discarded useful signal. Vocabulary probability routing Where does local probability mass move? Implicit softmax, local divergence switch, teacher top-k, full vocabulary, overlap support, or routed alternatives. Negative feedback without a replacement target. Regularizer How is drift controlled? Reference KL, golden-data mixture, clipping, trust region, entropy control, or length control. Repetition, length inflation, or forgetting.
+
+Table 3: A formula-derived taxonomy of OPD variables. The entries are design dimensions whose useful settings depend on the state, feedback source, support, and update route. 
+
+10 from the current student from cached rewards com-puted under an old policy. Using current log-ratios, stale cached log-ratios, or importance-corrected log-ratios defines different estimators and different bias terms. Concrete instantiations include teacher-top-k forward KL as a direct loss, full-vocabulary or support-truncated reverse KL as a direct loss, sampled-token log-ratio reward as a PG estima-tor, and AOPD-style sign-conditioned switching between positive-advantage PG and non-positive-region local divergence matching (Jia et al., 2026). The support variable is where these mathemat-ical choices meet systems constraints. Higher-fidelity or better-aligned support usually spends more on logit materialization, teacher serving, transfer, alignment, or routing. The main text keeps the distinction conceptual: sampled-token support is cheap but blind to alternatives; top-k and overlap supports restore local alternatives with truncation and normalization choices; full-vocabulary support is most faithful but expensive; cross-tokenizer and representation supports require an explicit event bridge; and logit-free feedback replaces raw vocab-ulary support with a localization route. Table 11 gives the detailed support ladder. Equation (55) gives one abstract cross-tokenizer bridge, in the appendix. 
+
+3.4 Representative Methods under the Taxonomy 
+
+This subsection highlights the variables changed by representative methods. Foundational work sets the state, objective, and route variables: GKD moves distillation from fixed teacher-forced states toward states induced by student-generated outputs, includ-ing mistakes (Agarwal et al., 2024); MiniLLM con-nects reverse-KL distillation to policy-gradient esti-mators (Gu et al., 2023); DistiLLM (Ko et al., 2024) and DistiLLM-2 (Ko et al., 2025) show that loss geometry, data source, and contrastive structure should be co-designed. Recent state-distribution (Nie, 2026) and rich-feedback analyses (Agrawal et al., 2026) make the same point more explicitly: post-training methods differ in where supervision is applied, not only in which loss is minimized. Table 4 gives a compact method map in the main text, while the detailed mechanism map in table 12 and the expanded literature matrices in sec-tion E keep extension families, industrial systems, framework implementations, and implementation-facing details auditable. The lesson of the com-pact map is that method labels are often mislead-ing. vOPD (Oh et al., 2026) and AOPD (Jia et al., 2026) are both “sampled-token” variants in a sur-face sense, but they intervene on different variables: vOPD changes the estimator baseline, while AOPD changes the route for non-positive regions. TIP (Xu et al., 2026b) and SCOPE (Zheng et al., 2026) are both weighting methods, but TIP selects informa-tive token positions, whereas SCOPE routes trajec-tories by correctness. OPCD (Ye et al., 2026b) and Vision-OPD (Yuan et al., 2026) are both privileged-teacher methods, but the relevant risk is not privi-lege itself; it is whether the privileged signal can be compressed into behavior available at deployment.  
+
+> Mechanism family Variables and actionability lesson Foundations and diagnostics (Agarwal et al., 2024; Gu et al., 2023; Fu et al., 2026) Change the state source, divergence, route, or feedback-reliability test; OPD is not only a new loss, but supervision on student-induced states. Estimator and temporal-credit controls (Oh et al., 2026; Zhao et al., 2026a) Change baselines, advantage construction, stop-gradient treatment, or horizon; the main tradeoff is bias–variance under teacher reliability. Route switching and replacement routing (Jia et al., 2026; Liu et al., 2026b) Change the update route or vocabulary target for non-positive feedback; suppressing a sampled token is different from naming its replacement. Gates, weights, and adaptive objectives (Xu et al., 2026b; Zheng et al., 2026; Luo et al., 2026) Change where or how strongly feedback is used; actionability may depend on positions, trajectories, entropy, disagreement, or correctness gates. Outcome, privilege, and logit-free feedback (Ye et al., 2025, 2026b; Yuan et al., 2026) Change the feedback source or teacher privilege; global or privileged signals must be localized and compressible into deployment behavior. Support and systems (DeepSeek-AI, 2026; ModelScope Team, 2026b; verl Project, 2026) Change support fidelity, cache freshness, teacher serving, or framework knobs; systems choices are part of the objective interface.
+
+Table 4: Compact method matrix under the formula-driven taxonomy. Rows group representative mecha-nisms by the variables they primarily change; expanded matrices and claim audits remain in the appendix. 
+
+3.5 Evidence Discipline 
+
+Throughout this survey, we distinguish three kinds of statements. A literature-supported claim is one that prior work explicitly reports; we attribute it. A synthesis is our organization of several findings under the taxonomy above; we mark it as inter-pretation. A design direction is a potential OPD variant derived from the taxonomy; we state its assumptions and evaluation requirements. This dis-tinction matters because many OPD diagnostics, such as top-k overlap or teacher recoverability on student-induced states, are useful correlates or pre-dictors whose interpretation depends on the teacher, student, task, and support regime. 11 Route Support and gradient object Credit or gate Must report Direct-loss route Full vocabulary, teacher top-k, student top-k,overlap, or aligned support; differentiate a local distributional objective conditional on collected prefixes. Usually local at a prefix unless the target distribution or weight encodes future or global information. Support source and size, normalization convention, divergence direction, masks or weights, detached prefixes/targets, and drift regularizer. PG-style route Sampled token by default; top-k or routed alternatives require an explicit extra support query. Differentiate a score-function loss over sampled actions. Immediate, return-to-go, discounted, windowed, baseline-corrected, control-variate, or proposed GAE-style advantages (Schulman et al., 2016). Rollout policy, teacher freshness, reward definition, horizon, baseline/control variate, stop-gradient convention, clipping or trust region, and negative-advantage routing. Hybrid or gated route Dense teacher/self-teacher feedback plus verifier, rubric, ORM, discriminator, execution, or environment signal. The route may switch by sign, correctness, entropy, or support overlap. The global signal gates, weights, splits, or localizes dense updates; correct and incorrect rollouts may follow different routes. Which signal is dense, which is global, how the global signal is localized, whether the method remains core OPD or hybrid, and whether gains are task gains or teacher-agreement gains. 
+
+Table 5: Auditable OPD update routes. The distinction is about how the objective is estimated, differentiated, and gated, not about a fixed KL direction. 
+
+4 Temporal Credit and Vocabulary Probability Routing 
+
+The taxonomy separates two variables that are sometimes discussed together under sampled-token OPD stability, but that enter different parts of the update. Here routing means vocabulary-level prob-ability routing, not the broader update route or global gate defined in section 3. The first variable is temporal credit : which scalar should multiply the score term st = ∇θ log πθ(yt|ct) for a sampled token? The second variable is vocabulary routing :once an update says that probability should move at prefix ct, which token alternatives should receive that probability mass? Return-to-go, discounting, and state-only base-lines are temporal-credit estimator moves; teacher top-k, full-vocabulary KL, and AOPD-style switch-ing address vocabulary routing. This section then analyzes two potential design directions in paral-lel: GAE-OPD, an OPD adaptation of generalized advantage estimation (Schulman et al., 2016), for value-based temporal credit, and Counterfactual Routed OPD (CR-OPD) for vocabulary-level re-placement targets. The separation is mathematical: these mechanisms enter different parts of the PG-style update. Figure 3 summarizes this distinction. Recent OPD work motivates this separation. Re-visiting OPD analyzes the bias–variance trade-off between sequence-level and token-level estimators, then motivates teacher top-k local support match-ing as a less brittle local signal (Fu et al., 2026). That top-k objective is a local support-truncated surrogate, while vOPD makes a complementary estimator distinction: a top-k KL approximation changes the objective when used as a loss, but can preserve the conditional score expectation when used only as a detached action-independent base-line (Oh et al., 2026). The return-to-go algebra, token-local bias term, discount-versus-baseline dis-tinction, and logit-level routing analysis below are formula consequences under the stated assump-tions. Teacher top-k matching, AOPD-style switch-ing, vOPD-style control variates, and related stabi-lizers are literature-supported mechanisms. GAE-OPD and CR-OPD are taxonomy-derived hypothe-ses (E3) whose assumptions and evaluation require-ments follow from those same formulas. 
+
+4.1 From Sequence Reverse KL to Return-to-Go 
+
+We use the reward convention from Eq. 5, 
+
+rt = log q(yt|ct) − log πθ(yt|ct), (11) so ascending reward corresponds to descending the reverse-KL cost up to the zero-mean constant score term in Eq. 4. When q supplies autoregressive prob-abilities on the declared support, the completion-12 Figure 3: Two update axes exposed by PG-style OPD. Temporal credit asks how downstream log-ratio returns should weight each sampled action; vocabulary routing asks where probability mass should move after a negative sampled-token update. The counterfactual-routing panel illustrates the CR-OPD hypothesis. 
+
+level reward for y = ( y1, . . . , y T ) is 
+
+R(y) = 
+
+> T
+
+X
+
+> t=1
+
+rt = log q(y|x) − log πθ(y|x), (12) and autoregressive factorization gives 
+
+∇θ log πθ(y|x) = 
+
+> T
+
+X
+
+> t=1
+
+st. (13) The naive sequence estimator multiplies every score term by the full sequence reward. Past re-wards can be removed from the score term at time t
+
+without changing the expectation: once ct is fixed, 
+
+r1, . . . , r t−1 are fixed with respect to the sampled action yt, and 
+
+Eyt∼πθ (·| ct)[st] = 0 . (14) Thus, under exact current-policy sampling, com-patible teacher support, and detached log-ratio weights, the sequence-level reverse-KL descent di-rection can be estimated by the return-to-go form 
+
+ˆgseq =
+
+> T
+
+X
+
+> t=1
+
+Gtst, Gt =
+
+> T
+
+X
+
+> k=t
+
+rk. (15) This is ordinary causal credit assignment: the ac-tion at time t can influence suffix states and there-fore downstream log-ratios, while past tokens re-main fixed under the current prefix. If rollouts are generated by an old policy and reused for mul-tiple updates, Eq. 15 becomes off-policy unless importance correction, PPO-style clipping (Schul-man et al., 2017), or a trust-region approximation (Schulman et al., 2015) is added. The problem is that OPD’s reward is not an envi-ronment truth signal. It is teacher-student log-ratio feedback evaluated on student-induced states. In long reasoning or agentic trajectories, later states are increasingly shaped by the student; teacher re-liability on such states is a state-compatibility risk highlighted by recent OPD diagnostics (Fu et al., 2026; Li et al., 2026f; Zhu et al., 2026). Down-stream log-ratios therefore create two coupled risks: they increase estimator variance, and they may be-come less reliable as teacher feedback. Revisiting OPD analyzes the variance side: under bounded per-token log-ratio and score terms, token-local sums have a much tighter worst-case horizon de-pendence than sequence-level estimators, with sim-plified bounds of O(T 2) versus O(T 4) (Fu et al., 2026). 13 4.2 Token-Level and Discounted Estimators Are Biased Surrogates 
+
+Immediate sampled-token OPD uses 
+
+ˆgtok =
+
+> T
+
+X
+
+> t=1
+
+rtst. (16) At a fixed prefix, the same sampled term is an unbi-ased one-sample estimator of the local reverse-KL direction in eq. (7). The bias discussed here is rela-tive to the sequence-level objective: compared with Eq. 15, it drops all future terms. The dropped term is 
+
+ˆgseq − ˆgtok =
+
+> T
+
+X
+
+> t=1
+> T
+
+X
+
+> k=t+1
+
+rkst. (17) Its expectation is generally not zero because rk
+
+depends on the suffix distribution induced by the earlier sampled action yt. Token-level OPD is there-fore a biased low-variance local surrogate for the sequence-level reverse-KL direction, not an unbi-ased estimator of that direction. A discounted return estimator makes the same tradeoff continuously: 
+
+ˆgγ = X
+
+> t
+> T
+
+X
+
+> k=t
+
+γk−trk
+
+!
+
+st, γ ∈ [0 , 1] . (18) 
+
+γ = 0 gives Eq. 16; γ = 1 gives Eq. 15. For 
+
+γ < 1, however, the estimator changes the expected direction: 
+
+E[ˆ gseq − ˆgγ ] = E
+
+" TX
+
+> t=1
+> T
+
+X
+
+> k=t+1
+
+(1 − γk−t)rkst
+
+#
+
+,
+
+(19) which is generally nonzero. This is the key dis-tinction: a state-only baseline is subtracted and has zero expected score contribution; a discount factor multiplies future rewards and changes the objective. Discounting can still be sensible in OPD, but it should be named correctly. It is a biased temporal-credit surrogate, or a reliability discount when later teacher feedback on student-induced states is suspected to be noisier or less actionable. 
+
+4.3 State-Only Baselines and a Proposed GAE-Style Extension 
+
+Baselines have a different mathematical status from discounting. For any state-only function b(ct),
+
+Eyt∼πθ (·| ct)[b(ct)st] = b(ct)∇θ
+
+X
+
+> yt
+
+πθ(yt|ct) = 0 .
+
+(20) Thus Gt can be replaced by Gt − b(ct) without changing the exact on-policy expectation. A value function is the structured version of this baseline. For the undiscounted sequence-level OPD objec-tive, define 
+
+V π(ct) = Eπθ
+
+" TX
+
+> k=t
+
+rk | ct
+
+#
+
+. (21) With terminal convention V π(cT +1 ) = 0 , the exact temporal residual is 
+
+δπt = rt + V π(ct+1 ) − V π(ct). (22) The value-based GAE-OPD temporal-credit hy-pothesis for the undiscounted OPD objective is then 
+
+ˆAλt = 
+
+> T−t
+
+X
+
+> l=0
+
+λlδπt+l, λ ∈ [0 , 1] . (23) If V π is exact and samples are on-policy, Eq. 23 has the same expected policy-gradient direction as the sequence-level return-to-go for any λ: fu-ture residuals beyond the first have zero condi-tional mean under the policy, while the first resid-ual has expectation Qπ(ct, y t) − V π(ct), where 
+
+Qπ(ct, y t) = Eπθ [PTk=t rk | ct, y t]. In this ideal-ized case, λ changes the variance of the estima-tor but not the target expectation. In practice, for 
+
+λ < 1, an approximate Vϕ introduces bootstrap-ping bias through value error. In the λ = 1 terminal Monte Carlo limit, the residual sum telescopes to PTk=t rk −Vϕ(ct), so under on-policy sampling and detached rewards it remains expectation-preserving for any state-only baseline, though variance may be high. Cached old-policy rewards, repeated actor updates, missing importance correction, or trust-region approximations introduce off-policy bias. A rollout-buffer implementation should make this explicit. Let 
+
+rold  
+
+> k
+
+= log q(yk|ck) − log πθold (yk|ck) (24) be the detached cached log-ratio reward computed when πθold generated the rollout. The critic target for the old-policy undiscounted surrogate is 
+
+Vϕ(ct) ≈ Eyt:T ∼πθold (·| ct)
+
+" TX
+
+> k=t
+
+rold  
+
+> k
+
+| ct
+
+#
+
+. (25) The practical residual and advantage are 
+
+δt = rold  
+
+> t
+
++ Vϕ(ct+1 ) − Vϕ(ct), (26) 14 and 
+
+ˆAGAE  
+
+> t
+
+= 
+
+> T−t
+
+X
+
+> l=0
+
+λlδt+l. (27) The policy loss differentiates only the cur-rent student log-probability term, for exam-ple − P 
+
+> t
+
+sg( ˆAGAE  
+
+> t
+
+) log πθ(yt|ct), optionally with PPO-style ratios against πθold (Schulman et al., 2017). Cached rewards, value targets, and advan-tages are treated as stop-gradient quantities in the actor update. Without small policy drift, impor-tance correction, PPO-style ratios, or a trust-region approximation (Schulman et al., 2015), this old-policy surrogate should not be described as the ex-act current-student sequence reverse-KL gradient. If one instead defines a discounted value target 
+
+V πγ (ct) = Eπθ
+
+" TX
+
+> k=t
+
+γk−trk | ct
+
+#
+
+,
+
+then the corresponding residual rt + γV πγ (ct+1 ) −
+
+V πγ (ct) is unbiased for the γ-discounted surrogate when V πγ is exact, but remains biased relative to the original undiscounted sequence-level reverse-KL objective whenever γ < 1. This is why GAE-OPD is distinct from the fixed discounted estimator in Eq. 18: GAE uses value-based TD residuals as control variates, while discounting changes the temporal objective. Figure 4 summarizes these temporal-credit choices and the baseline-versus-discount distinction. 
+
+4.4 Probability Routing under Negative Advantage 
+
+Temporal credit is only one axis. PG-style OPD also has a vocabulary-level routing problem. If 
+
+At < 0, the sampled token yt is suppressed. The softmax reallocates probability mass to other to-kens according to the student’s current geometry, not necessarily toward teacher-supported alterna-tives. This is the missing counterfactual target prob-lem. The mechanism is visible at the logit level. For the policy loss −At log πθ(a|ct) on sampled token 
+
+a, let gv denote the gradient with respect to student logit zv:
+
+gv = −At (1[v = a] − πθ(v|ct)) . (28) Ignoring optimizer details, the first-order gradient-descent step is proportional to −gv. If At <
+
+0, the sampled logit decreases, while each non-sampled logit increases in proportion to the current student probability πθ(v|ct). The teacher distri-bution q(v|ct) affects this step only through the scalar At unless the method explicitly adds teacher-supported alternatives. This is why suppressing a bad sampled token is not the same as routing prob-ability mass toward a teacher-supported replace-ment. Teacher top-k or full-vocabulary local match-ing should be understood through this vocabulary-routing lens. Revisiting OPD’s teacher top-k sup-port matching (Fu et al., 2026) keeps the update local, thereby avoiding long return-to-go variance, but its distinctive contribution is to provide a lo-cal distributional replacement target rather than a single sampled-token signal. AOPD is a related sign-conditioned response: in non-positive regions it switches from sampled-token negative reinforce-ment to localized divergence against teacher sup-port (Jia et al., 2026). These support-expanded routes contribute local support and clearer prob-ability routing, while temporal credit remains a separate estimator variable. The gradient contrast is direct, but the normaliza-tion convention matters. For a teacher-normalized support target 
+
+qΩ(v|ct) = q(v|ct)1[v ∈ Ω] 
+
+P 
+
+> u∈Ω
+
+q(u|ct)
+
+extended by zero outside Ω, and for the full-vocabulary student softmax πθ, a forward-KL or cross-entropy implementation is 
+
+LFKL ,Ω = DKL (qΩ∥πθ)= − X
+
+> v∈Ω
+
+qΩ(v|ct) log πθ(v|ct) + const ,
+
+(29) the logit gradient is 
+
+∂LFKL ,Ω
+
+∂z v
+
+= πθ(v|ct) − qΩ(v|ct), (30) Gradient descent therefore moves logits in the di-rection qΩ(v|ct) − πθ(v|ct): teacher-supported al-ternatives with larger target probability are explic-itly increased, and overestimated alternatives are decreased. This is different from the sampled-token PG update in eq. (9), where teacher information enters only through the scalar multiplying the sam-pled token’s score term. A restricted-student vari-ant instead defines 
+
+πθ, Ω(v|ct) = πθ(v|ct)1[v ∈ Ω] 
+
+P 
+
+> u∈Ω
+
+πθ(u|ct)
+
+15 Figure 4: Temporal-credit estimators for PG-style OPD. Immediate-token updates are local biased surrogates for the sequence-level reverse-KL direction; return-to-go restores suffix log-ratio credit at higher horizon variance; state-only baselines preserve the on-policy expectation; and GAE-OPD uses value-based TD residuals whose practical bias depends on critic error and policy staleness. 
+
+and minimizes − P 
+
+> v∈Ω
+
+qΩ(v|ct) log πθ, Ω(v|ct).For detached Ω, its logit gradient is πθ, Ω(v|ct) −
+
+qΩ(v|ct) for v ∈ Ω and zero outside Ω. Both teacher-target normalization and student-softmax normalization must therefore be stated. Prior methods partially address adjacent gating and support issues by expanding support, switch-ing objectives in non-positive regions, filtering through trust-region diagnostics (Xing et al., 2026), or repairing large teacher–student gap regimes (Liu et al., 2026b). Outcome- or trajectory-conditioned methods provide another partial precedent: SCOPE (Zheng et al., 2026) splits correct and incorrect tra-jectories, SSOPD (Tan and Hong, 2026b) turns correct–wrong rollout contrast into dense process supervision, and OPD-plus-global-feedback sys-tems such as MiMo (MiMo Core Team, 2026) and KDRL (Xu et al., 2025) combine sparse correct-ness or reward signals with dense distillation-style guidance. Recent self-distilled RLVR and sample-selection variants further expose related variables: SD-Zero turns binary rewards into revision-derived dense supervision (He et al., 2026), Self-Distilled RLVR uses self-distillation inside verifiable-reward training (Yang et al., 2026a), SRPO frames group-relative and self-distillation updates through sam-ple routing (Li et al., 2026b), and GEAR changes the granularity of advantage reweighting for agents (Li et al., 2026d). These works support sign-, outcome-, granularity-, trust-, or teacher-gap-conditioned updates; vocabulary-level replacement routing remains a separate design variable. Our candidate routing direction is to make the re-placement target explicit when the prefix is judged routable. The routing decision should be token-local even when the main OPD update uses a tem-poral advantage. The temporal advantage At asks whether the sampled action contributed to down-stream log-ratio returns; the local routing score below asks which replacement tokens have higher teacher-student log-ratio relative to a local baseline at the current prefix. Mixing these two roles can produce incorrect routing. The baseline must be defined on a declared support. A full-vocabulary baseline requires full teacher scores or a smoothing convention. Under top-k access, one restricted routing support is 
+
+Ωroute  
+
+> t
+
+= TopK T (ct) ∪ TopM S (ct) ∪ { yt}, (31) with teacher scores, student scores, and any smooth-ing or reconstruction convention declared on every token in Ωroute  
+
+> t
+
+. Define the restricted normalized 16 distributions 
+
+˜qΩ(v|ct) = q(v|ct)1[v ∈ Ωroute  
+
+> t
+
+]
+
+P 
+
+> u∈Ωroute
+> t
+
+q(u|ct) ,
+
+˜πΩ(v|ct) = πθ(v|ct)1[v ∈ Ωroute  
+
+> t
+
+]
+
+P 
+
+> u∈Ωroute
+> t
+
+πθ(u|ct) .
+
+(32) A restricted local baseline is then, writing Ω = Ωroute  
+
+> t
+
+inside the display, 
+
+bloc ,Ω(ct) = X
+
+> u∈Ω
+
+˜πΩ(u|ct)ℓΩ 
+
+> t
+
+(u),ℓΩ 
+
+> t
+
+(u) = log ˜ qΩ(u|ct) − log ˜ πΩ(u|ct).
+
+(33) This is the negative reverse KL between the re-stricted student and teacher distributions at ct; the corresponding full-vocabulary quantity can be used when full support is available. This local base-line must be distinguished from the temporal value 
+
+V π(ct) used for return-to-go credit. The restricted local routing score is 
+
+ηloc  
+
+> t
+
+(v) = log ˜ qΩ(v|ct) − log ˜ πΩ(v|ct) − bloc ,Ω(ct).
+
+(34) A conservative candidate set is 
+
+C+ 
+
+> t
+
+= {v ∈ TopK T (ct) ∩ TopM S (ct) : 
+
+ηloc  
+
+> t
+
+(v) > 0}. (35) Here TopK T (ct) denotes the K highest-probability teacher tokens and TopM S (ct) denotes the M
+
+highest-probability student tokens, with all can-didate sets and scores treated as stop-gradient. The intersection is a reachability constraint: candidates are both teacher-endorsed and currently plausible under the student. If the intersection is empty, one may relax it to πθ(v|ct) > ϵ ; otherwise the update degenerates to pure suppression. For a sampled token u = yt with ηloc  
+
+> t
+
+(u) < 0,one biased corrective operator is a pairwise routing loss 
+
+Lroute = [ −ηloc  
+
+> t
+
+(u)] +
+
+· X
+
+> v∈C+
+> t
+
+αt,v log(1 + exp( zu − zv)) ,
+
+(36) where zv is the student logit. A concrete normal-ized choice is 
+
+αt,v = [ηloc  
+
+> t
+
+(v)] +
+
+P
+
+> w∈C+
+> t
+
+[ηloc  
+
+> t
+
+(w)] +
+
+,
+
+when the denominator is positive, with teacher-probability or uniform weights as lower-information alternatives. If the total positive score is small, normalization can overweight marginal candidates. A temperature on the positive scores controls the concentration or peakiness of the relative routing weights; it does not by itself solve low-evidence routing. Low-evidence cases instead require a damping factor or minimum positive-mass threshold before applying the route. A temporal advantage can still gate or scale this loss, while the replacement set is defined by local teacher-student alternatives. We call this family of operators Counterfactual Routed OPD 
+
+(CR-OPD; E3). The operator is a biased corrective route by construction: it changes the local update so that negative sampled-token feedback can name teacher-supported replacements. It also requires access to teacher alternatives, so it is a support-expanded rather than logit-free method. The top-k intersection is only a reachability proxy; if it is too conservative, it can miss genuinely new teacher information. Its role in this survey is to expose the probability-routing variable that standard sampled-token updates leave implicit. 
+
+4.5 Evaluation Implications 
+
+The decomposition above follows from the esti-mator algebra and yields concrete evaluation re-quirements. A temporal-credit study should sep-arate four cases that are mathematically different: immediate-token OPD, full return-to-go, deliber-ately discounted or windowed return-to-go, and GAE-OPD with an explicit critic. It should report which estimators are unbiased for which objective, estimator variance, critic error, reward and advan-tage histograms, stale-policy drift, agreement with a higher-fidelity proxy when available, final task score, correct/incorrect rollout splits, length, rep-etition, entropy, calibration, and capability regres-sion on golden data. If γ < 1 is used, the report should state whether it is a task discount, a teacher-reliability discount, or merely a variance heuristic; only the first two define a coherent surrogate objec-tive. A vocabulary-routing study should hold the temporal advantage fixed while comparing plain sampled-token suppression, teacher top-k direct matching, full-vocabulary matching when feasi-ble, AOPD-style sign switching, CR-OPD-style pairwise routed alternatives, and candidate filter-ing. It should report support coverage, reachable-alternative rate, negative-advantage mass, teacher-student KL or log-ratio histograms, final task score, and compute overhead. Without these controls, 17 an observed gain cannot be attributed cleanly to temporal GAE-OPD credit or to vocabulary-level probability routing. 
+
+5 Feedback Actionability as a Diagnostic Lens 
+
+The formula taxonomy identifies the variables an OPD method can change. A separate question is whether a particular feedback signal should be converted into a gradient at a particular student-induced state. We call this feedback actionabil-ity . Actionability is an operational diagnostic crite-rion: before a feedback object becomes an update, the method should justify state reliability, support reachability, credit horizon, routing target, update route, and drift control. A signal is actionable when the available evidence suggests that applying it at the visited state will improve the behavior of inter-est without creating unacceptable drift. Sections 5 to 7 use the same variables at three levels: this section defines when feedback is action-able, section 6 names the mechanisms that make it fail, and section 7 turns those mechanisms into pilot diagnostics and conservative interventions. 
+
+5.1 State Compatibility 
+
+The first check is whether the feedback source is reliable at the student-induced state where the up-date is applied. This is precisely where OPD differs from teacher-forced KD: the teacher is queried on student-induced states, including mistakes. Empiri-cal reports instantiate this risk through teacher unre-liability, reasoning-pattern compatibility, marginal-information limits, token-level teachability, and tokenizer artifacts (Fu et al., 2026; Li et al., 2026f; Zhu et al., 2026; Liu et al., 2026a; Jiang et al., 2026); section 6 discusses the corresponding mech-anisms. Under our taxonomy, top-k overlap, teacher perplexity on student-induced contexts, prompt-format alignment, and recoverability probes are state-compatibility diagnostics. They are risk sig-nals whose interpretation depends on the teacher, student, support, and task. A compatible teacher can still add little marginal information; an appar-ently incompatible teacher can still be useful if the update route changes support, gates unreliable positions, or brings in outcome-level evidence. 
+
+5.2 Marginal Information and Support Reachability 
+
+Actionable feedback must contain information the student can use. Rethinking OPD and Many Faces of OPD both show that teacher–student compat-ibility, teacher choice, student capacity, and task domain shape whether OPD helps (Li et al., 2026f; Zhu et al., 2026). If the teacher is too close to the student, OPD can degenerate into expensive self-regularization. If the teacher is too far away, the recommended tokens or reasoning pattern may be outside the student’s reachable support. This is why teacher strength is not the right scalar by itself; the relevant quantity is state-conditioned marginal information under the chosen support and update route. Support reachability makes this concrete. The support/access ladder is detailed in table 11; the ac-tionability question here is whether the compared alternatives are reachable under the student’s state-conditioned support. Cross-tokenizer and represen-tation work can be read as support recovery when raw teacher and student token events no longer match (Boizard et al., 2025; Zhang et al., 2025; Sun et al., 2026; Cui et al., 2025; Minixhofer et al., 2025; Yang et al., 2026b). 
+
+5.3 Privilege Compressibility 
+
+Some OPD variants obtain feedback from a priv-ileged teacher: the teacher sees extra context, a verified trace, a visual crop, a domain-specialized checkpoint, an execution result, or another view unavailable to the deployed student. Privileged feedback is actionable only when the extra infor-mation changes deployable behavior rather than leaking instance-specific answers. OPCD, Vision-OPD, OPSD, GATES, and HDPO instantiate this compressibility question with context, visual, trace, consensus, or hybrid-distillation signals (Ye et al., 2026b; Yuan et al., 2026; Zhao et al., 2026c; Stein et al., 2026; Ding, 2026); failure cases are separated in section 6. 
+
+5.4 Evaluation Alignment 
+
+Dense teacher logits are local distributional feed-back, not a guarantee of final task success. A token can be locally fluent while keeping the trajectory inside a wrong proof, an invalid tool plan, or a mis-leading answer. The evaluation-alignment check asks whether the local update agrees with the out-come, rubric, verifier, discriminator, or human cri-18 terion that actually matters. The actionable check is whether local teacher agreement predicts the outcome criterion. Gradient-alignment, rubric, black-box, verifier, rollout-contrast, and reward-weighted variants provide probes or gates for this alignment (Armandpour et al., 2026; Fang et al., 2026; Ye et al., 2025; Xiong et al., 2026; Zhou et al., 2026; MiMo Core Team, 2026; Xu et al., 2025; Tan and Hong, 2026b; Zou et al., 2026; Agrawal et al., 2026; Li et al., 2026e); section 7 lists the corresponding pilot checks. 
+
+5.5 Update Routability and Stability 
+
+Even reliable and aligned feedback can be non-actionable if the update route is unstable. PG-style OPD can have high horizon variance; di-rect top-k losses can introduce truncation bias; negative-advantage sampled-token updates can sup-press a token without defining a replacement; self-distillation can amplify confidence or repetition (Zhang et al., 2026b; Kim et al., 2026; Luo et al., 2026). The routability check is operationalized by the gradient-concentration, global-signal, and drift rows of table 7. The relevant mechanisms include variance control, non-positive-region routing, refer-ence constraints, diagnostic gates, and calibration monitoring (Oh et al., 2026; Zhao et al., 2026a; Jia et al., 2026; Luo et al., 2026; Xu et al., 2026b; Zheng et al., 2026; Jin et al., 2026; Jang et al., 2026; Li et al., 2026h; Xing et al., 2026; Zhang et al., 2026b; Kim et al., 2026). 
+
+5.6 Evidence Boundary 
+
+The criteria above deliberately combine direct find-ings with this survey’s synthesis. Prior work re-ports sampled-token failure modes, compatibility diagnostics, length inflation, control variates, sign-based routing, and gradient-alignment diagnostics. We group those findings as state compatibility, marginal information, support reachability, priv-ilege compressibility, evaluation alignment, and up-date routability. The separation between temporal credit and vocabulary routing, and the bias distinc-tion between discounts and state-only baselines, are analytic consequences of the update formulas. GAE-OPD and CR-OPD remain hypotheses gener-ated by those variables rather than reported imple-mentations. 
+
+6 Failure Mechanisms 
+
+Building on the actionability criteria in section 5, this section names the failure mechanisms that arise when a formula variable or diagnostic axis becomes unreliable. Table 6 gives the compact map; stabi-lization responses are deferred to section 7. 
+
+6.1 State Compatibility Failures 
+
+The on-policy state distribution is both OPD’s ad-vantage and its risk. Student-induced states reveal what the learner must handle, but those states may also be outside the teacher’s reliable correction re-gion. Revisiting OPD reports teacher unreliability on student states and special-token or tokenizer mismatches (Fu et al., 2026). Rethinking OPD re-ports compatibility between teacher and student thinking patterns as a key empirical factor (Li et al., 2026f). Veto reformulates targets when raw teacher guidance is unstable under a large teacher–student gap (Jang et al., 2026). Recent diagnostic work on local teachability collapse and residual hard tokens points in the same direction: prefix positions, suf-fix positions, and particular token classes can have very different usefulness under the same nominal OPD loss (Liu et al., 2026a; Jiang et al., 2026). 
+
+6.2 Temporal and Agentic Credit Failures 
+
+The return-to-go estimator in eq. (15) is closer to sequence-level reverse KL than immediate-token OPD, but long reasoning traces make it noisy. Immediate-token OPD drops future log-ratio terms, yielding a biased low-variance semi-gradient. vOPD, OPD+, ReOPOLD, and TrOPD in-tervene on different parts of this problem: variance baselines, advantage construction, reward clipping or staged exploration, and trust-region routing (Oh et al., 2026; Zhao et al., 2026a; Ko et al., 2026; Xing et al., 2026). These are not interchangeable fixes; each changes a different estimator or route variable. Agentic OPD adds discrete support drift under a fixed interaction interface. A wrong tool call, search query, or dialogue act can move the later trajectory into states where local token feedback is fluent but no longer recoverable. This mechanism concerns the update after rollouts are collected; har-ness fidelity is a separate interface variable. TCOD and SOD study multi-turn or step-wise OPD set-tings (Wang et al., 2026c; Zhong et al., 2026a), while GEAR and Skill-SD treat granularity or skill conditioning as explicit variables for agent self-19 Failure Perturbed variable or axis Mechanism 
+
+State, feedback, and horizon 
+
+Flawed-prefix trap State / feedback reliability Student enters prefixes where teacher logits are local fluency signals rather than recoverable correction. Long-horizon variance Credit estimator Sequence-level reverse KL couples early-token updates to many noisy future log-ratios. Trajectory-level support drift State / credit under fixed interface In multi-turn or tool-use settings, early errors move later states outside reliable teacher, verifier, or environment support. 
+
+Routing and support 
+
+Negative feedback without target Probability routing Suppressing a sampled token does not specify which alternative should receive the released probability mass. Truncated-support bias Support Sampled-token or top-k objectives change the full-vocabulary target and can hide important alternatives. Tokenizer or modality artifact Support / representation Token, span, or modality events diverge semantically across teacher and student. 
+
+Teacher, privilege, and system dynamics 
+
+Cached-teacher inconsistency Feedback source / teacher dynamics Cached log-probabilities can become inconsistent with the current student, prompt template, tokenizer, or rollout distribution. Privilege mismatch Teacher privilege The teacher uses context, answers, modalities, traces, or tools the student cannot internalize or access at deployment. Multi-teacher conflict Feedback source / routing Specialist teachers provide incompatible gradients or average away weak but useful domain signals. 
+
+Outcome, calibration, and regularization 
+
+Signal-outcome mismatch Evaluation alignment Dense local feedback improves fluency or teacher agreement without improving the target outcome. Calibration or certainty drift Weighting / evaluation alignment Dense feedback increases confidence or suppresses uncertainty expression while calibrated correctness does not improve. Length and repetition drift Regularizer / state On-policy loops make repetitive continuations predictable and locally reinforced. 
+
+Table 6: OPD failure mechanisms organized by update-interface variables and diagnostic axes. The table names mechanisms only; recipes appear in section 7. 
+
+distillation (Li et al., 2026d; Wang et al., 2026a). Healthcare AI Gym provides a domain-specific re-minder that agent trajectories are evaluated through interactive task processes rather than isolated next-token agreement (Jeong, 2026). Prefix OPD, Prune-OPD, full-rollout analyses, and near-future guid-ance can be read as horizon-control responses to the same mechanism (Zhang et al., 2026a; Yang et al., 2026d; Zhang et al., 2026d; Jiang and Ferraro, 2026). 
+
+6.3 Routing and Support Failures 
+
+Negative-advantage sampled-token OPD has a vocabulary-level failure: At < 0 suppresses the sampled token, but the softmax reallocates proba-bility according to the student’s current geometry rather than an explicit teacher-endorsed alternative. AOPD addresses this by switching to localized di-vergence in non-positive regions (Jia et al., 2026). Adjacent self-distilled RLVR, routing, and curricu-lum methods expose how sparse rewards, sample routes, or partial solutions can be converted into denser supervision (Li et al., 2026b; He et al., 2026; Yang et al., 2026a; Shen et al., 2026b,a; Tan and Hong, 2026a; Xu et al., 2026a). They motivate routed updates; the within-vocabulary replacement problem remains the specific gap analyzed in sec-tion 4. Support choice is often presented as an effi-ciency knob, but it changes the supervision prob-lem. The support ladder in table 11 gives the de-tailed regimes; the failure mechanism here is that changing support changes which alternatives are visible and how omitted mass receives gradients. DeepSeek-V4’s full-vocabulary report and cross-tokenizer or representation methods illustrate the two extremes: spending systems budget for exact vocabulary support, or rebuilding support when teacher and student events are not directly com-parable (DeepSeek-AI, 2026; Boizard et al., 2025; Zhang et al., 2025; Sun et al., 2026; Cui et al., 2025; 20 Minixhofer et al., 2025; Yang et al., 2026b). 
+
+6.4 Feedback Source and Evaluation Failures 
+
+Cached-teacher systems make teacher dynamics part of the objective. Lightning OPD reduces cost by precomputing teacher log-probabilities, but its teacher-consistency condition shows why a stale teacher, prompt template, tokenizer, or rollout source changes the meaning of the stored reward (Wu et al., 2026). Near-policy and online variants make the same issue operational: asynchronous generation and teacher lag can improve throughput only if stale feedback remains close enough to the intended on-policy interface (Rang et al., 2026; Ye et al., 2026a). Privilege mismatch and signal-outcome mis-match are distinct. Privilege mismatch concerns de-ployability of the teacher’s information: extra con-text, verified traces, modality views, or tool results help only when they are compressible into student behavior (Ye et al., 2026b; Yuan et al., 2026; Zhao et al., 2026c; Stein et al., 2026; Ding, 2026). Signal-outcome mismatch concerns whether local teacher agreement improves the task metric; rubric, black-box, verbal, speculative, and reward-weighted vari-ants constrain dense feedback with more semantic or outcome-oriented signals (Fang et al., 2026; Ye et al., 2025; Xiong et al., 2026; Zhou et al., 2026; Zou et al., 2026). Both are actionability failures, but they require different diagnostics. 
+
+6.5 Drift, Conflict, and Representation Artifacts 
+
+OPD can improve the wrong observable. The Il-lusion of Certainty reports calibration/capability decoupling under OPD-style training, and self-distillation degradation work warns that self-generated or privileged signals can suppress use-ful uncertainty expression (Zhang et al., 2026b; Kim et al., 2026). StableOPD identifies repetition-associated length inflation as an on-policy drift mechanism and proposes reference constraints and rollout mixtures (Luo et al., 2026); EGRSD simi-larly treats self-uncertainty as a signal that should not be overwritten blindly (Ke et al., 2026). Multi-teacher OPD can create conflict even when each individual teacher is useful. MiMo and DeepSeek-V4 report domain-specialized teachers (MiMo Core Team, 2026; DeepSeek-AI, 2026); MAD-OPD uses debate-style multi-agent feedback (Wang et al., 2026b). The survey-level risk is that averaging or mixing teachers can flatten domain-specific gradients, combine incompatible reasoning styles, or hide weak signals unless teacher selection is itself routed. Finally, tokenizer and modality artifacts are sup-port failures in another form. Cross-tokenizer meth-ods address text-event mismatch, while multimodal and cross-modal OPD variants such as PRISM, VOLD, CORD, VISD, Video-OPD, X-OPD, and VLA-OPD show that the state, teacher privilege, evaluation signal, or support bridge may span im-age, audio, video, speech, action, latent, or veri-fier spaces rather than a single shared vocabulary (Wang et al., 2026d; Bousselham et al., 2025; Hu et al., 2026; Lin et al., 2026; Li et al., 2026c; Cao et al., 2026; Zhong et al., 2026b). In these settings, the key failure is not merely noisy logits; it is an ill-defined correspondence between what the teacher evaluates and what the student can update. 
+
+7 Diagnostics and Stabilization Recipes 
+
+The diagnostic lens is meant to change training decisions before a full OPD run fails. Table 7 or-ganizes recipes by formula variables rather than method names, linking each diagnostic family to warning patterns and conservative responses. The entries are pilot-study starting points; thresholds are absent because reported cutoffs are usually model-, task-, and infrastructure-specific. Unlike section 6, this section is a reporting checklist for deciding what to measure or change before com-mitting to a full run. 
+
+7.1 A Pilot Protocol 
+
+A conservative OPD pilot has four stages. First, collect student rollouts on held-out prompts and compute teacher log-probabilities or the available feedback signal without training. Second, run state and support diagnostics: overlap, teacher prefix perplexity, tokenizer and special-token artifacts, entropy-disagreement maps, and suffix degradation checks. Third, run a short training pilot with log-ging of gradient norms, log-ratio distributions, re-ward or advantage histograms, entropy, length, rep-etition, calibration, and final-task metrics. Fourth, compare correct and incorrect rollouts separately; a method that improves incorrect rollouts while dam-aging correct ones suggests a routing, weighting, or gate-selection problem, not necessarily a teacher problem. An OPD report should make the following quan-tities auditable whenever the feedback interface 21 Diagnostic family Probes Warning pattern Conservative response State and support compatibility Top-k overlap; teacher prefix perplexity; rollout-horizon probe; special-token audit. Low or unstable overlap, high teacher perplexity on student-induced contexts, unreliable suffix positions, or special-token mismatch. Teacher-forced SFT warmup, prompt-format alignment, smaller updates, support expansion, prefix/truncated OPD, or skipping unrecoverable positions. Teacher/cache integrity Teacher-cache consistency; prompt-template versioning; tokenizer and scoring replay. Cached scores drift from re-scoring, teacher checkpoints or prompt templates change, or token events no longer match stored scores. Version caches, shorten cache windows, re-score held-out slices, freeze the teacher interface, or refresh stale rollouts. Gradient concentration and routability Entropy-disagreement map; sign and mass audit; reachable-alternative check. A few positions dominate gradients, outlier log-ratios drive updates, or negative-advantage tokens have no reachable teacher-supported alternative. Token selection, reward clipping, advantage normalization, top-k
+
+expansion, local divergence, or skipping unroutable suppression. Global-signal routing Correct/incorrect split; verifier, ORM, RLVR, rubric, discriminator, or execution-test agreement. Dense KL improves teacher agreement while hurting solved examples, final accuracy, executable correctness, or rubric score. Route correct and incorrect trajectories separately; gate dense OPD by outcome signals; use logit-free feedback only through an explicit route and localization rule. Privilege compressibility Held-out no-privilege evaluation; privilege ablation; deployment-context test. Gains vanish when answer, context, visual, trace, or tool privilege is removed on held-out tasks. Replace answer-like privilege with hints, rubrics, context summaries, verified traces, or weaker deployable signals. Drift and calibration Length, repetition, entropy, calibration, uncertainty-expression, and regression monitors. Responses become longer, repetitive, overconfident, or less calibrated even when local distillation loss improves. Reference KL, golden-data mixture, length control, rollout filtering, uncertainty-preserving gates, or lower OPD weight. 
+
+Table 7: Diagnostics that convert the formula taxonomy into training decisions. The responses are conservative levers, not universal recipes. 
+
+permits them: final task score or verifier pass rate; teacher-student KL or sampled log-ratio his-tograms; support coverage and top-k overlap; cor-rect/incorrect rollout splits; prefix-versus-suffix degradation; length, repetition, entropy, calibration, and uncertainty-expression metrics; capability re-gression on golden data; and teacher-cache consis-tency or stale-score drift for cached or near-policy systems. These diagnostics help determine whether an OPD update is improving the task, merely im-proving teacher agreement, or moving probability mass through an unintended route. This protocol applies to both direct-loss and PG-style OPD. For direct losses, the key decisions are support, target distribution, token weights, and reg-ularization. For PG-style OPD, the additional de-cisions are advantage construction, baseline, trust-region correction, horizon control, and negative-advantage routing. For logit-free methods, the sup-port variable is replaced by an explicit feedback route: which text span, chunk, step, action, or tra-jectory receives the verifier, rubric, discriminator, language-feedback, or execution signal. 
+
+7.2 Stabilization Knobs 
+
+Use table 7 as the response map. State and support problems call for support expansion, horizon short-ening, or skipped positions; cache problems call for versioning and re-scoring; gradient-routability problems call for clipping, baselines, advantage normalization, or local divergence; outcome and drift problems call for gates, reference constraints, golden-data mixtures, and monitoring. Method ex-amples are summarized in table 4. 22 Box 1. OPD design template.         
+
+> Decision Template entry Bottleneck Capability transfer, expert consolidation, anti-regression, context internalization, black-box feedback, multimodal grounding, speculative drafting, long-horizon agency, or online consolidation. State evidence Test compatibility and marginal teacher information on actual student rollouts. Support If logits are available, use the smallest audited support: sampled token, teacher top-k, overlap support, aligned span support, or full vocabulary. Feedback route If logits are absent or brittle, localize verifier, rubric, discriminator, language feedback, speculative check, execution, representation, or multimodal signals. Update route Choose direct distributional loss, PG-style log-ratio, or a hybrid route according to support reliability and outcome-gating needs. Routing diagnostics Condition updates on correctness, entropy, disagreement, recoverability, privilege, support overlap, teacher conflict, calibration, and negative-advantage routability. Stabilizers Add reference KL, baselines, clipping, golden-data mixture, cache refresh, teacher audits, and length or calibration monitors.
+> Output: a state-conditioned update policy specifying feedback source, support, estimator, divergence, horizon, route, and regularizer for each prefix. Fully dynamic routed OPD remains open.
+
+8 Case Studies: Formula Variables in Practice 
+
+This section uses public reports and framework documentation to show how the same formula vari-ables appear in deployed post-training systems. Public technical reports are treated as direct-source evidence (E0), official framework documentation as implementation evidence (E1), and our variable-level readings as survey synthesis (E3). Table 8 names the variable or boundary illustrated by each report; detailed claim boundaries and evidence lev-els are audited in section F. 
+
+8.1 Cross-Scale Capability Transfer 
+
+Qwen3’s technical report (Qwen Team, 2025) de-scribes a strong-to-weak distillation process for smaller models using both off-policy and on-policy knowledge transfer from larger models. In the on-policy phase, the student generates sequences and is fine-tuned by aligning its logits with a teacher model; the report leaves the exact support approx-imation unspecified. The taxonomy highlights teacher marginal information under student capac-ity as the key bottleneck. A stronger teacher can provide dense guidance that a smaller model may not discover through its own exploration, while the useful part of that guidance depends on state compatibility and reachable support. Small-model OPD makes the teacher-information variable especially sharp. Prior compatibility analyses suggest that a teacher too close to the student may add little beyond regularization, while a teacher too far from the student may point toward reasoning patterns or vocabulary choices outside the student’s reachable support (Li et al., 2026f; Zhu et al., 2026). The useful signal is the state-conditioned margin between what the teacher knows and what the student can absorb, not teacher strength as an isolated scalar. 
+
+8.2 Multi-Teacher Expert Consolidation 
+
+MiMo-V2-Flash (MiMo Core Team, 2026) and DeepSeek-V4 (DeepSeek-AI, 2026) both report OPD in expert-consolidation settings, but they in-stantiate different support and systems choices. MiMo informs domain-teacher routing: it reports Multi-Teacher OPD in which domain-specialized teachers provide dense token-level rewards and the training can mix those rewards with outcome-reward advantages (MiMo Core Team, 2026). DeepSeek-V4 informs support fidelity: it re-ports more than ten teacher models and full-vocabulary logit distillation intended to compute reverse-KL supervision more faithfully in that set-ting (DeepSeek-AI, 2026). Nemotron-Cascade 2 (Yang et al., 2026e) and KAT-Coder-V2 (Li et al., 2026a) broaden the same theme to multi-domain or specialize-then-unify teacher selec-tion. The shared variable is domain-conditioned teacher selection: mathematics, coding, agent, and instruction-following experts specialize in different feedback regimes. The update must decide which teacher is relevant, how much weight it receives, and how conflicts between domain behaviors are handled. 
+
+8.3 Cross-Stage Anti-Regression 
+
+GLM-5 (GLM-5 Team, 2026) reports on-policy cross-stage distillation as a final refinement stage, using checkpoints from earlier SFT and RL stages 23 System Reported OPD role Variable or boundary illustrated Qwen3 (Qwen Team, 2025) Strong-to-weak on-policy knowledge transfer: the student generates sequences and aligns logits with larger Qwen teachers. State source and teacher marginal information under student capacity limits. MiMo-V2-Flash (MiMo Core Team, 2026) Multi-Teacher OPD with domain-specialized teachers providing dense token-level rewards; the reported recipe can combine them with outcome-reward or GRPO-style advantages. Domain-conditioned teacher selection and global-signal mixture: dense OPD plus ORM/RL-style advantages. GLM-5 (GLM-5 Team, 2026) On-policy cross-stage distillation as final refinement; preceding-stage checkpoints serve as teachers and the stopped log-ratio replaces the GRPO advantage with group size one. Feedback-source choice for cross-stage refinement, interpreted here as behavior preservation or anti-regression. DeepSeek-V4 (DeepSeek-AI, 2026) Reports replacing the mixed-RL expert-merging stage with multi-teacher reverse-KL OPD over student trajectories and full-vocabulary logits. Support fidelity and systems cost: the report uses teacher scheduling and logit-reconstruction engineering for one consolidation setting. Nemotron-Cascade 2 and KAT-Coder-V2 (Yang et al., 2026e; Li et al., 2026a) Coarser public reports describe OPD-style multi-domain or specialize-then-unify distillation inside broader cascade or agentic-coding post-training pipelines. Breadth signal for multi-domain teacher selection and expert consolidation. 
+
+Table 8: Industrial OPD reports viewed through the formula-driven taxonomy. Full evidence boundaries are audited in section F. 
+
+as teachers and a stopped teacher-student log-ratio. This is a different feedback-source problem from big-to-small transfer. The teacher is not merely stronger; it is a memory of a previous training stage. In taxonomy terms, the value of the signal is behav-ior preservation or anti-regression, which makes reference KL, capability-specific evaluation, and prompt-format consistency especially important. 
+
+8.4 Full-Vocabulary OPD as a Systems Case 
+
+DeepSeek-V4 (DeepSeek-AI, 2026) is unusually explicit about the support-fidelity problem. In Secs. 5.1.2 and 5.2.2, its report states that prior OPD work often simplifies full-vocabulary KL to token-level KL estimates reused in RL frame-works, and argues that this resource-efficient ap-proach can lead to high-variance gradient estimates and instability. The report therefore adopts full-vocabulary logit distillation for OPD and describes systems techniques such as teacher-weight loading on demand, last-layer teacher hidden-state caching, prediction-head reconstruction of logits, teacher-index sample ordering, and specialized TileLang kernels for exact KL computation. DeepSeek-V4 highlights support fidelity as a first-class systems variable. When the task is to con-solidate many specialist teachers into one model, losing the alternative-token distribution may be more damaging than in a single-teacher, short-output setting. 
+
+8.5 Framework Implementations as Taxonomy Checks 
+
+As documented at the cited access dates, frame-work documentation shows the same variables be-coming user-facing configuration knobs. SWIFT’s GKD documentation (ModelScope Team, 2026b) describes three sources for training responses con-trolled by lmbda and seq_kd , a beta parame-ter that selects forward KL, JSD, or reverse KL, and gkd_logits_topk as a teacher-top-k support approximation with renormalization; Megatron-SWIFT documentation (ModelScope Team, 2026a) further states that on-policy generation currently requires vLLM and otherwise falls back to off-policy responses. verl’s OPD documentation (verl Project, 2026) separates GKD OPD from PG OPD: 
+
+loss_mode chooses teacher-top-k forward KL or sampled-token reverse-KL estimators such as k1/k2/k3, while use_policy_gradient chooses direct backpropagation or a policy-gradient advan-tage route. The same documentation warns against 24 combining top-k forward KL with policy-gradient aggregation; in taxonomy terms, this corresponds to the mismatch between distributional support in-formation and sampled-token score aggregation. The framework ecosystem is broader than SWIFT and verl. TRL’s GKDTrainer documenta-tion (Hugging Face, 2026b) and DistillationTrainer documentation (Hugging Face, 2026a) expose student-data fraction, sequence KD, divergence interpolation, teacher-server support, generation buffers, and top-k or full-vocabulary loss controls. KDFlow (Zhang et al., 2026c) reports a decoupled teacher-inference and student-training system, in-cluding on-policy distillation, cross-tokenizer KD, hidden-state transfer, and student-side logit recom-putation. Tinker (Thinking Machines Lab, 2026) provides official cookbook examples for on-policy, multi-turn, and multi-teacher distillation. These implementation-facing facts show OPD-style vari-ables becoming reusable infrastructure. As operational checks, these frameworks make state or rollout source, support approximation, di-vergence direction, update route, teacher assign-ment, and rollout infrastructure concrete. 
+
+8.6 Logit-Free, Black-Box, and Speculative Feedback 
+
+Useful feedback can come from sources other than teacher logit vectors. Black-box OPD (Ye et al., 2025), OVD (Xiong et al., 2026), and rubric-based OPD (Fang et al., 2026) use discriminators, verbal feedback, or task criteria when teacher internals are unavailable. Rubric-based OPD is important here because it changes the verification target: when local token probabilities miss the task criterion, structured rubrics can define what kind of behav-ior should be rewarded. OmniOPD (Zhou et al., 2026) proposes logit-free OPD via speculative ver-ification, moving the signal toward chunk-level or verification-derived supervision. Draft-OPD (Lei et al., 2026) applies OPD to speculative draft mod-els by focusing on draft-induced states exposed by accepted and rejected proposals. These settings stress the feedback-source and verification vari-ables: feedback must be constructed, calibrated, and routed even when a full teacher distribution is absent. 
+
+8.7 Context, Multimodal, and Long-Horizon OPD 
+
+Context distillation, multimodal self-distillation, and agentic OPD change what counts as teacher privilege. This subsection is scope-expanding ev-idence unless a method explicitly supplies dense feedback on student-induced states. OPCD (Ye et al., 2026b) uses a context-conditioned teacher to internalize useful context into a student. Vision-OPD (Yuan et al., 2026) uses privileged visual views for self-distillation. Cross-tokenizer and representation-space work broadens the support question: ULD (Boizard et al., 2025), DSKD (Zhang et al., 2025), SimCT (Sun et al., 2026), MultiLevelOT (Cui et al., 2025), and approximate likelihood matching (Minixhofer et al., 2025) align token/span supports across heterogeneous tokeniz-ers, while OPRD (Yang et al., 2026b) moves feed-back into hidden-state space on the same rollouts. OPSD (Zhao et al., 2026c), self-distillation for con-tinual learning (Shenfeld et al., 2026), reinforce-ment learning via self-distillation (Hübotter et al., 2026), COPD (Gu et al., 2026), and OEL (Ye et al., 2026a) raise a similar question for continual or online settings: whether the feedback source sta-bilizes behavior or amplifies drift. Long-horizon agentic tasks add tools, sandboxes, and delayed out-comes; those are partly interaction-interface prob-lems, but once rollouts are collected, OPD still faces verification and credit questions. In these settings, the relevant diagnostic is whether the priv-ilege improves grounded behavior, not merely lan-guage fluency. 
+
+9 Open Problems and Research Agenda 
+
+The formula-driven view suggests open problems that are more specific than “try another divergence.” Each agenda item below corresponds to a variable in the feedback-to-update pipeline, including feed-back allocation through temporal credit, gates or weights, and vocabulary routing. 
+
+Dynamic routed OPD. Many OPD improve-ments are not mutually exclusive. A mature recipe should choose support, update route, estimator, gate, teacher source, and regularizer per prefix us-ing diagnostics such as entropy, teacher-student disagreement, advantage sign, support overlap, re-coverability, and outcome correctness. The anal-ogy is a staged RL recipe rather than a competi-tion among global losses: OPD systems can com-bine support expansion, variance baselines, sign-conditioned routing, teacher selection, and drift control when their estimator assumptions are com-patible. Existing methods route parts of this de-cision through token selection in TIP (Xu et al., 25 2026b), outcome-conditioned weighting in SCOPE (Zheng et al., 2026), sign-based objective switch-ing in AOPD (Jia et al., 2026), trust-region filtering in TrOPD (Xing et al., 2026), trajectory filtering in FiRe-OPD (Li et al., 2026h), or on/off-policy switching in AdaSwitch (Peng et al., 2025). The open problem is a coherent state-conditioned OPD policy rather than another single global loss. 
+
+Composability rather than a single best loss. 
+
+The formula variables should not be read as a menu from which exactly one OPD improvement is cho-sen. They are analytically separable because they enter different parts of the feedback-to-update path: support determines which alternatives are visible, temporal credit determines which scalar weights a sampled action, routing determines where proba-bility mass moves, gates decide whether the signal is trusted, and regularizers control drift. In imple-mentation these variables are often coupled, so the constraint is not combinability in name, but com-patibility of the mathematical object being opti-mized. A baseline can be combined with a support-expanded negative-region route; a teacher-top-k
+
+loss can be combined with an outcome gate; multi-teacher routing can be combined with reference-KL stabilization. By contrast, stale rewards without correction, top-k normalization without a declared support convention, or a global verifier score with-out a localization rule changes the estimator or feedback semantics and must be reported as such. Table 10 expands these compatibility checks with-out interrupting the open-problems list. 
+
+Adaptive support instead of fixed support. 
+
+Sampled-token, top-k, overlap, and full-vocabulary OPD are points on a support-fidelity curve. Cross-tokenizer and representation-space methods such as ULD (Boizard et al., 2025), DSKD (Zhang et al., 2025), SimCT (Sun et al., 2026), MultiLevelOT (Cui et al., 2025), approximate likelihood match-ing (Minixhofer et al., 2025), and OPRD (Yang et al., 2026b) make the same issue explicit beyond a shared vocabulary. A useful theory should de-cide support per prefix: full vocabulary when al-ternatives matter, top-k when the teacher support is concentrated, sampled-token when the signal is already stable, aligned span or byte support when tokenizers differ, and logit-free verification when logits are unavailable. 
+
+Counterfactual vocabulary routing. Negative-advantage sampled-token OPD exposes a local re-placement problem that is separate from temporal credit. If a sampled token should be suppressed, the next question is which teacher-supported, student-reachable alternatives with higher local log-ratio should receive the released probability mass. Fu-ture work should define candidate-set construction, support normalization, and routing losses that use local teacher alternatives without pretending to be unbiased sequence reverse-KL estimators. Eval-uations should hold the temporal advantage fixed when comparing plain suppression, teacher top-k
+
+matching, full-vocabulary matching, AOPD-style switching, and pairwise routed alternatives; other-wise gains from better temporal credit and gains from better vocabulary routing are confounded. 
+
+OPD with outcome- or trajectory-level feedback. 
+
+Dense teacher feedback and more global quality signals should not be mixed only by a scalar. MiMo (MiMo Core Team, 2026), KDRL (Xu et al., 2025), SCOPE (Zheng et al., 2026), SSOPD (Tan and Hong, 2026b), RW-OPD (Zou et al., 2026), and Distributional DAgger (Agrawal et al., 2026) pro-vide early signals that sparse correctness, rule-based reward, reward-model scores, rubric judg-ments, verifier feedback, or rich expert feedback can gate or shape dense supervision. Correct tra-jectories, incorrect recoverable trajectories, and in-correct unrecoverable trajectories call for different updates. A rigorous OPD-plus-global-feedback recipe should specify when global feedback over-rides teacher logits, when teacher logits shape local search, and when both should be ignored. 
+
+Credit assignment over million-token contexts. 
+
+Long-context and agentic systems can make naive return-to-go costly and token-local OPD potentially myopic. DeepSeek-V4 (DeepSeek-AI, 2026) ex-poses the systems cost of support fidelity at long context, while KETCHUP (Fan et al., 2025), prefix OPD (Zhang et al., 2026a), Prune-OPD (Yang et al., 2026d), full-rollout OPD (Zhang et al., 2026d), near-future guidance (Jiang and Ferraro, 2026), TCOD (Wang et al., 2026c), and SOD (Zhong et al., 2026a) provide early evidence that return horizon, prefix truncation, pruning, and step-wise supervi-sion are active design variables. Future work needs lossy but faithful credit windows: which prefixes should keep raw teacher feedback, which should be summarized, and which should be evaluated only by a verifier or environment. 26 Routed OPD theory. Routing, gating, and sup-port filtering intentionally introduce bias. The use-ful question is not whether this remains an unbiased reverse-KL estimator, but when the biased update improves task success. A minimal theory would characterize conditions under which a routed op-erator has lower task-level error than the nominal estimator it replaces. 
+
+Cross-tokenizer, multimodal, and multi-teacher OPD. Moving beyond a single white-box teacher with the same vocabulary makes support alignment a central problem. Cross-tokenizer OPD must de-cide which token or span events are comparable; multimodal OPD must decide whether the state, privilege, evaluation signal, or support bridge is textual, latent, verifier-based, or modality-specific; multi-teacher OPD must route among domain ex-perts without averaging incompatible behaviors. Existing signals include SimCT (Sun et al., 2026), MultiLevelOT (Cui et al., 2025), and approximate likelihood matching (Minixhofer et al., 2025) for cross-tokenizer KD, Vision-OPD for multimodal privilege and compressibility (Yuan et al., 2026), OPRD for representation-space feedback (Yang et al., 2026b), MiMo (MiMo Core Team, 2026) and DeepSeek-V4 (DeepSeek-AI, 2026) for ex-plicit multi-teacher OPD, and broader cascade or agentic-coding reports such as Nemotron-Cascade 2 (Yang et al., 2026e) and KAT-Coder-V2 (Li et al., 2026a) as breadth signals for specialize-then-unify consolidation. 
+
+Teacher recoverability estimation. Recoverabil-ity is easy to name and hard to measure. Top-k over-lap, teacher perplexity, and confidence are proxies. We need diagnostics that predict whether teacher feedback on a flawed student-induced state can still guide the student toward a valid trajectory. 
+
+Privilege compressibility. Context-, answer-, tool-, and vision-privileged teachers differ in whether their advantage can be internalized. Auseful benchmark should vary privilege type while testing held-out performance without privilege, so OPD is evaluated as compression of reusable behav-ior rather than memorization of instance-specific hints. 
+
+Online OPD and slow-fast weights. If OPD is used for continual or online learning, full-parameter updates after every rollout may cause catastrophic drift. Continual-learning analyses make the risk concrete: sequential gradient up-dates can overwrite parameters important for ear-lier behavior unless constrained by parameter-importance penalties, replay, or restricted update subspaces (Kirkpatrick et al., 2017). In OPD the risk is sharper because both the visited states and the dense teacher rewards can move as the student changes. Slow-fast weight schemes (Ba et al., 2016), adapters, lagged teachers, and pe-riodic consolidation (Gu et al., 2026) are natural design points. Online experiential learning (Ye et al., 2026a), self-distillation for continual learn-ing (Shenfeld et al., 2026), Lightning OPD (Wu et al., 2026), Near-Policy (Rang et al., 2026), Test-Time Speculation (Kumar et al., 2026), and imple-mentation cookbooks for on-policy or multi-turn distillation (Thinking Machines Lab, 2026) provide early signals for this direction. The open question is whether OPD can be made stable enough for online deployment without relying entirely on re-play memory, reference-model resets, or offline teacher-logprob caching. 
+
+Evaluation protocols. Aggregate benchmark gains hide OPD failure modes. Future evalua-tions should report final task score or verifier pass rate together with teacher-student KL or log-ratio histograms, support coverage and top-k overlap, correct/incorrect rollout splits, prefix-versus-suffix metrics, length, repetition, entropy, calibration, uncertainty expression, capability regression on golden data, and cache consistency or stale-score drift when teacher scores are reused. These met-rics should be reported by update route and sup-port choice, because a gain from full-vocabulary direct loss, sampled-token PG, top-k matching, or outcome-gated hybrid OPD can fail for different reasons. 
+
+10 Conclusion 
+
+OPD is often summarized as dense teacher supervi-sion on student rollouts. That summary is correct, but it misses why OPD is useful and sensitive to design choices: feedback is applied on student-induced states, where it may be unreliable, mis-aligned, high variance, poorly routed, or destabiliz-ing. This survey complements prior method cata-logs by asking how feedback becomes an auditable update. We treated OPD as a feedback-to-update prob-lem with allocation as a first-class part. By deriving the taxonomy from direct-loss and PG-style formu-27 las, we made state distribution, feedback source, teacher privilege, support, temporal credit estima-tor, gate or weight, vocabulary probability routing, update route, and regularization explicit. The taxonomy is generative as well as classi-ficatory. The two directions developed here are examples of that role. First, temporal credit over student-induced trajectories is an estimator prob-lem: discounting future log-ratios changes the tem-poral objective, state-only baselines preserve the on-policy expectation, and GAE-OPD is a poten-tial TD-residual design direction rather than sim-ple reward discounting. Second, vocabulary-level routing over local token alternatives is a support and replacement problem: negative sampled-token feedback suppresses one token without specify-ing where the released probability mass should go. Counterfactual Routed OPD (CR-OPD) is the cor-responding potential direction on the vocabulary-routing axis. The practical conclusion is to treat OPD as a routed feedback interface rather than a uniform loss. Its components should be chosen from diag-nostics on the student states actually visited, and its future development will likely combine dynamic routing, verifier-grounded outcomes, cross-support alignment, multi-teacher selection, and online sta-bilization. Future OPD reports should therefore make the checklist in Section 10 explicit.           
+
+> Component Must report State source current policy, replay, mixed, or external Feedback source teacher, self-teacher, verifier, or outcome signal Support sampled, top-k, overlap, full-vocabulary, or aligned span Temporal credit immediate, return-to-go, discount, baseline, or GAE-OPD hypothesis Gate/weight correctness, entropy, disagreement, privilege, or support signal Vocabulary route sampled-token, top-k, switch, or CR-OPD hypothesis Update route direct loss, PG-style, hybrid, or logit-free route Regularizer reference KL, clipping, data mix, length control, or cache refresh Evidence tier paper, report, framework, or agenda
+
+Table 9: Minimum reporting checklist for future OPD work. 
+
+References 
+
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos, Matthieu Geist, and Olivier Bachem. 2024. On-policy distillation of language models: Learning from self-generated mistakes. In 
+
+International Conference on Learning Representa-tions .Rishabh Agrawal, Jacob Fein-Ashley, and Paria Rashidinejad. 2026. Reinforcement learning from rich feedback with distributional DAgger. arXiv preprint arXiv:2606.05152 .Mohammadreza Armandpour, Fatih Ilhan, David Harri-son, Ajay Jaiswal, Duc N. M. Hoang, Fartash Faghri, Yizhe Zhang, Minsik Cho, and Mehrdad Farajtabar. 2026. Unmasking on-policy distillation: Where it helps, where it hurts, and why. arXiv preprint arXiv:2605.10889 .Jimmy Ba, Geoffrey E. Hinton, Volodymyr Mnih, Joel Z. Leibo, and Catalin Ionescu. 2016. Using fast weights to attend to the recent past. Advances in Neural Information Processing Systems .Samy Bengio, Oriol Vinyals, Navdeep Jaitly, and Noam Shazeer. 2015. Scheduled sampling for sequence prediction with recurrent neural networks. In Ad-vances in Neural Information Processing Systems ,volume 28. Nicolas Boizard, Kevin El Haddad, Céline Hudelot, and Pierre Colombo. 2025. Towards cross-tokenizer distillation: the universal logit distillation loss for LLMs. Transactions on Machine Learning Research .Walid Bousselham, Hilde Kuehne, and Cordelia Schmid. 2025. VOLD: Reasoning transfer from LLMs to vision-language models via on-policy distillation. 
+
+arXiv preprint arXiv:2510.23497 .Di Cao, Dongjie Fu, Hai Yu, Siqi Zheng, Xu Tan, and Tao Jin. 2026. X-OPD: Cross-modal on-policy dis-tillation for capability alignment in speech LLMs. 
+
+arXiv preprint arXiv:2603.24596 .Fangming Cui, Sunan Li, and Jiahong Li. 2026. Abrief overview: On-policy self-distillation in large language models. arXiv preprint arXiv:2605.18141 .Xiao Cui, Mo Zhu, Yulei Qin, Liang Xie, Wengang Zhou, and Houqiang Li. 2025. Multi-level opti-mal transport for universal cross-tokenizer knowl-edge distillation on language models. arXiv preprint arXiv:2412.14528 .DeepSeek-AI. 2025. DeepSeek-R1: Incentivizing rea-soning capability in LLMs via reinforcement learning. 
+
+arXiv preprint arXiv:2501.12948 .DeepSeek-AI. 2026. DeepSeek-V4: Towards highly ef-ficient million-token context intelligence. Technical report, DeepSeek-AI. Ken Ding. 2026. HDPO: Hybrid distillation policy optimization via privileged self-distillation. arXiv preprint arXiv:2603.23871 .
+
+28 Jiabin Fan, Guoqing Luo, Michael Bowling, and Lili Mou. 2025. KETCHUP: K-step return estimation for sequential knowledge distillation. arXiv preprint arXiv:2504.19024 .Junfeng Fang, Zhepei Hong, Mao Zheng, Mingyang Song, Gengsheng Li, Houcheng Jiang, Dan Zhang, Haiyun Guo, Xiang Wang, and Tat-Seng Chua. 2026. Rubric-based on-policy distillation. arXiv preprint arXiv:2605.07396 .Yuqian Fu, Haohuan Huang, Kaiwen Jiang, Jiacai Liu, Zhuo Jiang, Yuanheng Zhu, and Dongbin Zhao. 2026. Revisiting on-policy distillation: Empiri-cal failure modes and simple fixes. arXiv preprint arXiv:2603.25562 .GLM-5 Team. 2026. Glm-5: from vibe coding to agen-tic engineering. arXiv preprint arXiv:2602.15763 .Naibin Gu, Chenxu Yang, Qingyi Si, Chuanyu Qin, Dingyu Yao, Peng Fu, Zheng Lin, Weiping Wang, Nan Duan, and Jiaqi Wang. 2026. Co-evolving policy distillation. arXiv preprint arXiv:2604.27083 .Yuxian Gu, Li Dong, Furu Wei, and Minlie Huang. 2023. MiniLLM: Knowledge distillation of large language models. arXiv preprint arXiv:2306.08543 .Yinghui He, Simran Kaur, Adithya Bhaskar, Yongjin Yang, Jiarui Liu, Narutatsu Ri, Liam Fowl, Ab-hishek Panigrahi, Danqi Chen, and Sanjeev Arora. 2026. Self-distillation zero: Self-revision turns bi-nary rewards into dense supervision. arXiv preprint arXiv:2604.12002 .Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. 2015. Distilling the knowledge in a neural network. In 
+
+NeurIPS Deep Learning and Representation Learn-ing Workshop .Jing Hu, Danxiang Zhu, Xianlong Luo, Dan Zhang, Shuwei He, Yishu Lei, Haitao Zheng, Shikun Feng, Jingzhou He, Yu Sun, Hua Wu, and Haifeng Wang. 2026. CORD: Bridging the audio-text reasoning gap via weighted on-policy cross-modal distillation. 
+
+arXiv preprint arXiv:2601.16547 .Jonas Hübotter, Frederike Lübeck, Lejs Behric, An-ton Baumann, Marco Bagatella, Daniel Marta, Ido Hakimi, Idan Shenfeld, Thomas Kleine Buening, Car-los Guestrin, and Andreas Krause. 2026. Reinforce-ment learning via self-distillation. arXiv preprint arXiv:2601.20802 .Hugging Face. 2026a. TRL DistillationTrainer docu-mentation. Hugging Face documentation. Accessed 2026-06-08. Hugging Face. 2026b. TRL GKDTrainer documenta-tion. Hugging Face documentation. Accessed 2026-06-08. Ijun Jang, Jewon Yeom, Juan Yeo, Hyunggu Lim, and Taesup Kim. 2026. Stable on-policy distillation through adaptive target reformulation. In Findings of the Association for Computational Linguistics .Minbyul Jeong. 2026. Healthcare AI GYM for medical agents. arXiv preprint arXiv:2605.02943 .Nan Jia, Haojin Yang, Xing Ma, Jiesong Lian, Shuail-iang Zhang, Weipeng Zhang, Ke Zeng, Xunliang Cai, and Zequn Sun. 2026. Asymmetric on-policy distilla-tion: Bridging exploitation and imitation at the token level. arXiv preprint arXiv:2605.06387 .Yuxuan Jiang and Francis Ferraro. 2026. Bridging rea-soning trajectories in on-policy distillation via near-future guidance. arXiv preprint arXiv:2606.00305 .Yuxuan Jiang, Runchao Li, Shubhashis Roy Dipta, Dawei Li, and Zhao Yang. 2026. Cornerstones or stumbling blocks? deciphering the rock tokens in on-policy distillation. arXiv preprint arXiv:2605.09253 .Woogyeol Jin, Taywon Min, Yongjin Yang, Swanand Ravindra Kadhe, Yi Zhou, Dennis Wei, Nathalie Baracaldo, and Kimin Lee. 2026. Entropy-aware on-policy distillation of language models. arXiv preprint arXiv:2603.07079 .Seongryong Jung, Suwan Yoon, DongGeon Kim, and Hwanhee Lee. 2025. ToDi: Token-wise distillation via fine-grained divergence control. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing .Junlong Ke, Zichen Wen, Weijia Li, Conghui He, and Linfeng Zhang. 2026. Respecting self-uncertainty in on-policy self-distillation for efficient LLM reason-ing. arXiv preprint arXiv:2605.13255 .Jeonghye Kim, Xufang Luo, Minbeom Kim, Sangmook Lee, Dohyung Kim, Jiwon Jeon, Dongsheng Li, and Yuqing Yang. 2026. Why does self-distillation some-times degrade the reasoning capability of LLMs? 
+
+arXiv preprint arXiv:2603.24472 .Yoon Kim and Alexander M. Rush. 2016. Sequence-level knowledge distillation. In Proceedings of the 2016 Conference on Empirical Methods in Natural Language Processing .James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel Veness, Guillaume Desjardins, Andrei A. Rusu, Kieran Milan, John Quan, Tiago Ramalho, Ag-nieszka Grabska-Barwinska, Demis Hassabis, Clau-dia Clopath, Dharshan Kumaran, and Raia Hadsell. 2017. Overcoming catastrophic forgetting in neural networks. Proceedings of the National Academy of Sciences , 114(13):3521–3526. Jongwoo Ko, Sara Abdali, Young Jin Kim, Tianyi Chen, and Pashmina Cameron. 2026. Scaling reasoning efficiently via relaxed on-policy distillation. arXiv preprint arXiv:2603.11137 .Jongwoo Ko, Tianyi Chen, Sungnyun Kim, Tianyu Ding, Luming Liang, Ilya Zharkov, and Se-Young Yun. 2025. DistiLLM-2: A contrastive approach boosts the distillation of LLMs. In Proceedings of the Inter-national Conference on Machine Learning .
+
+29 Jongwoo Ko, Sungnyun Kim, Tianyi Chen, and Se-Young Yun. 2024. DistiLLM: Towards streamlined distillation for large language models. Proceedings of the International Conference on Machine Learn-ing .Avinash Kumar, Sujay Sanghavi, and Poulami Das. 2026. Test-time speculation. arXiv preprint arXiv:2605.09329 .Haodi Lei, Yafu Li, Haoran Zhang, Shunkai Zhang, Qianjia Cheng, Xiaoye Qu, Ganqu Cui, Bowen Zhou, Ning Ding, Yun Luo, and Yu Cheng. 2026. Draft-opd: On-policy distillation for speculative draft models. 
+
+arXiv preprint arXiv:2605.29343 .Fengxiang Li, Han Zhang, Haoyang Huang, Jinghui Wang, Jinhua Hao, Kun Yuan, Mengtong Li, Min-glei Zhang, Pengcheng Xu, Wenhao Zhuang, Yizhen Shao, Zongxian Feng, Can Tang, Chao Wang, Chengxiao Tong, Fan Yang, Gang Xiong, Haixuan Gao, Han Gao, and 27 others. 2026a. KAT-Coder-V2 technical report. arXiv preprint arXiv:2603.27703 .Gengsheng Li, Tianyu Yang, Junfeng Fang, Mingyang Song, Mao Zheng, Haiyun Guo, Dan Zhang, Jinqiao Wang, and Tat-Seng Chua. 2026b. Unifying group-relative and self-distillation policy optimization via sample routing. arXiv preprint arXiv:2604.02288 .Jiaze Li, Hao Yin, Haoran Xu, Boshen Xu, Wenhui Tan, Zewen He, Jianzhong Ju, Zhenbo Luo, and Jian Luan. 2026c. Video-OPD: Efficient post-training of multimodal large language models for temporal video grounding via on-policy distillation. arXiv preprint arXiv:2602.02994 .Sijia Li, Yuchen Huang, Zifan Liu, Yanping Li, Jingjing Fu, Li Zhao, Jiang Bian, Ling Zhang, Jun Zhang, and Rui Wang. 2026d. GEAR: Granularity-adaptive advantage reweighting for LLM agents via self-distillation. arXiv preprint arXiv:2605.11853 .Yang Li, Erik Nijkamp, Semih Yavuz, and Shafiq Joty. 2026e. Learning from language feedback via variational policy distillation. arXiv preprint arXiv:2605.15113 .Yaxuan Li, Yuxin Zuo, Bingxiang He, Jinqian Zhang, Chaojun Xiao, Cheng Qian, Tianyu Yu, Huan-ang Gao, Wenkai Yang, Zhiyuan Liu, and Ning Ding. 2026f. Rethinking on-policy distillation of large language models: Phenomenology, mechanism, and recipe. arXiv preprint arXiv:2604.13016 .Yu Li, Mingyang Yi, Xiuyu Li, Ju Fan, Fuxin Jiang, Binbin Chen, Peng Li, Jie Song, and Tieying Zhang. 2026g. Reasoning and tool-use compete in agentic RL: From quantifying interference to disentangled tuning. arXiv preprint arXiv:2602.00994 .Yuying Li, Leqi Zheng, Yongzi Yu, Wenrui Zhou, Xuchang Zhong, Xing Hu, Jing Jin, Hangjie Yuan, and Tao Feng. 2026h. Filter, then reweight: Rethink-ing optimization granularity in on-policy distillation. 
+
+arXiv preprint arXiv:2606.02684 .Hao Lin, Kunyang Lv, Xu Jiang, Jingqi Tian, Zhongjing Du, Jiayu Ding, Qiaoman Zhang, and Hongbo Jin. 2026. VISD: Enhancing video reasoning via structured self-distillation. arXiv preprint arXiv:2605.06094 .Kaiyuan Liu, Ziyuan Zhuang, Yang Bai, Bing Wang, Rongxiang Weng, and Jieping Ye. 2026a. Prefix teach, suffix fade: Local teachability collapse in strong-to-weak on-policy distillation. arXiv preprint arXiv:2605.13643 .Xinyu Liu, Kechen Jiao, Chunyang Xiao, Runsong Zhao, Junhao Ruan, Bei Li, Jiahao Liu, Qifan Wang, Xin Chen, Jingang Wang, Chenglong Wang, Tong Xiao, and JingBo Zhu. 2026b. Teacher-guided pol-icy optimization for on-policy reasoning distilla-tion under large policy divergence. arXiv preprint arXiv:2605.13230 .Kevin Lu and Thinking Machines Lab. 2025. On-policy distillation. Blog post. Feng Luo, Yu-Neng Chuang, Guanchu Wang, Zicheng Xu, Xiaotian Han, Tianyi Zhang, and Vladimir Braverman. 2026. Demystifying opd: Length in-flation and stabilization strategies for large language models. arXiv preprint arXiv:2604.08527 .MiMo Core Team. 2026. Mimo-v2-flash technical re-port. arXiv preprint arXiv:2601.02780 .Benjamin Minixhofer, Ivan Vuli´ c, and Edoardo Maria Ponti. 2025. Universal cross-tokenizer distillation via approximate likelihood matching. In Advances in Neural Information Processing Systems .ModelScope Team. 2026a. Megatron-SWIFT GKD documentation. GitHub documentation. Accessed 2026-06-07. ModelScope Team. 2026b. SWIFT GKD documenta-tion. GitHub documentation. Accessed 2026-06-07. Dong Nie. 2026. Post-training is about states, not to-kens: A state distribution view of SFT, RL, and on-policy distillation. arXiv preprint arXiv:2605.22731 .Minjae Oh, Sangjun Song, Gyubin Choi, Yunho Choi, and Yohan Jo. 2026. Kl for a kl: On-policy distil-lation with control variate baseline. arXiv preprint arXiv:2605.07865 .Jingyu Peng, Maolin Wang, Hengyi Cai, Yuchen Li, Kai Zhang, Shuaiqiang Wang, Dawei Yin, and Xiangyu Zhao. 2025. AdaSwitch: Balancing exploration and guidance in knowledge distillation via adaptive switching. arXiv preprint arXiv:2510.07842 .Qwen Team. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 .Miao Rang, Zhenni Bi, Hang Zhou, Kai Han, Xuechun Wang, An Xiao, Xinghao Chen, Yunhe Wang, and Hanting Chen. 2026. Near-policy: Accelerating on-policy distillation via asynchronous generation and selective packing. arXiv preprint arXiv:2605.05940 .
+
+30 Marc’Aurelio Ranzato, Sumit Chopra, Michael Auli, and Wojciech Zaremba. 2015. Sequence level train-ing with recurrent neural networks. arXiv preprint arXiv:1511.06732 .Stéphane Ross, Geoffrey Gordon, and Drew Bagnell. 2011. A reduction of imitation learning and struc-tured prediction to no-regret online learning. In Pro-ceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics .Hejian Sang, Yuanda Xu, Zhengze Zhou, Ran He, Zhipeng Wang, and Jiachen Sun. 2026. CRISP: Com-pressed reasoning via iterative self-policy distillation. 
+
+arXiv preprint arXiv:2603.05433 .John Schulman, Sergey Levine, Philipp Moritz, Michael I. Jordan, and Pieter Abbeel. 2015. Trust region policy optimization. In International Confer-ence on Machine Learning , pages 1889–1897. John Schulman, Philipp Moritz, Sergey Levine, Michael Jordan, and Pieter Abbeel. 2016. High-dimensional continuous control using generalized advantage es-timation. In International Conference on Learning Representations .John Schulman, Filip Wolski, Prafulla Dhariwal, Alec Radford, and Oleg Klimov. 2017. Proxi-mal policy optimization algorithms. arXiv preprint arXiv:1707.06347 .Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, Y. K. Li, Y. Wu, and Daya Guo. 2024. DeepSeekMath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 .Guobin Shen, Xiang Cheng, Chenxiao Zhao, Lei Huang, Jindong Li, Dongcheng Zhao, and Xing Yu. 2026a. Anti-self-distillation for reasoning RL via pointwise mutual information. arXiv preprint arXiv:2605.11609 .Guobin Shen, Lei Huang, Xiang Cheng, Chenxiao Zhao, Jindong Li, Dongcheng Zhao, and Xing Yu. 2026b. From generic correlation to input-specific credit in on-policy self distillation. arXiv preprint arXiv:2605.11613 .Idan Shenfeld, Mehul Damani, Jonas Hübotter, and Pulkit Agrawal. 2026. Self-distillation enables con-tinual learning. arXiv preprint arXiv:2601.19897 .Mingyang Song and Mao Zheng. 2026. A survey of on-policy distillation for large language models. arXiv preprint arXiv:2604.00626 .Alex Stein, Furong Huang, and Tom Goldstein. 2026. GATES: Self-distillation under privileged context with consensus gating. arXiv preprint arXiv:2602.20574 .Jie Sun, Mao Zheng, Mingyang Song, Qiyong Zhong, Yilin Cheng, Bichuan Feng, Pengfei Liu, Junfeng Fang, and Xiang Wang. 2026. SimCT: Recovering lost supervision for cross-tokenizer on-policy distil-lation. arXiv preprint arXiv:2605.07711 .Ilya Sutskever, Oriol Vinyals, and Quoc V. Le. 2014. Se-quence to sequence learning with neural networks. In 
+
+Advances in Neural Information Processing Systems ,volume 27. Zhiquan Tan and Yinrong Hong. 2026a. PAINT: Partial-solution adaptive interpolated training for self-distilled reasoners. arXiv preprint arXiv:2604.26573 .Zhiquan Tan and Yinrong Hong. 2026b. Self-supervised on-policy distillation for reasoning language models. 
+
+arXiv preprint arXiv:2605.17497 .Thinking Machines Lab. 2026. Tinker distillation cook-book. Official documentation. Accessed 2026-06-08. verl Project. 2026. verl on-policy distillation documen-tation. GitHub documentation. Accessed 2026-06-07. Hao Wang, Guozhi Wang, Han Xiao, Yufeng Zhou, Yue Pan, Jichao Wang, Ke Xu, Yafei Wen, Xiaohu Ruan, Xiaoxin Chen, and Honggang Qi. 2026a. Skill-SD: Skill-conditioned self-distillation for multi-turn LLM agents. arXiv preprint arXiv:2604.10674 .Jianze Wang, Ying Liu, Jinlong Chen, Xuchun Hu, Qi-long Zhang, Yu Cao, Jun Wang, Hua Yang, Yong Xie, and Qianglong Chen. 2026b. Mad-opd: Breaking the ceiling in on-policy distillation via multi-agent debate. arXiv preprint arXiv:2605.01347 .Jiaqi Wang, Wenhao Zhang, Weijie Shi, Yaliang Li, and James Cheng. 2026c. TCOD: Exploring temporal curriculum in on-policy distillation for multi-turn au-tonomous agents. arXiv preprint arXiv:2604.24005 .Sudong Wang, Weiquan Huang, Xiaomin Yu, Zuhao Yang, Hehai Lin, Keming Wu, Chaojun Xiao, Chen Chen, Wenxuan Wang, Beier Zhu, Yunjian Zhang, and Chengwei Qin. 2026d. Beyond SFT-to-RL: Pre-alignment via black-box on-policy distillation for multimodal RL. arXiv preprint arXiv:2604.28123 .Yecheng Wu, Song Han, and Hai Cai. 2026. Lightning opd: Efficient post-training for large reasoning mod-els with offline on-policy distillation. arXiv preprint arXiv:2604.13010 .Xingrun Xing, Haoqing Wang, Boyan Gao, Ziheng Li, and Yehui Tang. 2026. Trust region on-policy distil-lation. arXiv preprint arXiv:2606.01249 .Jing Xiong, Hui Shen, Shansan Gong, Yuxin Cheng, Jianghan Shen, Chaofan Tao, Haochen Tan, Haoli Bai, Lifeng Shang, and Ngai Wong. 2026. OVD: On-policy verbal distillation. arXiv preprint arXiv:2601.21968 .
+
+31 Hongling Xu, Qi Zhu, Heyuan Deng, Jinpeng Li, Lu Hou, Yasheng Wang, Lifeng Shang, Ruifeng Xu, and Fei Mi. 2025. KDRL: Post-training reasoning LLMs via unified knowledge distilla-tion and reinforcement learning. arXiv preprint arXiv:2506.02208 .Yuanda Xu, Hejian Sang, Zhengze Zhou, Ran He, and Zhipeng Wang. 2026a. PACED: Distillation and on-policy self-distillation at the frontier of student com-petence. arXiv preprint arXiv:2603.11178 .Yuanda Xu, Hejian Sang, Zhengze Zhou, Ran He, Zhipeng Wang, and Alborz Geramifard. 2026b. Tip: Token importance in on-policy distillation. arXiv preprint arXiv:2604.14084 .Chenxu Yang, Chuanyu Qin, Qingyi Si, Minghui Chen, Naibin Gu, Dingyu Yao, Zheng Lin, Weiping Wang, Jiaqi Wang, and Nan Duan. 2026a. Self-distilled RLVR. arXiv preprint arXiv:2604.03128 .Shenzhi Yang, Guangcheng Zhu, Bowen Song, Haobo Wang, Mingxuan Xia, Xing Zheng, Yingfan Ma, Zhongqi Chen, Weiqiang Wang, and Gang Chen. 2026b. OPRD: On-policy representation distillation. 
+
+arXiv preprint arXiv:2606.06021 .Wenkai Yang, Weijie Liu, Ruobing Xie, Kai Yang, Saiyong Yang, and Yankai Lin. 2026c. Learn-ing beyond teacher: Generalized on-policy distil-lation with reward extrapolation. arXiv preprint arXiv:2602.12125 .Zhicheng Yang, Zhijiang Guo, Yifan Song, Minrui Xu, Yongxin Wang, Yiwei Wang, Xiaodan Liang, and Jing Tang. 2026d. Prune-OPD: Efficient and reli-able on-policy distillation for long-horizon reasoning. 
+
+arXiv preprint arXiv:2605.07804 .Zhuolin Yang, Zihan Liu, Yang Chen, Wenliang Dai, Boxin Wang, Sheng-Chieh Lin, Chankyu Lee, Yangyi Chen, Dongfu Jiang, Jiafan He, Renjie Pi, Grace Lam, Nayeon Lee, Alexander Bukharin, Mo-hammad Shoeybi, Bryan Catanzaro, and Wei Ping. 2026e. Nemotron-Cascade 2: Post-training LLMs with cascade RL and multi-domain on-policy distilla-tion. arXiv preprint arXiv:2603.19220 .Tianzhu Ye, Li Dong, Zewen Chi, Xun Wu, Shaohan Huang, and Furu Wei. 2025. Black-box on-policy distillation of large language models. arXiv preprint arXiv:2511.10643 .Tianzhu Ye, Li Dong, Qingxiu Dong, Xun Wu, Shao-han Huang, and Furu Wei. 2026a. Online experi-ential learning for language models. arXiv preprint arXiv:2603.16856 .Tianzhu Ye, Li Dong, Xun Wu, Shaohan Huang, and Furu Wei. 2026b. On-policy context distillation for language models. arXiv preprint arXiv:2602.12275 .Qiying Yu, Zheng Zhang, Ruofei Zhu, Yufeng Yuan, Xiaochen Zuo, Yu Yue, Weinan Dai, Tiantian Fan, Gaohong Liu, and Lingjun Liu. 2025. DAPO: An open-source LLM reinforcement learning system at scale. arXiv preprint arXiv:2503.14476 .Qianhao Yuan, Jie Lou, Xing Yu, Hongyu Lin, Le Sun, Xianpei Han, and Yaojie Lu. 2026. Vision-opd: Learning to see fine details for multimodal llms via on-policy self-distillation. arXiv preprint arXiv:2605.18740 .Z.ai. 2026. GLM-5.2: Built for long-horizon tasks. Official blog post. Official blog post, published 2026-06-16; accessed 2026-06-21. Dongxu Zhang, Zhichao Yang, Sepehr Janghorbani, Jun Han, Andrew Ressler, Qian Qian, Gregory D. Lyng, Sanjit Singh Batra, and Robert E. Tillman. 2026a. Fast and effective on-policy distillation from reason-ing prefixes. arXiv preprint arXiv:2602.15260 .Jiaxin Zhang, Xiangyu Peng, Qinglin Chen, Qinyuan Ye, Caiming Xiong, and Chien-Sheng Wu. 2026b. The illusion of certainty: Decoupling capability and calibration in on-policy distillation. arXiv preprint arXiv:2604.16830 .Songming Zhang, Xue Zhang, Tong Zhang, Bojie Hu, Yufeng Chen, and Jinan Xu. 2026c. KDFlow: A user-friendly and efficient knowledge distillation frame-work for large language models. arXiv preprint arXiv:2603.01875 .Xue Zhang, Songming Zhang, Yunlong Liang, Fandong Meng, Yufeng Chen, Jinan Xu, and Jie Zhou. 2025. A dual-space framework for general knowledge dis-tillation of large language models. arXiv preprint arXiv:2504.11426 .Yaocheng Zhang, Jiajun Chai, Yuqian Fu, Songjun Tu, Xiaohan Wang, Wei Lin, Guojun Yin, Qichao Zhang, Yuanheng Zhu, and Dongbin Zhao. 2026d. Are full rollouts necessary for on-policy distillation? arXiv preprint arXiv:2605.31490 .Hanyang Zhao, Haoxian Chen, Han Lin, Genta Indra Winata, David Yao, and Wenpin Tang. 2026a. Opd+: Rethinking the advantage design for on-policy distil-lation. arXiv preprint arXiv:2606.01039 .Shiwan Zhao, Zhihu Wang, Xuyang Zhao, Jiaming Zhou, Caiyue Xu, Chenfei Liu, Liting Zhang, Yuhang Jia, Yanzhe Zhang, Hualong Yu, Zichen Xu, Qicheng Li, and Yong Qin. 2026b. Large language model post-training: A unified view of off-policy and on-policy learning. arXiv preprint arXiv:2604.07941 .Siyan Zhao, Zhihui Xie, Mengchen Liu, Jing Huang, Guan Pang, Feiyu Chen, and Aditya Grover. 2026c. Self-distilled reasoner: On-policy self-distillation for large language models. arXiv preprint arXiv:2601.18734 .Binbin Zheng, Xing Ma, Yiheng Liang, Jingqing Ruan, Xiaoliang Fu, Kepeng Lin, Benchang Zhu, Ke Zeng, and Xunliang Cai. 2026. Scope: Signal-calibrated on-policy distillation enhancement with dual-path adap-tive weighting. arXiv preprint arXiv:2604.10688 .
+
+32 Qiyong Zhong, Mao Zheng, Mingyang Song, Xin Lin, Jie Sun, Houcheng Jiang, Xiang Wang, and Junfeng Fang. 2026a. SOD: Step-wise on-policy distillation for small language model agents. arXiv preprint arXiv:2605.07725 .Zhide Zhong, Haodong Yan, Junfeng Li, Junjie He, Tianran Zhang, and Haoang Li. 2026b. VLA-OPD: Bridging offline SFT and online RL for vision-language-action models via on-policy distillation. 
+
+arXiv preprint arXiv:2603.26666 .Yuhang Zhou, Lizhu Zhang, Yifan Wu, Mingyi Wang, Peng Bo, Jiayi Liu, Xiangjun Fan, and Zhuokai Zhao. 2026. Omniopd: Logit-free on-policy dis-tillation via speculative verification. arXiv preprint arXiv:2606.01476 .Siqi Zhu, Xuyan Ye, Hongyu Lu, Weiye Shi, and Ge Liu. 2026. The many faces of on-policy distilla-tion: Pitfalls, mechanisms, and fixes. arXiv preprint arXiv:2605.11182 .Qingyun Zou, Yingze Li, Tianen Liu, Bingsheng He, and Weng-Fai Wong. 2026. Reward-weighted on-policy distillation with an open property-equivalence verifier for NL-to-SVA generation. arXiv preprint arXiv:2605.13501 .
+
+33 A Reverse-KL Score-Function Derivation 
+
+For a fixed input x, let 
+
+Jx(θ) = X
+
+> y
+
+πθ(y|x) [log πθ(y|x) − log q(y|x)] .
+
+(37) Assume q(y|x) > 0 whenever πθ(y|x) > 0 or that the implementation uses smoothing or truncated support. Differentiating gives 
+
+∇θJx = X
+
+> y
+
+∇θπθ(y|x)
+
+· [log πθ(y|x) − log q(y|x) + 1] . (38) Using ∇θπθ(y|x) = πθ(y|x)∇θ log πθ(y|x), de-fine 
+
+ax(y) = log πθ(y|x) − log q(y|x) + 1 .
+
+Then 
+
+∇θJx = Ey∼πθ
+
+h
+
+ax(y)∇θ log πθ(y|x)
+
+i
+
+. (39) The +1 term is a zero-mean constant score term. Removing it preserves the expected gradient under exact on-policy sampling, although it can change finite-sample variance. For gradient ascent on the negative reverse-KL cost, one may therefore use the detached reward 
+
+R(y) = log q(y|x) − log πθ(y|x) (40) up to a zero-mean constant score term. 
+
+B Return-to-Go and Token-Local Bias 
+
+When q supplies autoregressive probabilities on the declared support, autoregressive factorization gives 
+
+R(y) = 
+
+> T
+
+X
+
+> k=1
+
+rk,rk = log q(yk|ck) − log πθ(yk|ck).
+
+(41) The full sequence score is 
+
+∇θ log πθ(y|x) = 
+
+> T
+
+X
+
+> t=1
+
+∇θ log πθ(yt|ct). (42) For an on-policy rollout distribution and detached rewards, past rewards can be dropped from the score term at time t because they are fixed con-ditional on ct and the conditional score has zero mean. This yields the causal return-to-go estimator 
+
+ˆgrtg =
+
+> T
+
+X
+
+> t=1
+> T
+
+X
+
+> k=t
+
+rk
+
+!
+
+∇θ log πθ(yt|ct). (43) The immediate-token estimator replaces the return by rt. Its expected bias relative to the sequence-level reverse-KL direction is the expectation of the dropped future term 
+
+E[∆] = E
+
+" TX
+
+> t=1
+> T
+
+X
+
+> k=t+1
+
+rk
+
+!
+
+∇θ log πθ(yt|ct)
+
+#
+
+,
+
+(44) where the sample-level difference is 
+
+∆ = 
+
+> T
+
+X
+
+> t=1
+> T
+
+X
+
+> k=t+1
+
+rk
+
+!
+
+∇θ log πθ(yt|ct). (45) The estimator can still be a useful semi-gradient for a local surrogate on collected prefixes, but it should not be described as an unbiased sequence-level estimator. 
+
+C Bias Conditions for a Proposed GAE-Style OPD Estimator 
+
+GAE-OPD is a value-based temporal-credit hypoth-esis adapted from generalized advantage estimation (Schulman et al., 2016) and distinct from simple re-ward discounting. For the undiscounted sequence-level reverse-KL objective, define 
+
+V π(ct) = Eπθ
+
+" TX
+
+> k=t
+
+rk | ct
+
+#
+
+, (46) with terminal value V π(cT +1 ) = 0 . The exact TD residual is 
+
+δπt = rt + V π(ct+1 ) − V π(ct), (47) and the GAE-style advantage is 
+
+ˆAλt = 
+
+> T−t
+
+X
+
+> l=0
+
+λlδπt+l. (48) With exact V π and on-policy detached rewards, 
+
+λ changes variance but not the expected policy-gradient direction for the undiscounted sequence objective. The tower-property argument is 
+
+E[δπi | ci] = 0 , (49) and, with 
+
+Qπ(ct, y t) = Eπθ
+
+" TX
+
+> k=t
+
+rk | ct, y t
+
+#
+
+,
+
+E[ ˆAλt | ct, y t] = E[δπt | ct, y t]= Qπ(ct, y t) − V π(ct). (50) 34 Future residuals vanish in conditional expectation because E[δπt+l | ct+l] = 0 for l ≥ 1. Thus the expected score term is the usual advantage form for the undiscounted return-to-go. With approx-imate Vϕ, λ < 1 introduces bootstrapping bias through value error, while λ = 1 telescopes to Monte Carlo return minus a state baseline and does not depend on value accuracy under the terminal convention. Rewards, values, and advantages are stop-gradient quantities in the actor update unless a method explicitly defines a differentiable teacher or critic objective. For rollout-buffer implementations, let 
+
+rold  
+
+> k
+
+= log q(yk|ck) − log πθold (yk|ck) (51) denote the detached cached log-ratio computed un-der the rollout policy. A practical critic may be trained toward the undiscounted cached return 
+
+Vϕ(ct) ≈ Eyt:T ∼πθold (·| ct)
+
+" TX
+
+> k=t
+
+rold  
+
+> k
+
+| ct
+
+#
+
+, (52) with residual rold  
+
+> t
+
++ Vϕ(ct+1 ) − Vϕ(ct) and advan-tage P 
+
+> l
+
+λlδt+l. This is off-policy for the current student unless the update uses importance correc-tion, PPO-style ratios (Schulman et al., 2017), or a trust-region approximation (Schulman et al., 2015). If one instead uses a discounted target 
+
+V πβ (ct) = Eπθ
+
+" TX
+
+> k=t
+
+βk−trk | ct
+
+#
+
+, (53) then δβt = rt + βV πβ (ct+1 ) − V πβ (ct) and 
+
+P
+
+> l
+
+(βλ )lδβt+l are tied to the β-discounted surro-gate objective. For β < 1, this surrogate is biased relative to the original undiscounted sequence-level reverse-KL objective even with an exact value func-tion. This is the mathematical distinction between a baseline, which is expectation-preserving, and a discount, which changes future log-ratio weights. 
+
+D Bias Boundary for CR-OPD 
+
+Counterfactual Routed OPD (CR-OPD), as de-scribed in section 4, is a candidate vocabulary-routing operator that changes the original reverse-KL gradient in two ways. First, it restricts replace-ments to a candidate set C+ 
+
+> t
+
+, often an intersection of teacher-supported and student-reachable tokens. Second, it applies a pairwise logit-ranking loss rather than the original score-function estimator. Therefore, 
+
+E[∇θLroute ]̸ = ∇θDRKL  
+
+> t
+
+(54) in general as a local loss-gradient statement, and it is also a biased estimator of the sequence-level reverse-KL descent direction under the sign convention in section 4. CR-OPD deliberately trades unbiased reverse-KL estimation for explicit replacement-target routing: it makes explicit the otherwise implicit decision of where probability mass should go after a negative sampled-token up-date. Whether this biased operator improves task performance is an empirical and theoretical open problem. 35 Component Composable dimensions Dependency or conflict Representative signals or methods Support fidelity Temporal credit, gates, vocabulary routing, and regularizers. Requires a declared support source, smoothing or normalization convention, and teacher-access budget; top-k and full-vocabulary losses are not equivalent to sampled-token score estimators. Sampled-token OPD, teacher top-k
+
+matching, full-vocabulary OPD, cross-tokenizer support bridges (Fu et al., 2026; DeepSeek-AI, 2026; ModelScope Team, 2026b; Boizard et al., 2025). Temporal credit estimator Support-expanded feedback, route switching, PPO-style ratios, trust regions, or reference KL. State-only baselines preserve the on-policy expectation, while discounting, truncation, stale rewards, and approximate critics change the estimator unless the surrogate objective or correction is stated. Immediate-token OPD, return-to-go OPD, vOPD-style control variates, proposed GAE-OPD, PPO/TRPO-style controls (Oh et al., 2026; Schulman et al., 2016, 2017, 2015). Vocabulary probability routing Temporal advantages, support expansion, sign gates, and outcome gates. Negative sampled-token feedback suppresses one token but does not name a replacement; routed alternatives require teacher-supported and student-reachable candidate sets. Routing gains should be evaluated with temporal credit held fixed. Teacher top-k local matching, AOPD non-positive-region switching, proposed CR-OPD (Fu et al., 2026; Jia et al., 2026). Gate or weight Direct losses, PG-style advantages, support choice, teacher routing, and regularization. Gates are useful only if their diagnostic signal is reliable on student-induced states; noisy gates can discard recoverable feedback or overweight misleading teacher scores. Entropy or disagreement token selection, correctness routing, trust filtering, trajectory filtering, on/off-policy switching (Xu et al., 2026b; Zheng et al., 2026; Xing et al., 2026; Li et al., 2026h; Peng et al., 2025). Feedback source and teacher routing Support choice, gates, outcome signals, and drift controls. Multi-teacher or privileged feedback must handle teacher conflict, privilege compressibility, and localization of global or verifier signals before dense updates are trusted. Multi-teacher OPD, domain-teacher routing, privileged-teacher OPD, OPD plus outcome or verifier feedback (MiMo Core Team, 2026; DeepSeek-AI, 2026; Ye et al., 2026b; Yuan et al., 2026; Xu et al., 2025). Regularizer and drift control Direct-loss and PG-style routes, baselines, support-expanded losses, and online or cached-teacher schedules. Over-regularization can suppress useful teacher correction, while weak regularization can cause repetition, length drift, forgetting, or stale-score drift. Reference KL, golden-data mixture, entropy control, clipping, trust-region filtering, cache refresh (Luo et al., 2026; Xing et al., 2026; Wu et al., 2026; Rang et al., 2026). 
+
+Table 10: Composability of OPD interventions under the formula-driven taxonomy. Rows are not mutually exclusive modules; they identify where an intervention enters the feedback-to-update path and which compatibility conditions must be checked when combining it with others. 
+
+E Representative Literature Matrix 
+
+Table 11 expands the support/access ladder sum-marized in section 3. The main text gives the com-pact mechanism map in table 4; table 12 gives the detailed mechanism map; and the tables below provide broader literature, system, and framework coverage. The support ladder hides important scaling fac-tors beyond a simple vocabulary-size by sequence-length estimate. Long-context and multi-teacher OPD depend on teacher count, context length, batch packing, KV-cache and hidden-state reuse, prediction-head reconstruction, teacher routing, teacher freshness, and cache-refresh schedules (DeepSeek-AI, 2026; MiMo Core Team, 2026; Wu et al., 2026; Rang et al., 2026). Systems claims should therefore specify which costs are reduced: teacher forward compute, logit materialization, net-work transfer, storage, or stale-score refresh. When teacher and student tokenizers differ, the support variable is no longer a shared vocabulary set. A common abstraction is to compare events in a shared text-span or byte space: 
+
+AT (s) = {u1: m : dec T (u1: m) = s},
+
+AS (s) = {v1: n : dec S (v1: n) = s},
+
+Ωtext  
+
+> t
+
+= {s : AT (s)̸ = ∅, AS (s)̸ = ∅} ,
+
+¯q(s|ct) = X 
+
+> u∈A T(s)
+
+qT (u|ct),
+
+¯πθ (s|ct) = X 
+
+> v∈A S(s)
+
+πθ (v|ct).
+
+(55) 
+
+The local loss then matches 
+
+DΩtext  
+
+> t
+
+[¯ πθ(·| ct), ¯q(·| ct)] rather than compar-36 Support or access regime What it saves or spends Fidelity profile Escalate or audit when Sampled token Saves full-logit materialization, transfer, and storage; still needs teacher scoring or cached log-probs for sampled actions. Lowest support fidelity; useful as a cheap PG-style signal, but blind to alternatives. Negative updates need a replacement target, or token-local estimators are too noisy or biased (Fu et al., 2026; Jia et al., 2026). Teacher top-k or overlap Spends teacher top-k
+
+extraction and support normalization; overlap also compares student support. Restores local alternatives at moderate cost when teacher mass is concentrated. Truncation hides useful alternatives, or normalization choices are not reported (Fu et al., 2026; ModelScope Team, 2026b; verl Project, 2026). Proposed student-reachable support Spends student-side candidate filtering plus teacher scores for candidate tokens. Intended to target alternatives the student can plausibly take for negative sampled-token feedback. Reachability thresholds can exclude genuinely useful teacher information; empirical tradeoffs remain a research question. Full vocabulary Spends full teacher logits or systems tricks such as hidden-state caching and prediction-head reconstruction. Highest vocabulary-level fidelity; avoids top-k
+
+truncation and sampled-token replacement ambiguity. Memory, bandwidth, or teacher scheduling dominates; DeepSeek-V4 provides one engineered feasibility point for that tradeoff (DeepSeek-AI, 2026). Cross-tokenizer or representation support Spends text-span, byte, lattice, optimal-transport, approximate-likelihood, or representation-space bridges. Avoids raw-vocabulary mismatch when teacher and student token events differ. Semantic equivalence of aligned events is assumed rather than measured (Boizard et al., 2025; Zhang et al., 2025; Sun et al., 2026; Cui et al., 2025; Minixhofer et al., 2025; Yang et al., 2026b). Logit-free feedback Saves teacher logit materialization; uses discriminator, verbal, rubric, verifier, execution, or environment feedback. Useful under API-only or semantic-feedback settings, but no longer a raw logit KL. The route from global or text feedback to token, span, step, or trajectory updates is unspecified (Ye et al., 2025; Xiong et al., 2026; Fang et al., 2026; Zhou et al., 2026). 
+
+Table 11: Support and feedback-access choices as a systems and fidelity ladder. Higher-fidelity or better-aligned feedback generally increases materialization, transfer, alignment, or routing cost. 
+
+ing raw teacher and student logits. This is a conceptual bridge: multi-token text events require marginalization over tokenizations, lattice construction, optimal transport, approximate likelihood matching, or another tractable surrogate before next-token logits can be compared in a shared event space. ULD (Boizard et al., 2025), DSKD (Zhang et al., 2025), SimCT (Sun et al., 2026), optimal-transport (Cui et al., 2025), and approximate-likelihood-matching methods (Minixhofer et al., 2025) can be read as different approximations to this support bridge. Tables 13 to 17 give compact matrices of repre-sentative work under the variables used in the main text. The matrices summarize representative cover-age by mechanism and are intentionally selective rather than paper-by-paper. 37 Work or family Variable changed Mechanism reading Survey use / remaining question 
+
+Foundations and diagnostics 
+
+GKD, MiniLLM, DistiLLM/DistiLLM-2 (Agarwal et al., 2024; Gu et al., 2023; Ko et al., 2024, 2025) State distribution; divergence; update route. Move supervision onto student or mixed prefixes; compare forward/reverse/JSD or reverse-KL PG-style estimators; use buffers, mixtures, or contrastive objectives for stability. Grounds the state, objective, and route variables; teacher reliability and long-horizon routing require additional diagnostics. Revisiting, Rethinking, Many Faces, Unmasking (Fu et al., 2026; Li et al., 2026f; Zhu et al., 2026; Armandpour et al., 2026) Diagnostics for state, feedback, support, and gradient alignment. Test whether teacher feedback remains useful on student-induced contexts through sampled-token bias, teacher reliability, thinking-pattern compatibility, marginal teacher information, and per-token gradient alignment. Grounds the actionability diagnostics; each proxy remains model-, task-, and support-dependent. 
+
+Estimator and route interventions 
+
+vOPD and OPD+ (Oh et al., 2026; Zhao et al., 2026a) Credit estimator; advantage construction; stop-gradient choice. vOPD subtracts a closed-form control-variate baseline from sampled-token OPD; OPD+ revisits how divergence-derived rewards should become advantages. Grounds estimator and advantage variables; teacher reliability and support mismatch remain separate axes. AOPD, G-OPD, TGPO, ReOPOLD, TrOPD (Jia et al., 2026; Yang et al., 2026c; Liu et al., 2026b; Ko et al., 2026; Xing et al., 2026) Update route; sign-conditioned switching; reward extrapolation; teacher-guided repair; trust region. AOPD switches non-positive regions from negative reinforcement to local divergence matching; G-OPD adds reward extrapolation beyond teacher imitation; TGPO changes the route when large teacher–student divergence makes raw log-ratio feedback poorly actionable; ReOPOLD relaxes strict imitation; TrOPD filters updates through trust-region constraints. Grounds route interventions that can combine with baselines, support choices, and dynamic gates. 
+
+Weighting and adaptive objectives 
+
+StableOPD, TIP, SCOPE, FiRe-OPD (Luo et al., 2026; Xu et al., 2026b; Zheng et al., 2026; Li et al., 2026h) Weighting, filtering, and regularization. Add reference constraints, rollout mixtures, entropy/disagreement token selection, correct/incorrect trajectory weighting, trajectory filtering, or token reweighting. Evidence supports stability gates in specific settings; thresholds remain model- and task-dependent. EOPD, ToDi, Veto (Jin et al., 2026; Jung et al., 2025; Jang et al., 2026) Divergence or target choice. Make divergence or target reformulation conditional on local distributional geometry, teacher entropy, or instability of the raw teacher distribution. Grounds adaptive objective selection under local distributional diagnostics. 
+
+Support, systems, and feedback-source extensions 
+
+DeepSeek-V4, SWIFT, verl, Lightning OPD, Near-Policy (DeepSeek-AI, 2026; ModelScope Team, 2026b; verl Project, 2026; Wu et al., 2026; Rang et al., 2026) Support fidelity; teacher serving; cache freshness; rollout lag. Move between sampled-token, top-k, and full-vocabulary feedback; expose teacher-serving, cache-consistency, and stale-score tradeoffs as part of the objective interface. Makes support cost and teacher freshness auditable; exact systems choices should not be collapsed into a single OPD label. Black-box OPD, OVD, ROPD, OmniOPD, KDRL, SSOPD (Ye et al., 2025; Xiong et al., 2026; Fang et al., 2026; Zhou et al., 2026; Xu et al., 2025; Tan and Hong, 2026b) Feedback source; localization; outcome gate. Replace raw teacher logits or supplement them with discriminator, rubric, verbal, verifier, outcome, or rollout-contrast feedback. Shows when OPD becomes hybrid: global signals must state how they are routed to tokens, spans, steps, or trajectories. OPCD, OPSD, Vision-OPD, ULD/DSKD/SimCT-style support bridges (Ye et al., 2026b; Zhao et al., 2026c; Yuan et al., 2026; Boizard et al., 2025; Zhang et al., 2025; Sun et al., 2026) Privileged teacher; cross-tokenizer or representation support. Convert extra context, answer traces, visual views, or mismatched token events into deployable student behavior through a shared support or representation bridge. Privilege and support bridges are useful only when the extra signal is compressible into inference-time behavior and comparable under the chosen event space. 
+
+Table 12: Detailed mechanism matrix for representative OPD, KD, and diagnostic families. The compact main-text matrix in table 4 gives the reader-facing overview; this table keeps the variable-level mechanism reading auditable. 
+
+38 Method or family State source Feedback and support Objective or credit Routing/gate and failure addressed 
+
+Foundations and diagnostics 
+
+MiniLLM (Gu et al., 2023), DistiLLM (Ko et al., 2024), DistiLLM-2 (Ko et al., 2025), GKD (Agarwal et al., 2024) Externally supplied states plus self-generated outputs in GKD-style training. Teacher distributions or contrastive distillation signals. Reverse-KL, contrastive, or generalized distillation objectives. Moves distillation toward student-induced states; exposes state-distribution gap. State-distribution and rich-feedback framing: Post-Training is About States (Nie, 2026) and Distributional DAgger (Agrawal et al., 2026) Learner-induced states as the object of post-training analysis. Rich expert, teacher, or distributional feedback on visited states. Adjacent theoretical framing rather than a specific OPD optimizer. Supports the survey’s state-distribution axis and clarifies how state source differs from loss choice. Revisiting OPD (Fu et al., 2026), Rethinking OPD (Li et al., 2026f), Many Faces (Zhu et al., 2026), Unmasking OPD (Armandpour et al., 2026) Student rollouts and reasoning states. Teacher logits on student-induced contexts; support often sampled or top-k; gradient-alignment probes. Token-local OPD recipes and empirical diagnostics. Teacher compatibility, marginal information, teacher choice, loss choice, capacity sensitivity, and token-level usefulness diagnostics. 
+
+Estimator, route, and horizon interventions 
+
+AOPD (Jia et al., 2026), vOPD (Oh et al., 2026), OPD+ (Zhao et al., 2026a), ReOPOLD (Ko et al., 2026), TrOPD (Xing et al., 2026) Student sampled tokens. Teacher-student log-ratio, sometimes with local teacher support. PG-style reward, control-variate baselines, revised advantage design, localized divergence in non-positive regions, trust-region hybrids. Reduces variance or changes negative-advantage behavior; addresses directionless suppression and unrecoverable states. Temporal-credit and horizon-control bridge: KETCHUP (Fan et al., 2025), Prefix OPD (Zhang et al., 2026a), Prune-OPD (Yang et al., 2026d), full-rollout analysis (Zhang et al., 2026d), near-future guidance (Jiang and Ferraro, 2026) Sequential KD or student rollouts with varied prefix and rollout windows. Teacher or distillation feedback over prefixes, pruned suffixes, or near-future windows. K-step, prefix-only, pruned, truncated, or near-future credit. Treats horizon as an operational variable; KETCHUP is a temporal-credit bridge, not core OPD. 
+
+Weighting, adaptive objectives, and cautionary diagnostics 
+
+StableOPD (Luo et al., 2026), TIP (Xu et al., 2026b), SCOPE (Zheng et al., 2026), EOPD (Jin et al., 2026), ToDi (Jung et al., 2025), Veto (Jang et al., 2026), FiRe-OPD (Li et al., 2026h), AdaSwitch (Peng et al., 2025) Student rollouts with stability monitoring or stage-dependent state source. Teacher logits plus entropy, disagreement, correctness, quality, calibration, or switching signals. Weighted, regularized, divergence-adaptive, filtered, or on/off-policy-switched OPD objectives. Token selection, trajectory filtering, adaptive weighting, target reformulation, reference constraints, entropy-aware gates, and stage switching for noisy feedback and drift. Calibration and teachability diagnostics: certainty drift (Zhang et al., 2026b), self-distillation degradation (Kim et al., 2026), Prefix Teach/Suffix Fade (Liu et al., 2026a), Rock Tokens (Jiang et al., 2026), EGRSD (Ke et al., 2026) OPD or self-distilled reasoning states. Confidence, uncertainty, suffix teachability, residual hard-token, or self-uncertainty signals. Diagnostic or uncertainty-aware updates. Warns that fluent local imitation can diverge from calibrated correctness, epistemic expression, or token-level teachability. Veto (Jang et al., 2026), ReOPOLD (Ko et al., 2026), TrOPD (Xing et al., 2026), G-OPD (Yang et al., 2026c) Student or replayed on-policy states. Adaptive targets, relaxed objectives, trust-region constraints, or reward extrapolation. Target reformulation and stabilization around OPD updates. State instability, extrapolation beyond teacher, and update drift. 
+
+Table 13: Representative core method families mapped to formula variables. Some entries are broader distillation or post-training methods included because they clarify a variable used by OPD; rows are not mutually exclusive and should not all be read as identical OPD algorithms. 
+
+39 Method or family State source Feedback and support Objective or credit Routing/gate and failure addressed 
+
+Logit-free and outcome-routed feedback 
+
+Black-box OPD (Ye et al., 2025), OVD (Xiong et al., 2026), ROPD (Fang et al., 2026), OmniOPD (Zhou et al., 2026) Student rollouts with unavailable or brittle teacher logits. Discriminator, verbal feedback, rubric, chunk-level or speculative verification. Logit-free or criterion-level distillation. Replaces raw logit matching with verifier, rubric, or semantic feedback. Outcome-routed and self-distilled RLVR hybrids: SD-Zero (He et al., 2026), Self-Distilled RLVR (Yang et al., 2026a), SRPO (Li et al., 2026b), CREDIT (Shen et al., 2026b), AntiSD (Shen et al., 2026a), PAINT (Tan and Hong, 2026a), PACED (Xu et al., 2026a) Self-generated reasoning samples, verifiable-reward rollouts, or competence-frontier samples. Binary rewards, revision traces, partial solutions, sample routes, or input-specific credit; often no white-box teacher logits. Converts sparse or global signals into denser self-distillation or routed policy updates. Provides hybrid or adjacent evidence for outcome-conditioned dense supervision and sample routing. 
+
+Draft and cached-teacher systems 
+
+Draft-OPD (Lei et al., 2026) and Lightning OPD (Wu et al., 2026) Draft-induced states or offline on-policy rollouts. Target-model feedback, accepted/rejected speculative proposals, or cached teacher scores. OPD adapted to speculative or offline post-training workflows. Addresses draft-state mismatch and systems cost of repeated teacher scoring. 
+
+Privileged and teacher-gap feedback 
+
+OPCD (Ye et al., 2026b) and Vision-OPD (Yuan et al., 2026) Student states without privileged deployment context. Context-conditioned or vision-privileged teacher feedback. Privileged self-distillation on shared output space. Tests whether context or visual privilege is compressible into deployable behavior. Privileged-context and hybrid-policy variants: GATES (Stein et al., 2026), HDPO (Ding, 2026), TGPO (Liu et al., 2026b) Student rollouts under privileged context, hybrid distillation, or large teacher–student divergence. Consensus-gated privileged context, privileged self-distillation, or teacher-guided policy feedback. Gates or reshapes teacher guidance when privilege or divergence makes raw OPD risky. Broadens the teacher-privilege and teacher-gap variables and motivates explicit gates. 
+
+Table 14: Representative feedback-source, outcome-hybrid, draft/cached-teacher, and privilege-extension families mapped to formula variables. 
+
+40 Method or family State source Feedback and support Objective or credit Routing/gate and failure addressed 
+
+Support-space bridges 
+
+Cross-tokenizer and representation distillation: ULD (Boizard et al., 2025), DSKD (Zhang et al., 2025), SimCT (Sun et al., 2026), MultiLevelOT (Cui et al., 2025), approximate likelihood matching (Minixhofer et al., 2025), and OPRD (Yang et al., 2026b) Teacher and student may use different token event spaces or hidden-state feedback. Aligned token, span, dual-space, optimal-transport, approximate-likelihood, or representation support. Cross-tokenizer losses, recovered supervision, or representation alignment. Prevents support artifacts where token events diverge from semantic events; expands feedback beyond output logits. 
+
+Multimodal, online, and agentic settings 
+
+Multimodal and cross-modal OPD: PRISM (Wang et al., 2026d), VOLD (Bousselham et al., 2025), CORD (Hu et al., 2026), VISD (Lin et al., 2026), Video-OPD (Li et al., 2026c), X-OPD (Cao et al., 2026), VLA-OPD (Zhong et al., 2026b) Student rollouts in multimodal, video, audio, speech, or action spaces. Black-box multimodal feedback, LLM-to-VLM reasoning transfer, audio-text reasoning signals, video grounding signals, speech alignment, or VLA feedback. Cross-modal distillation, weighted OPD, structured self-distillation, or OPD before/with RL. Makes support alignment and grounding first-class variables; state, privilege, evaluation, or support bridges may extend beyond text vocabulary space. Self/continual and co-evolving distillation: OPSD (Zhao et al., 2026c), SDFT (Shenfeld et al., 2026), SDPO (Hübotter et al., 2026), COPD (Gu et al., 2026), and OEL (Ye et al., 2026a) Self-generated, experiential, or continual-learning streams. Self-teacher, previous policy, experience-conditioned teacher, or co-evolving policy feedback. Self-distillation, policy-distillation, or continual updates. Raises online stability, lagged-teacher, and anti-forgetting questions. Agentic granularity and online systems: GEAR (Li et al., 2026d), Skill-SD (Wang et al., 2026a), Healthcare AI Gym (Jeong, 2026), Near-Policy (Rang et al., 2026), Test-Time Speculation (Kumar et al., 2026) Agent, skill-conditioned, medical-agent, asynchronous near-policy, or deployment-time speculative states. Advantage reweighting at multiple granularities, skill-conditioned self-feedback, environment or task feedback, stale near-policy rollouts, or speculative checks. Granularity-adaptive routing, skill-conditioned self-distillation, near-policy distillation, or test-time assisted updates. Highlights that OPD variables must be scheduled over steps, skills, and teacher freshness, especially outside single-turn text generation. 
+
+Uncertainty, compression, and verifier weighting 
+
+Uncertainty, compression, and reward-weighted variants: EGRSD (Ke et al., 2026), CRISP (Sang et al., 2026), VPD (Li et al., 2026e), RW-OPD (Zou et al., 2026) Self-distilled reasoning, compressed reasoning traces, language-feedback settings, or verifier-scored generation. Self-uncertainty, iterative self-policy compression, language feedback, or property-equivalence verifier rewards. Uncertainty-aware self-distillation, reasoning compression, variational policy distillation, or reward-weighted OPD. Supports calibration, compression, and verifier-alignment diagnostics in the main text. 
+
+Table 15: Representative support-alignment, multimodal, online, and diagnostic extension families mapped to formula variables. 
+
+41 System or implementation State source Feedback and support Objective or credit Routing/gate and failure addressed Qwen3 (Qwen Team, 2025) Student-generated on-policy sequences in strong-to-weak distillation. Larger Qwen teacher logits; exact support approximation not inferred here. Logit alignment in on-policy knowledge transfer. Cross-scale capability transfer under student-capacity limits. MiMo-V2-Flash (MiMo Core Team, 2026) Student on-policy sequences. Domain-specialized teachers provide dense token-level rewards. Multi-Teacher OPD combined with outcome-reward or GRPO-style advantages. Domain-conditioned teacher selection and outcome alignment across domains. GLM-5 (GLM-5 Team, 2026) Final-stage student rollouts. Previous-stage checkpoints as teachers. Stopped teacher-student log-ratio used in place of GRPO advantage with group size one. Anti-regression and behavior preservation after earlier training stages. DeepSeek-V4 (DeepSeek-AI, 2026) Student trajectories in post-training. More than ten domain teachers and full-vocabulary logits. Reverse-KL multi-teacher OPD with systems support for exact KL. Support fidelity and teacher scheduling in expert consolidation. Nemotron-Cascade 2 (Yang et al., 2026e) and KAT-Coder-V2 (Li et al., 2026a) Cascade or agentic-coding post-training states. Domain or capability-specialized teachers. OPD-style multi-domain or specialize-then-unify distillation inside broader post-training pipelines. Breadth signal for regression recovery, agentic capability consolidation, and domain teacher selection. 
+
+Table 16: Representative industrial systems mapped to formula variables. The table uses public reports as evidence for usage or configuration and treats the variable-level columns as this survey’s interpretation. 
+
+System or implementation State source Feedback and support Objective or credit Routing/gate and failure addressed SWIFT (ModelScope Team, 2026b) and Megatron-SWIFT (ModelScope Team, 2026a) Configurable offline data, on-policy student rollouts, or teacher-generated responses. Teacher top-k logits with renormalization. Forward KL, JSD, or reverse KL controlled by documented knobs. Makes state or rollout source, divergence, and support approximation explicit implementation choices. verl OPD (verl Project, 2026) GKD OPD or PG OPD workflows. Teacher top-k
+
+distributions or sampled-token reverse-KL estimators. Direct distillation loss or PG advantage aggregation. Separates update route from support choice; warns against incompatible combinations. TRL GKDTrainer (Hugging Face, 2026b), TRL DistillationTrainer (Hugging Face, 2026a), KDFlow (Zhang et al., 2026c), and Tinker (Thinking Machines Lab, 2026) Trainer or system workflows for on/off-policy, buffered, cross-tokenizer, multi-turn, or multi-teacher distillation. Teacher servers, generation buffers, hidden-state transfer, cross-tokenizer support, or multi-teacher configuration. Implementation-facing GKD/OPD-style trainer and system controls. Shows OPD variables becoming reusable infrastructure across trainer and system workflows. MAD-OPD (Wang et al., 2026b) and agentic RL settings (Li et al., 2026g) Debate, tool-use, or long-horizon rollouts. Multiple agents, tools, delayed outcomes, or task feedback. Method-dependent post-training updates. Highlights teacher conflict, tool/reasoning interference, harness fidelity, and long-horizon credit. 
+
+Table 17: Representative implementation-facing systems and adjacent agentic settings mapped to formula variables. 
+
+42 F Fact-Audit Levels for Claims and Design Directions 
+
+We use four evidence levels for factual claims, scope-extension claims, and survey-derived design directions. E0 denotes direct-source evidence: an official technical report, paper, or preprint with the relevant claim. E0 records what the source reports; peer review, independent replication, and effectiveness beyond the reported setting are separate evidence questions. E1 denotes official framework or repository documentation. E2 denotes an official blog or exposition. E3 denotes this survey’s interpretation, synthesis, or potential design direction. Tables 18 to 20 give the compact audit used for the system, framework, extension-scope, and E3 design-direction claims discussed in the main text, especially section 8. 
+
+Claim area Level Reported statement and survey use Qwen3 OPD use (Qwen Team, 2025) E0 Reported: strong-to-weak distillation uses both off-policy and on-policy knowledge transfer; in the OPD phase, student-generated sequences are aligned with larger Qwen teacher logits. 
+
+Survey use: evidence for cross-scale capability transfer; the exact support approximation is left unspecified by the report. MiMo MOPD (MiMo Core Team, 2026) E0 Reported: Multi-Teacher OPD uses domain-specialized teachers providing dense token-level rewards, combined by default with outcome-reward or GRPO-style advantages. 
+
+Survey use: evidence for domain-conditioned teacher selection and global-signal mixture. GLM-5 cross-stage OPD (GLM-5 Team, 2026) E0 Reported: on-policy cross-stage distillation is used as final refinement with preceding-stage checkpoints and a stopped teacher-student log-ratio. 
+
+Survey use: evidence for checkpoint teachers and cross-stage behavior preservation as a feedback-source problem. DeepSeek-V4 OPD (DeepSeek-AI, 2026) E0 Reported: the mixed-RL expert-merging stage is replaced with multi-teacher OPD using reverse KL, student trajectories, more than ten domain teachers, full-vocabulary logit distillation, and named systems optimizations. 
+
+Survey use: evidence for support fidelity and systems cost in one expert-consolidation setting. Nemotron-Cascade 2 (Yang et al., 2026e) and KAT-Coder-V2 (Li et al., 2026a) E0/E3 Reported: OPD-style distillation appears inside broader cascade, multi-domain, or agentic-coding post-training systems. 
+
+Survey use: breadth evidence for multi-domain teacher selection and adjacent pipeline design. 
+
+Table 18: Fact audit for public system claims. 
+
+43 Claim area Level Reported statement and survey use 
+
+Framework and implementation evidence 
+
+SWIFT (ModelScope Team, 2026b) and Megatron-SWIFT (ModelScope Team, 2026a) knobs E1 Reported: official documentation exposes source-distribution, divergence, support-top-k, and vLLM/on-policy-generation controls. 
+
+Survey use: implementation evidence for user-facing OPD variables. verl OPD knobs (verl Project, 2026) E1 Reported: official documentation separates GKD OPD and PG OPD through 
+
+loss_mode and use_policy_gradient .
+
+Survey use: implementation evidence for separating support choice from update route. TRL GKDTrainer (Hugging Face, 2026b)/TRL DistillationTrainer (Hugging Face, 2026a)/KDFlow (Zhang et al., 2026c)/Tinker (Thinking Machines Lab, 2026) ecosystem E0/E1 Reported: official docs and system reports expose GKD/OPD-style trainer, teacher-serving, buffering, cross-tokenizer, multi-turn, or multi-teacher workflows. 
+
+Survey use: implementation evidence for reusable OPD infrastructure. 
+
+Popularization and diagnostics 
+
+Thinking Machines OPD exposition (Lu and Thinking Machines Lab, 2025) E2 Reported: official exposition provides a recent public RL-compatible sampled-token OPD framing. 
+
+Survey use: context for the sampled-token PG-style route in current practice. Recoverability diagnostics (Fu et al., 2026), compatibility diagnostics (Li et al., 2026f), and teacher-choice diagnostics (Zhu et al., 2026) E0/E3 Reported: prior work reports teacher reliability, compatibility, and recoverability-related diagnostics. 
+
+Survey use: these diagnostics are organized as state-compatibility factors whose predictive value depends on the setting. 
+
+Table 19: Fact audit for framework claims and diagnostic framing. 
+
+44 Claim area Level Reported statement and survey use 
+
+Hybrid and extension scope 
+
+Outcome-routed and self-distilled RLVR hybrids (He et al., 2026; Yang et al., 2026a; Li et al., 2026b; Shen et al., 2026b,a; Tan and Hong, 2026a; Xu et al., 2026a) E0/E3 Reported: recent work converts binary rewards, partial solutions, sample routes, or input-specific credit into denser self-distillation or routed policy updates. 
+
+Survey use: evidence for outcome-conditioned gates, routes, and OPD-adjacent dense supervision. Multimodal, cross-modal, and representation support (Wang et al., 2026d; Bousselham et al., 2025; Hu et al., 2026; Lin et al., 2026; Li et al., 2026c; Cao et al., 2026; Zhong et al., 2026b; Yang et al., 2026b) E0/E3 Reported: these works extend OPD-style feedback to multimodal, cross-modal, video, speech, action, or hidden-representation spaces. 
+
+Survey use: evidence that feedback space and support bridges may extend beyond text-vocabulary KL. Online, near-policy, and cached-teacher variants (Wu et al., 2026; Rang et al., 2026; Ye et al., 2026a; Kumar et al., 2026) E0/E3 Reported: these works motivate teacher freshness, cache consistency, rollout lag, and deployment-time speculation as OPD systems variables. 
+
+Survey use: evidence for treating stale feedback and cache consistency as explicit systems variables. Calibration, uncertainty, and self-distillation caution (Zhang et al., 2026b; Kim et al., 2026; Ke et al., 2026) E0/E3 Reported: related diagnostics warn that confidence, uncertainty expression, and calibrated correctness can move differently from local distillation loss. 
+
+Survey use: risk signals and monitoring guidance for OPD runs. 
+
+Analytic distinctions and survey-derived design directions 
+
+GAE-OPD temporal-credit hypothesis, adapted from GAE (Schulman et al., 2016) E3 Analysis: value-based TD residuals and direct discounting are mathematically different routes over teacher-student log-ratio returns; exact on-policy values preserve the undiscounted sequence objective under the stated conditions. 
+
+Survey use: GAE-OPD is proposed as a temporal-credit hypothesis; discounting future log-ratios defines a biased surrogate unless explicitly treated as the target objective. Counterfactual Routed OPD E3 Analysis: CR-OPD is formulated as a biased routing operator for negative-advantage tokens. 
+
+Survey use: it makes the replacement target explicit and leaves empirical value as an open research question. 
+
+Table 20: Fact audit for extension-scope claims and survey-derived design directions. 
+
+45
