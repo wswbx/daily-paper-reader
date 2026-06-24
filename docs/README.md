@@ -6,68 +6,47 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-23
-- 运行时间：2026-06-23 21:10:46 UTC
+- 最新运行日期：2026-06-24
+- 运行时间：2026-06-24 22:09:18 UTC
 - 运行状态：成功
-- 本次总论文数：16
-- 精读区：9
-- 速读区：7
+- 本次总论文数：9
+- 精读区：4
+- 速读区：5
 
 ### 今日简报（AI）
-今天共推荐16篇论文，精读9篇，涵盖策略蒸馏、CLI代理评估、行为树等方向。最值得关注的是满分论文《A Formula-Driven Survey and Research Agenda for On-Policy Distillation》和9分论文《AgentMeter: Evaluating Model-CLI Matching for CLI-Based Local Task-Solving Agents》。建议优先精读这两篇高分论文，快速掌握前沿研究框架与评估方法。
-- 详情：[/202606/23/README](/202606/23/README)
+今日精读4篇、速读5篇，聚焦蒸馏位置偏差与CLI智能体评估两大方向。最值得关注《On the Position Bias of On-Policy Distillation》（10.0分）揭示策略蒸馏中的位置偏差，以及《AgentMeter: Evaluating Model-CLI Matching》（9.0分）提出CLI任务智能体匹配度评测框架。建议优先精读这两篇论文，并尝试将AgentMeter方法应用于你自己的本地任务系统验证。
+- 详情：[/202606/24/README](/202606/24/README)
 
 ### 精读区论文标签
-1. [A Formula-Driven Survey and Research Agenda for On-Policy Distillation](/202606/23/2606.22793v1-a-formula-driven-survey-and-research-agenda-for-on-policy-distillation)  
+1. [On the Position Bias of On-Policy Distillation](/202606/24/2606.22600v1-on-the-position-bias-of-on-policy-distillation)  
    标签：评分：10.0/10、query:opd
-   evidence：直接关于在线策略蒸馏的综述
-2. [AgentMeter: Evaluating Model-CLI Matching for CLI-Based Local Task-Solving Agents](/202606/23/2606.21140v1-agentmeter-evaluating-model-cli-matching-for-cli-based-local-task-solving-agents)  
+   evidence：直接研究在线策略蒸馏的位置偏差
+2. [AgentMeter: Evaluating Model-CLI Matching for CLI-Based Local Task-Solving Agents](/202606/24/2606.21140v1-agentmeter-evaluating-model-cli-matching-for-cli-based-local-task-solving-agents)  
    标签：评分：9.0/10、query:cli-agent
-   evidence：针对基于CLI的本地任务求解智能体的基准
-3. [Select-to-Act: Hierarchical Reinforcement Learning via Adaptive Language Guidance](/202606/23/2606.22350v1-select-to-act-hierarchical-reinforcement-learning-via-adaptive-language-guidance)  
-   标签：评分：9.0/10、query:skill-rl
-   evidence：基于语言指导的分层强化学习，专注于技能学习
-4. [On the Position Bias of On-Policy Distillation](/202606/23/2606.22600v1-on-the-position-bias-of-on-policy-distillation)  
+   evidence：评估基于命令行的本地任务求解智能体的基准测试
+3. [On the Position Bias of On-Policy Distillation](/202606/24/2606.22600v2-on-the-position-bias-of-on-policy-distillation)  
    标签：评分：9.0/10、query:opd
-   evidence：直接匹配在线策略蒸馏主题
-5. [CLI-Universe: Towards Verifiable Task Synthesis Engine for Terminal Agents](/202606/23/2606.22883v1-cli-universe-towards-verifiable-task-synthesis-engine-for-terminal-agents)  
-   标签：评分：9.0/10、query:cli-agent
-   evidence：面向终端智能体的可验证任务合成引擎
-6. [Causal Reward World Models: Zero-shot Reward Design for Automated Skill Generation](/202606/23/2606.23280v1-causal-reward-world-models-zero-shot-reward-design-for-automated-skill-generation)  
-   标签：评分：9.0/10、query:skill-rl
-   evidence：强化学习中用于自动技能生成的零样本奖励设计
-7. [Hypothesis-Driven Skill Optimization for LLM Agents](/202606/23/2606.22330v1-hypothesis-driven-skill-optimization-for-llm-agents)  
-   标签：评分：8.0/10、query:skill-rl
-   evidence：提出了LLM智能体的假设驱动技能优化框架，与强化学习中技能优化相关
-8. [Imagine to Ensure Safety in Hierarchical Reinforcement Learning](/202606/23/2606.22509v1-imagine-to-ensure-safety-in-hierarchical-reinforcement-learning)  
-   标签：评分：8.0/10、query:skill-rl
-   evidence：层次化RL中高层子目标策略保障安全
-9. [biomeStat: Using Agentic AI for Scalable Genomic Epidemiology Demonstrated Through End-to-End Analysis of 1,000 Asian Dengue Virus Genomes](/202606/23/biorxiv-10-64898-2026-06-10-731380-v1-biomestat-using-agentic-ai-for-scalable-genomic-epidemiology-demonstrated-through-end-to-end-analysis-of-1000-asian-dengue-virus-genomes)  
+   evidence：论文直接研究强化学习中的在策略蒸馏
+4. [MacAgentBench: Benchmarking AI Agents on Real-World macOS Desktop](/202606/24/2606.22557v1-macagentbench-benchmarking-ai-agents-on-real-world-macos-desktop)  
    标签：评分：8.0/10、query:cli-agent
-   evidence：自主AI代理自动执行工具，无需命令行专业知识
+   evidence：macOS代理基准，包含CLI交互任务
 
 ### 速读区论文标签
-1. [A Reward-Petri-Net Interpretation of Temporal Behavior Trees](/202606/23/2606.21350v1-a-reward-petri-net-interpretation-of-temporal-behavior-trees)  
+1. [Hypothesis-Driven Skill Optimization for LLM Agents](/202606/24/2606.22330v1-hypothesis-driven-skill-optimization-for-llm-agents)  
    标签：评分：7.0/10、query:skill-rl
-   evidence：层级强化学习结合时间约束与技能分解
-2. [Temporal Self-Imitation Learning](/202606/23/2606.19752v1-temporal-self-imitation-learning)  
+   evidence：针对LLM智能体的假设驱动技能优化框架
+2. [Imagine to Ensure Safety in Hierarchical Reinforcement Learning](/202606/24/2606.22509v1-imagine-to-ensure-safety-in-hierarchical-reinforcement-learning)  
+   标签：评分：7.0/10、query:skill-rl
+   evidence：提出了分层强化学习，包括高层子目标策略和低层安全策略，与基于技能的分层强化学习相关
+3. [Efficient Learning of Predictive Maps for Flexible Planning](/202606/24/biorxiv-10-64898-2026-02-11-705395-v2-efficient-learning-of-predictive-maps-for-flexible-planning)  
+   标签：评分：7.0/10、query:skill-rl
+   evidence：带重要性采样的继任表示用于策略无关的预测地图
+4. [Temporal Self-Imitation Learning](/202606/24/2606.19752v1-temporal-self-imitation-learning)  
    标签：评分：6.0/10、query:skill-rl
-   evidence：时间自我模仿学习从高效轨迹中提取技能用于策略优化，与强化学习中技能优化相关
-3. [AgenticOS: An Intent-Oriented Secure Operating System Architecture for Autonomous AI Agents](/202606/23/2606.21129v1-agenticos-an-intent-oriented-secure-operating-system-architecture-for-autonomous-ai-agents)  
-   标签：评分：6.0/10、query:cli-agent
-   evidence：面向自主智能体的意图导向安全操作系统架构
-4. [Reward-free Pretraining for Reinforcement Learning via Occupancy Coverage Maximization](/202606/23/2606.21271v1-reward-free-pretraining-for-reinforcement-learning-via-occupancy-coverage-maximization)  
+   evidence：在强化学习中通过自模仿学习实现高效技能的复用
+5. [Safe and Generalizable Hierarchical Multi-Agent RL via Constraint Manifold Control](/202606/24/2606.24010v1-safe-and-generalizable-hierarchical-multi-agent-rl-via-constraint-manifold-control)  
    标签：评分：6.0/10、query:skill-rl
-   evidence：通过覆盖技能多样性的RL预训练
-5. [ENVS: Environment-Native Verified Search for Long-Horizon GUI Agents](/202606/23/2606.22948v1-envs-environment-native-verified-search-for-long-horizon-gui-agents)  
-   标签：评分：6.0/10、query:cli-agent
-   evidence：环境本体验证搜索方法用于GUI长时域代理，其方法论可迁移至CLI代理任务自动化
-6. [Learning Process Rewards via Success Visitation Matching for Efficient RL](/202606/23/2606.23640v1-learning-process-rewards-via-success-visitation-matching-for-efficient-rl)  
-   标签：评分：6.0/10、query:skill-rl
-   evidence：通过成功访问匹配学习过程奖励，直接处理强化学习中的技能学习与迁移问题
-7. [Parallel processing of orthogonal manifolds enables zero-shot composition in recurrent networks](/202606/23/biorxiv-10-64898-2026-06-14-732142-v1-parallel-processing-of-orthogonal-manifolds-enables-zero-shot-composition-in-recurrent-networks)  
-   标签：评分：6.0/10、query:skill-rl
-   evidence：零样本技能组合的神经机制
+   evidence：层次化多智能体强化学习与技能协调
 
 
 <div class="dpr-home-promo-card">
