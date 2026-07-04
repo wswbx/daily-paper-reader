@@ -6,50 +6,55 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-06-30
-- 运行时间：2026-06-30 22:07:47 UTC
+- 最新运行日期：2026-07-04
+- 运行时间：2026-07-04 21:26:47 UTC
 - 运行状态：成功
-- 本次总论文数：10
-- 精读区：6
-- 速读区：4
+- 本次总论文数：11
+- 精读区：9
+- 速读区：2
 
 ### 今日简报（AI）
-今天聚焦终端Agent基准测试与非线性动力学鲁棒稀疏识别两大前沿，并覆盖OS级策略执行、指令形式化及规则联合学习。最值得精读《TUA-Bench: A Benchmark for General-Purpose Terminal-Use Agents》和《Robust Sparse Identification of Nonlinear Dynamics via Least Trimmed Squares》，前者评估通用终端Agent能力，后者提出鲁棒稀疏识别方法。建议普通读者关注Agent策略形式化与规则联合学习方向，这些技术将推动Agent更安全、可控。
-- 详情：[/202606/30/README](/202606/30/README)
+今日精读9篇速读2篇，聚焦Bash代码生成与语义查询处理的突破。
+高分推荐《BashCoder-R1》和《Building to the Test》，分别揭示鲁棒代码生成与测试驱动编码的实质差距。
+建议先精读这两篇9.0分论文，再速读CADENZA与Symbolic Mechanistic Data Attribution把握工具链。
+- 详情：[/202607/04/README](/202607/04/README)
 
 ### 精读区论文标签
-1. [TUA-Bench: A Benchmark for General-Purpose Terminal-Use Agents](/202606/30/2606.28480v1-tua-bench-a-benchmark-for-general-purpose-terminal-use-agents)  
-   标签：评分：10.0/10、query:cli-agent
-   evidence：面向通用终端使用代理的基准测试
-2. [Robust Sparse Identification of Nonlinear Dynamics via Least Trimmed Squares](/202606/30/2606.28584v1-robust-sparse-identification-of-nonlinear-dynamics-via-least-trimmed-squares)  
-   标签：评分：9.0/10、query:sr
-   evidence：基于类符号回归方法的鲁棒稀疏非线性动力系统辨识
-3. [Sample Complexity of Scientific Discovery: PAC Learnability of Compositional Function Trees](/202606/30/2606.29331v1-sample-complexity-of-scientific-discovery-pac-learnability-of-compositional-function-trees)  
-   标签：评分：9.0/10、query:sr
-   evidence：直接研究符号回归的样本复杂度
-4. [PHF: Privileged Hidden Flow for On-Policy Self-Distillation](/202606/30/2606.29340v1-phf-privileged-hidden-flow-for-on-policy-self-distillation)  
+1. [BashCoder-R1: Towards Robust and Explainable Bash Code Generation with Robustness-Aware Group Relative Policy Optimization](/202607/04/2606.27733v1-bashcoder-r1-towards-robust-and-explainable-bash-code-generation-with-robustness-aware-group-relative-policy-optimization)  
+   标签：评分：9.0/10、query:cli-agent
+   evidence：Bash代码生成用于命令行自动化
+2. [Building to the Test: Coding Agents Deliver What You Check, Not What You Requested](/202607/04/2606.28430v1-building-to-the-test-coding-agents-deliver-what-you-check-not-what-you-requested)  
+   标签：评分：9.0/10、query:cli-agent
+   evidence：命令行代理用于代码任务自动化
+3. [TUA-Bench: A Benchmark for General-Purpose Terminal-Use Agents](/202607/04/2606.28480v1-tua-bench-a-benchmark-for-general-purpose-terminal-use-agents)  
+   标签：评分：9.0/10、query:cli-agent
+   evidence：终端使用代理的基准测试
+4. [UCOB: Learning to Utilize and Evolve Agentic Skills via Credit-Aware On-Policy Bidirectional Self-Distillation](/202607/04/2606.29502v1-ucob-learning-to-utilize-and-evolve-agentic-skills-via-credit-aware-on-policy-bidirectional-self-distillation)  
    标签：评分：9.0/10、query:opd
-   evidence：基于特权隐藏状态的在线自蒸馏
-5. [UCOB: Learning to Utilize and Evolve Agentic Skills via Credit-Aware On-Policy Bidirectional Self-Distillation](/202606/30/2606.29502v1-ucob-learning-to-utilize-and-evolve-agentic-skills-via-credit-aware-on-policy-bidirectional-self-distillation)  
-   标签：评分：9.0/10、query:opd
-   evidence：面向智能体技能的在线策略双向自蒸馏
-6. [Physics Models for Sim-to-Real Transfer in Professional-Level Robot Table Tennis](/202606/30/2606.28805v1-physics-models-for-sim-to-real-transfer-in-professional-level-robot-table-tennis)  
+   evidence：在线策略双向自蒸馏用于技能学习
+5. [Evaluation of Population Initialization Methods for Genetic Programming-based Symbolic Regression](/202607/04/2606.31990v1-evaluation-of-population-initialization-methods-for-genetic-programming-based-symbolic-regression)  
+   标签：评分：9.0/10、query:sr
+   evidence：比较基于遗传编程的符号回归的种群初始化方法
+6. [Learning Generalizable Skill Policy with Data-Efficient Unsupervised RL](/202607/04/2607.00392v1-learning-generalizable-skill-policy-with-data-efficient-unsupervised-rl)  
+   标签：评分：9.0/10、query:skill-rl
+   evidence：提出了GenDa框架，通过数据高效的无监督强化学习学习可泛化的技能策略
+7. [Symbolic Discovery of Iterative Algorithms: A Continuous Latent Space Bayesian Optimization Framework](/202607/04/2607.01552v1-symbolic-discovery-of-iterative-algorithms-a-continuous-latent-space-bayesian-optimization-framework)  
+   标签：评分：9.0/10、query:sr
+   evidence：通过贝叶斯优化发现符号形式的算法，类似于符号回归
+8. [Adapting Generalist Robot Policies with Semantic Reinforcement Learning](/202607/04/2606.31958v1-adapting-generalist-robot-policies-with-semantic-reinforcement-learning)  
    标签：评分：8.0/10、query:skill-rl
-   evidence：机器人乒乓球技能的强化学习策略及其仿真到现实迁移
+   evidence：基于语义强化学习的技能适应
+9. [Generative Skill Composition for LLM Agents](/202607/04/2606.32025v1-generative-skill-composition-for-llm-agents)  
+   标签：评分：8.0/10、query:skill-rl
+   evidence：面向LLM智能体的技能组合
 
 ### 速读区论文标签
-1. [ActPlane: Programmable OS-Level Policy Enforcement for Agent Harnesses](/202606/30/2606.25189v1-actplane-programmable-os-level-policy-enforcement-for-agent-harnesses)  
+1. [CADENZA: Compiling Natural-Language Intent into Task-Specific Operator DAGs for Semantic Query Processing](/202607/04/2606.29151v2-cadenza-compiling-natural-language-intent-into-task-specific-operator-dags-for-semantic-query-processing)  
    标签：评分：7.0/10、query:cli-agent
-   evidence：面向AI代理的操作系统级策略执行，支持命令行代理框架
-2. [Autoformalization of Agent Instructions into Policy-as-Code](/202606/30/2606.26649v1-autoformalization-of-agent-instructions-into-policy-as-code)  
-   标签：评分：7.0/10、query:cli-agent
-   evidence：将代理指令自动形式化为策略，支持通过自然语言实现任务自动化
-3. [Joint Learning of Experiential Rules and Policies for Large Language Model Agents](/202606/30/2606.27136v1-joint-learning-of-experiential-rules-and-policies-for-large-language-model-agents)  
-   标签：评分：7.0/10、query:cli-agent
-   evidence：LLM智能体从交互经验中学习规则和策略，可应用于CLI智能体开发
-4. [CADENZA: Compiling Natural-Language Intent into Task-Specific Operator DAGs for Semantic Query Processing](/202606/30/2606.29151v1-cadenza-compiling-natural-language-intent-into-task-specific-operator-dags-for-semantic-query-processing)  
-   标签：评分：7.0/10、query:cli-agent
-   evidence：将自然语言意图编译为任务特定的操作DAG，类似于CLI智能体理解命令
+   evidence：将自然语言意图编译为操作DAG，适用于理解自然语言指令的CLI代理
+2. [Symbolic Mechanistic Data Attribution: Tracing Training Influence to Learned Behavioral Policies](/202607/04/2606.29171v1-symbolic-mechanistic-data-attribution-tracing-training-influence-to-learned-behavioral-policies)  
+   标签：评分：7.0/10、query:sr
+   evidence：使用Ridge回归并蒸馏出符号策略，与符号回归相关
 
 
 <div class="dpr-home-promo-card">
