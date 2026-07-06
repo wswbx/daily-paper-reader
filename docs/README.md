@@ -6,37 +6,35 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-05
-- 运行时间：2026-07-05 20:35:35 UTC
+- 最新运行日期：2026-07-06
+- 运行时间：2026-07-06 21:27:30 UTC
 - 运行状态：成功
 - 本次总论文数：5
-- 精读区：2
-- 速读区：3
+- 精读区：1
+- 速读区：4
 
 ### 今日简报（AI）
-今日精读聚焦自我蒸馏的极限与强化学习中的稀疏传感器布局，速读覆盖分层决策、语义编译等前沿方向。  
-最值得关注的是“更密集≠更好”的自我蒸馏边界发现，以及多智能体控制中传感器稀疏放置的优化价值。  
-建议优先精读这两篇高分论文，关注其方法论对模型持续训练和实际部署的启示。
-- 详情：[/202607/05/README](/202607/05/README)
+今日阅读5篇论文，精读《TAFFISH》关注生物信息学命令级可复现性。最值得看TAFFISH的可复现方案及LLM Agent的安全与技能组合。建议优先精读TAFFISH以改善实验复现，再速读Agent方向文章。
+- 详情：[/202607/06/README](/202607/06/README)
 
 ### 精读区论文标签
-1. [Denser $\neq$ Better: Limits of On-Policy Self-Distillation for Continual Post-Training](/202607/05/2607.01763v1-denser-neq-better-limits-of-on-policy-self-distillation-for-continual-post-training)  
-   标签：评分：10.0/10、query:opd
-   evidence：持续后训练中的在线自蒸馏
-2. [Sparse Sensor Placement in Multi-Agent Reinforcement Learning Control of Rayleigh-Bénard Convection](/202607/05/2606.30238v1-sparse-sensor-placement-in-multi-agent-reinforcement-learning-control-of-rayleigh-bnard-convection)  
-   标签：评分：8.0/10、query:opd
-   evidence：通过带分组正则化的监督学习进行策略蒸馏
+1. [TAFFISH: shell-native command-level reproducibility for bioinformatics](/202607/06/biorxiv-10-1101-2025-09-15-672424-v3-taffish-shell-native-command-level-reproducibility-for-bioinformatics)  
+   标签：评分：8.0/10、query:cli-agent
+   evidence：shell原生命令级可重现性工具，直接与命令行智能体和命令执行相关
 
 ### 速读区论文标签
-1. [Hierarchical Decision Making with Structured Policies: A Principled Design via Inverse Optimization](/202607/05/2606.28764v1-hierarchical-decision-making-with-structured-policies-a-principled-design-via-inverse-optimization)  
-   标签：评分：7.0/10、query:skill-rl
-   evidence：通过逆向优化设计分层结构化策略，支持基于技能的强化学习
-2. [CADENZA: Compiling Natural-Language Intent into Task-Specific Operator DAGs for Semantic Query Processing](/202607/05/2606.29151v1-cadenza-compiling-natural-language-intent-into-task-specific-operator-dags-for-semantic-query-processing)  
+1. [Understanding and Evaluating Claw-like Agent Security Through a Computer-Systems Lens](/202607/06/2606.30755v1-understanding-and-evaluating-claw-like-agent-security-through-a-computer-systems-lens)  
    标签：评分：7.0/10、query:cli-agent
-   evidence：自然语言意图编译为任务特定操作符DAG
-3. [KbSD: Knowledge Boundary aware Self-Distillation for Behavioral Calibration in Agentic Search](/202607/05/2606.29863v1-kbsd-knowledge-boundary-aware-self-distillation-for-behavioral-calibration-in-agentic-search)  
-   标签：评分：7.0/10、query:opd
-   evidence：面向强化学习的自蒸馏方法
+   evidence：分析始终在线的类爪智能体的安全性，具有系统级职责
+2. [Generative Skill Composition for LLM Agents](/202607/06/2606.32025v1-generative-skill-composition-for-llm-agents)  
+   标签：评分：7.0/10、query:skill-rl
+   evidence：讨论LLM智能体的技能生成与组合与基于技能的学习和迁移相关
+3. [VLM-AR3L: Vision-Language Models for Absolute and Relative Rewards in Reinforcement Learning](/202607/06/2607.00483v1-vlm-ar3l-vision-language-models-for-absolute-and-relative-rewards-in-reinforcement-learning)  
+   标签：评分：7.0/10、query:skill-rl
+   evidence：利用视觉-语言模型为强化学习提供奖励，与技能型强化学习中奖励设计相关
+4. [Dual-Flow Reinforcement Learning with State-Aware Exploration](/202607/06/2606.29820v1-dual-flow-reinforcement-learning-with-state-aware-exploration)  
+   标签：评分：6.0/10、query:skill-rl
+   evidence：使用流匹配的双流强化学习用于多模态策略，与强化学习中技能优化相关
 
 
 <div class="dpr-home-promo-card">
