@@ -6,49 +6,50 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-09
-- 运行时间：2026-07-09 21:46:09 UTC
+- 最新运行日期：2026-07-10
+- 运行时间：2026-07-10 20:39:02 UTC
 - 运行状态：成功
-- 本次总论文数：9
-- 精读区：5
-- 速读区：4
+- 本次总论文数：10
+- 精读区：7
+- 速读区：3
 
 ### 今日简报（AI）
-1) 今日聚焦联邦学习算法自主搜索与科学发现新范式，两篇满分精读文章揭示AI Agent在算法设计及科研中的突破潜力。  
-2) 最值得关注方向：联邦学习算法自动化搜索（Auto-FL-Research）可大幅降低人工调参成本；Agent驱动的科学发现框架正重塑研究流程。  
-3) 建议优先精读两篇满分文章，并结合速读中多轮文献搜索、策略演化仿真、机器人手术系统等案例，把握Agent技术在不同领域的实际应用边界。
-- 详情：[/202607/09/README](/202607/09/README)
+今日聚焦AI智能体驱动的科学发现，两篇高分开创自主实验与理论突破新范式。最值得精读《Rethinking Scientific Discovery in the Agentic Era》和《Compressing the Validation Bottleneck》，均获9分，揭示AI自主科研的架构与实践。建议关注智能体在实验验证和优先级排序中的自动化潜力。
+- 详情：[/202607/10/README](/202607/10/README)
 
 ### 精读区论文标签
-1. [Auto-FL-Research: Agentic Search for Federated Learning Algorithms](/202607/09/2607.01366v1-auto-fl-research-agentic-search-for-federated-learning-algorithms)  
-   标签：评分：10.0/10、query:ar
-   evidence：智能体自主搜索联邦学习算法，直接实现自主研究。
-2. [Rethinking Scientific Discovery in the Agentic Era](/202607/09/2607.03863v2-rethinking-scientific-discovery-in-the-agentic-era)  
-   标签：评分：10.0/10、query:ar
-   evidence：自主科学操作系统SCION
-3. [Compressing the Validation Bottleneck: An Agentic Self-Driving Lab for Scientific Discovery](/202607/09/2607.04508v1-compressing-the-validation-bottleneck-an-agentic-self-driving-lab-for-scientific-discovery)  
-   标签：评分：10.0/10、query:ar
-   evidence：自主驱动实验室用于科学发现
-4. [Measurement-Access Risk Frontiers for Autonomous Scientific Control](/202607/09/2607.05696v1-measurement-access-risk-frontiers-for-autonomous-scientific-control)  
+1. [Rethinking Scientific Discovery in the Agentic Era](/202607/10/2607.03863v2-rethinking-scientific-discovery-in-the-agentic-era)  
    标签：评分：9.0/10、query:ar
-   evidence：自主科学控制，测量访问风险边界
-5. [Recursive Self-Improvement in AI: From Bounded Self-Refinement to Autonomous Research Loops](/202607/09/2607.07663v1-recursive-self-improvement-in-ai-from-bounded-self-refinement-to-autonomous-research-loops)  
+   evidence：用于自主研究的智能体科学操作系统
+2. [Compressing the Validation Bottleneck: An Agentic Self-Driving Lab for Scientific Discovery](/202607/10/2607.04508v1-compressing-the-validation-bottleneck-an-agentic-self-driving-lab-for-scientific-discovery)  
    标签：评分：9.0/10、query:ar
-   evidence：关于自主研究循环的综述
+   evidence：基于代理的自主实验室加速科学发现
+3. [Recursive Self-Improvement in AI: From Bounded Self-Refinement to Autonomous Research Loops](/202607/10/2607.07663v1-recursive-self-improvement-in-ai-from-bounded-self-refinement-to-autonomous-research-loops)  
+   标签：评分：9.0/10、query:ar
+   evidence：关于递归自我改进与自主研究循环的综述
+4. [DeepPySR -- A Symbolic Regression Framework with Dynamic Pruning, Pareto Selection, and Hierarchical Composition for Real-World Scientific Discovery](/202607/10/2607.08150v1-deeppysr----a-symbolic-regression-framework-with-dynamic-pruning-pareto-selection-and-hierarchical-composition-for-real-world-scientific-discovery)  
+   标签：评分：9.0/10、query:sr
+   evidence：直接涉及符号回归，提出新框架
+5. [DegenDetector: Symbolic Recovery of Parameter Degeneracies in Bayesian Posteriors](/202607/10/2607.08755v1-degendetector-symbolic-recovery-of-parameter-degeneracies-in-bayesian-posteriors)  
+   标签：评分：9.0/10、query:sr
+   evidence：使用符号回归将参数简并恢复为封闭形式方程
+6. [SkillCenter: A Large-Scale Source-Grounded Skill Library for Autonomous AI Agents](/202607/10/2607.07676v1-skillcenter-a-large-scale-source-grounded-skill-library-for-autonomous-ai-agents)  
+   标签：评分：8.0/10、query:ar
+   evidence：面向自主AI智能体的大规模技能库
+7. [Autonomous computational prioritisation of colorectal cancer vulnerabilities via multi-scale AI swarms](/202607/10/biorxiv-10-64898-2026-07-05-736565-v2-autonomous-computational-prioritisation-of-colorectal-cancer-vulnerabilities-via-multi-scale-ai-swarms)  
+   标签：评分：8.0/10、query:ar
+   evidence：多智能体自主科学发现
 
 ### 速读区论文标签
-1. [Multi-Turn Agentic Scientific Literature Search via Workflow Induction](/202607/09/2607.00597v2-multi-turn-agentic-scientific-literature-search-via-workflow-induction)  
+1. [Autonomous computational prioritisation of colorectal cancer vulnerabilities via multi-scale AI swarms](/202607/10/biorxiv-10-64898-2026-07-05-736565-v1-autonomous-computational-prioritisation-of-colorectal-cancer-vulnerabilities-via-multi-scale-ai-swarms)  
+   标签：评分：8.0/10、query:ar
+   evidence：用于癌症生物学科学发现的自主AI群体
+2. [ContextNest: Verifiable Context Governance for Autonomous AI Agent](/202607/10/2607.02116v2-contextnest-verifiable-context-governance-for-autonomous-ai-agent)  
    标签：评分：7.0/10、query:ar
-   evidence：多轮科学文献搜索智能体
-2. [EvoPolicyGym: Evaluating Autonomous Policy Evolution in Interactive Environments](/202607/09/2607.02440v1-evopolicygym-evaluating-autonomous-policy-evolution-in-interactive-environments)  
+   evidence：解决自主AI代理的上下文治理问题，与自主研究基础设施相关
+3. [Agentic Data Environments](/202607/10/2607.07397v1-agentic-data-environments)  
    标签：评分：7.0/10、query:ar
-   evidence：在交互式RL环境中评估自主策略演化，符合自主研究主题
-3. [SurgAM: Surgical Affordance Map Prediction with Multimodal Feature Fusion for Robot Autonomy](/202607/09/2607.04378v1-surgam-surgical-affordance-map-prediction-with-multimodal-feature-fusion-for-robot-autonomy)  
-   标签：评分：7.0/10、query:ar
-   evidence：手术自动化，机器人自主性
-4. [Emergence of Biological Structural Discovery in General-Purpose Language Models](/202607/09/biorxiv-10-64898-2026-01-03-697478-v2-emergence-of-biological-structural-discovery-in-general-purpose-language-models)  
-   标签：评分：7.0/10、query:ar
-   evidence：通用语言模型用于生物结构发现
+   evidence：直接讨论自主智能体及其环境
 
 
 <div class="dpr-home-promo-card">
