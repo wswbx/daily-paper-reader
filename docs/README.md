@@ -6,38 +6,36 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-11
-- 运行时间：2026-07-11 20:08:43 UTC
+- 最新运行日期：2026-07-12
+- 运行时间：2026-07-12 20:18:51 UTC
 - 运行状态：成功
-- 本次总论文数：6
-- 精读区：4
-- 速读区：2
+- 本次总论文数：4
+- 精读区：1
+- 速读区：3
 
 ### 今日简报（AI）
-今日精读4篇、速读2篇，聚焦AI群体计算与自改进、数据就绪和自动化实验室。最值得看《Autonomous computational prioritisation...》与《Recursive Self-Improvement...》，分别涉及多尺度AI群体筛选癌症弱点与递归自改进循环。建议普通读者先关注《Automated Data Readiness》与《Compressing Validation Bottleneck》，了解AI在科研数据准备与自动化验证中的实用进展。
-- 详情：[/202607/11/README](/202607/11/README)
+今日聚焦AI科学发现代理的可审计问题生成，同时覆盖多代理网络搜索与通用语言模型生物结构发现。
+
+最值得关注方向：精读论文《FirstResearch》提出的可审计问题生成机制，以及速读中通用语言模型意外涌现的生物结构发现能力。
+
+建议普通读者优先了解大模型在科学发现中的可追溯性设计，并留意生物结构预测这一新兴交叉领域。
+- 详情：[/202607/12/README](/202607/12/README)
 
 ### 精读区论文标签
-1. [Autonomous computational prioritisation of colorectal cancer vulnerabilities via multi-scale AI swarms](/202607/11/biorxiv-10-64898-2026-07-05-736565-v1-autonomous-computational-prioritisation-of-colorectal-cancer-vulnerabilities-via-multi-scale-ai-swarms)  
+1. [FirstResearch: Auditable Question Formation for LLM Scientific Discovery Agents](/202607/12/2607.05682v1-firstresearch-auditable-question-formation-for-llm-scientific-discovery-agents)  
    标签：评分：9.0/10、query:ar
-   evidence：提出多尺度自主发现引擎（Octopus），实现自动化科学发现
-2. [Recursive Self-Improvement in AI: From Bounded Self-Refinement to Autonomous Research Loops](/202607/11/2607.07663v1-recursive-self-improvement-in-ai-from-bounded-self-refinement-to-autonomous-research-loops)  
-   标签：评分：8.0/10、query:ar
-   evidence：关于自主研究循环和自改进AI的综述
-3. [SkillCenter: A Large-Scale Source-Grounded Skill Library for Autonomous AI Agents](/202607/11/2607.07676v1-skillcenter-a-large-scale-source-grounded-skill-library-for-autonomous-ai-agents)  
-   标签：评分：8.0/10、query:ar
-   evidence：为自主AI代理提供技能库，支持自动科研
-4. [Emergence of Biological Structural Discovery in General-Purpose Language Models](/202607/11/biorxiv-10-64898-2026-01-03-697478-v2-emergence-of-biological-structural-discovery-in-general-purpose-language-models)  
-   标签：评分：8.0/10、query:ar
-   evidence：LLM用于自主生物发现
+   evidence：用于LLM科学发现代理的可审计研究问题形成框架
 
 ### 速读区论文标签
-1. [Automated Data Readiness for Scientific AI](/202607/11/2607.02771v1-automated-data-readiness-for-scientific-ai)  
+1. [WebSwarm: Recursive Multi-Agent Orchestration for Deep-and-Wide Web Search](/202607/12/2607.08662v1-webswarm-recursive-multi-agent-orchestration-for-deep-and-wide-web-search)  
    标签：评分：7.0/10、query:ar
-   evidence：提出自动化数据就绪框架，可作为agent可调用技能，支持自主研究
-2. [Compressing the Validation Bottleneck: An Agentic Self-Driving Lab for Scientific Discovery](/202607/11/2607.04508v1-compressing-the-validation-bottleneck-an-agentic-self-driving-lab-for-scientific-discovery)  
-   标签：评分：7.0/10、query:ar
-   evidence：自主智能实验室的智能体驱动方法
+   evidence：用于自主研究任务的多智能体网络搜索
+2. [DeepSearch-World: Self-Distillation for Deep Search Agents in a Verifiable Environment](/202607/12/2607.07820v1-deepsearch-world-self-distillation-for-deep-search-agents-in-a-verifiable-environment)  
+   标签：评分：6.0/10、query:ar
+   evidence：面向网络代理的自我蒸馏框架，支持自主改进
+3. [Emergence of Biological Structural Discovery in General-Purpose Language Models](/202607/12/biorxiv-10-64898-2026-01-03-697478-v2-emergence-of-biological-structural-discovery-in-general-purpose-language-models)  
+   标签：评分：6.0/10、query:ar
+   evidence：大语言模型用于生物结构发现属于自主研究
 
 
 <div class="dpr-home-promo-card">
