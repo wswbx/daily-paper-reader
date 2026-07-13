@@ -6,36 +6,31 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-12
-- 运行时间：2026-07-12 20:18:51 UTC
+- 最新运行日期：2026-07-13
+- 运行时间：2026-07-13 21:30:10 UTC
 - 运行状态：成功
-- 本次总论文数：4
-- 精读区：1
-- 速读区：3
+- 本次总论文数：3
+- 精读区：2
+- 速读区：1
 
 ### 今日简报（AI）
-今日聚焦AI科学发现代理的可审计问题生成，同时覆盖多代理网络搜索与通用语言模型生物结构发现。
-
-最值得关注方向：精读论文《FirstResearch》提出的可审计问题生成机制，以及速读中通用语言模型意外涌现的生物结构发现能力。
-
-建议普通读者优先了解大模型在科学发现中的可追溯性设计，并留意生物结构预测这一新兴交叉领域。
-- 详情：[/202607/12/README](/202607/12/README)
+1) 今日精读两篇高分开创性论文，涵盖自主信息寻求与进化科学发现体系。  
+2) 最值得关注：自主推荐系统路线图（9.0分）与从进化计算到累积发现系统的智能框架（9.0分）。  
+3) 建议重点追踪精读论文中提出的Agent化推荐范式，并尝试将进化科学发现思路融入个人研究工具链。
+- 详情：[/202607/13/README](/202607/13/README)
 
 ### 精读区论文标签
-1. [FirstResearch: Auditable Question Formation for LLM Scientific Discovery Agents](/202607/12/2607.05682v1-firstresearch-auditable-question-formation-for-llm-scientific-discovery-agents)  
+1. [Autonomous Information Seeking: A Roadmap for Agentic Recommender Systems](/202607/13/2607.04433v1-autonomous-information-seeking-a-roadmap-for-agentic-recommender-systems)  
    标签：评分：9.0/10、query:ar
-   evidence：用于LLM科学发现代理的可审计研究问题形成框架
+   evidence：关于自主信息寻求智能体的综述，直接与自主研究主题相关
+2. [Evolutionary Intelligence for Scientific Discovery: From Evolutionary Computation to Cumulative Discovery Systems](/202607/13/2607.09025v1-evolutionary-intelligence-for-scientific-discovery-from-evolutionary-computation-to-cumulative-discovery-systems)  
+   标签：评分：9.0/10、query:ar
+   evidence：进化智能用于自主科学发现，直接匹配自主研究主题
 
 ### 速读区论文标签
-1. [WebSwarm: Recursive Multi-Agent Orchestration for Deep-and-Wide Web Search](/202607/12/2607.08662v1-webswarm-recursive-multi-agent-orchestration-for-deep-and-wide-web-search)  
-   标签：评分：7.0/10、query:ar
-   evidence：用于自主研究任务的多智能体网络搜索
-2. [DeepSearch-World: Self-Distillation for Deep Search Agents in a Verifiable Environment](/202607/12/2607.07820v1-deepsearch-world-self-distillation-for-deep-search-agents-in-a-verifiable-environment)  
+1. [Aleena: Alignment Agent for Research Software Engineering Collaborations](/202607/13/2607.08043v1-aleena-alignment-agent-for-research-software-engineering-collaborations)  
    标签：评分：6.0/10、query:ar
-   evidence：面向网络代理的自我蒸馏框架，支持自主改进
-3. [Emergence of Biological Structural Discovery in General-Purpose Language Models](/202607/12/biorxiv-10-64898-2026-01-03-697478-v2-emergence-of-biological-structural-discovery-in-general-purpose-language-models)  
-   标签：评分：6.0/10、query:ar
-   evidence：大语言模型用于生物结构发现属于自主研究
+   evidence：面向研究软件工程的对齐智能体，与自主研究主题相关
 
 
 <div class="dpr-home-promo-card">
