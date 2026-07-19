@@ -6,44 +6,38 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-18
-- 运行时间：2026-07-18 21:14:38 UTC
+- 最新运行日期：2026-07-19
+- 运行时间：2026-07-19 20:36:18 UTC
 - 运行状态：成功
-- 本次总论文数：8
-- 精读区：2
-- 速读区：6
+- 本次总论文数：6
+- 精读区：3
+- 速读区：3
 
 ### 今日简报（AI）
-今日8篇论文聚焦AI驱动研究的可靠性、跨学科协作与科学欺诈风险，精读两篇高分论文。最值得关注的是《Confining Nondeterminism》提出的AI研究系统作为DBMS的思路，以及《Distributed Denial of Science》揭示的AI间接数据投毒工业化学术欺诈风险。建议普通读者优先阅读精读两篇，警惕AI系统在科研场景中的数据安全与可重复性挑战。
-- 详情：[/202607/18/README](/202607/18/README)
+今日精读聚焦AI驱动科学工业化与自主数据分析，速读覆盖开放域信息协作、训练范式对比及生物推理代理三大方向。最值得关注的是AI对科研范式的重塑（9分）及企业数据智能代理（8分），建议普通读者优先了解AI如何赋能科学发现与数据决策。
+- 详情：[/202607/19/README](/202607/19/README)
 
 ### 精读区论文标签
-1. [Confining Nondeterminism: AI-Driven Research Systems as DBMSs for Reliable, Non-Wasteful, Transparent, and Collaborative Research [Vision]](/202607/18/2607.10508v1-confining-nondeterminism-ai-driven-research-systems-as-dbmss-for-reliable-non-wasteful-transparent-and-collaborative-research-vision)  
+1. [The Industrialization of Research ; On AI-Driven Science and Its Consequences](/202607/19/2607.15164v1-the-industrialization-of-research--on-ai-driven-science-and-its-consequences)  
    标签：评分：9.0/10、query:ar
-   evidence：提出使用LLM代理的AI驱动研究系统，直接对应自主研究
-2. [Distributed Denial of Science: How Indirect Data Poisoning of AI Systems Can Industrialize Scientific Fraud](/202607/18/2607.10712v1-distributed-denial-of-science-how-indirect-data-poisoning-of-ai-systems-can-industrialize-scientific-fraud)  
+   evidence：讨论AI作为研究中的自主参与者
+2. [QwenPaw-Data: Bridging Facts, Methodology, and Execution for Autonomous Enterprise Data Analytics](/202607/19/2607.11019v2-qwenpaw-data-bridging-facts-methodology-and-execution-for-autonomous-enterprise-data-analytics)  
    标签：评分：8.0/10、query:ar
-   evidence：对自主研究智能体的攻击
+   evidence：面向企业的自主数据分析代理
+3. [GRAFT: Graph-Matched Retrieval and Fusion of Tables in Data Lakes](/202607/19/2607.12717v1-graft-graph-matched-retrieval-and-fusion-of-tables-in-data-lakes)  
+   标签：评分：8.0/10、query:ar
+   evidence：自主数据代理的图匹配表格检索
 
 ### 速读区论文标签
-1. [Aïra: Rethinking AI Research Assistants for Interdisciplinary Science](/202607/18/2607.12736v1-ara-rethinking-ai-research-assistants-for-interdisciplinary-science)  
+1. [SearchOS-V1: Towards Robust Open-Domain Information-Seeking Agent Collaboration](/202607/19/2607.15257v1-searchos-v1-towards-robust-open-domain-information-seeking-agent-collaboration)  
    标签：评分：7.0/10、query:ar
-   evidence：面向跨学科科学的AI研究助手
-2. [EvoGraph-R1: Self-Evolving Multimodal Knowledge Hypergraphs for Agentic Retrieval](/202607/18/2607.12764v1-evograph-r1-self-evolving-multimodal-knowledge-hypergraphs-for-agentic-retrieval)  
-   标签：评分：7.0/10、query:ar
-   evidence：面向自主研究的自进化智能检索
-3. [SAGA: Schema-Aware Grounding for Agentic Text-to-SPARQL Generation](/202607/18/2607.14494v1-saga-schema-aware-grounding-for-agentic-text-to-sparql-generation)  
-   标签：评分：7.0/10、query:ar
-   evidence：面向自主知识库问答的模式感知智能体SPARQL生成
-4. [Medea: An AI agent for therapeutic reasoning across biological contexts](/202607/18/biorxiv-10-64898-2026-01-16-696667-v2-medea-an-ai-agent-for-therapeutic-reasoning-across-biological-contexts)  
-   标签：评分：7.0/10、query:ar
-   evidence：用于治疗推理的AI代理
-5. [GRASP: GRanularity-Aware Search Policy for Agentic RAG](/202607/18/2607.10463v1-grasp-granularity-aware-search-policy-for-agentic-rag)  
-   标签：评分：6.0/10、query:skill-rl
-   evidence：强化学习框架训练智能体协调检索技能
-6. [SearchOS-V1: Towards Robust Open-Domain Information-Seeking Agent Collaboration](/202607/18/2607.15257v1-searchos-v1-towards-robust-open-domain-information-seeking-agent-collaboration)  
+   evidence：自主信息检索多智能体框架
+2. [The Role of Training Paradigms in Shaping Connectivity and Dynamics: A Comparison of Gradient-Based and Evolutionary Methods in Recurrent Neural Network Models](/202607/19/biorxiv-10-64898-2026-07-09-737022-v1-the-role-of-training-paradigms-in-shaping-connectivity-and-dynamics-a-comparison-of-gradient-based-and-evolutionary-methods-in-recurrent-neural-network-models)  
+   标签：评分：7.0/10、query:sr
+   evidence：对比了基于梯度的BPTT和进化算法训练RNN，直接与符号回归方法比较相关
+3. [Medea: An AI agent for therapeutic reasoning across biological contexts](/202607/19/biorxiv-10-64898-2026-01-16-696667-v3-medea-an-ai-agent-for-therapeutic-reasoning-across-biological-contexts)  
    标签：评分：6.0/10、query:ar
-   evidence：面向开放域信息寻求的多智能体框架
+   evidence：用于自主治疗推理的AI智能体
 
 
 <div class="dpr-home-promo-card">
