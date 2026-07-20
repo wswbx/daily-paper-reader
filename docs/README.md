@@ -6,38 +6,38 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-19
-- 运行时间：2026-07-19 20:36:18 UTC
+- 最新运行日期：2026-07-20
+- 运行时间：2026-07-20 20:24:39 UTC
 - 运行状态：成功
 - 本次总论文数：6
-- 精读区：3
-- 速读区：3
+- 精读区：2
+- 速读区：4
 
 ### 今日简报（AI）
-今日精读聚焦AI驱动科学工业化与自主数据分析，速读覆盖开放域信息协作、训练范式对比及生物推理代理三大方向。最值得关注的是AI对科研范式的重塑（9分）及企业数据智能代理（8分），建议普通读者优先了解AI如何赋能科学发现与数据决策。
-- 详情：[/202607/19/README](/202607/19/README)
+今日精读2篇高价值论文，速读4篇，整体聚焦AI系统效率与团队协作。最值得关注的是得分满分的《CADAQUES》提出的成本感知双架构，以及《(MPO)$^2$》的矩阵乘积算子优化多项式方法。建议优先精读这两篇，后续可追踪搜索代理协作与共享自主性的鲁棒性方向。
+- 详情：[/202607/20/README](/202607/20/README)
 
 ### 精读区论文标签
-1. [The Industrialization of Research ; On AI-Driven Science and Its Consequences](/202607/19/2607.15164v1-the-industrialization-of-research--on-ai-driven-science-and-its-consequences)  
-   标签：评分：9.0/10、query:ar
-   evidence：讨论AI作为研究中的自主参与者
-2. [QwenPaw-Data: Bridging Facts, Methodology, and Execution for Autonomous Enterprise Data Analytics](/202607/19/2607.11019v2-qwenpaw-data-bridging-facts-methodology-and-execution-for-autonomous-enterprise-data-analytics)  
-   标签：评分：8.0/10、query:ar
-   evidence：面向企业的自主数据分析代理
-3. [GRAFT: Graph-Matched Retrieval and Fusion of Tables in Data Lakes](/202607/19/2607.12717v1-graft-graph-matched-retrieval-and-fusion-of-tables-in-data-lakes)  
-   标签：评分：8.0/10、query:ar
-   evidence：自主数据代理的图匹配表格检索
+1. [CADAQUES: A Cost-Aware Dual Architecture for Query-Efficient Autonomous Discovery](/202607/20/2607.16127v1-cadaques-a-cost-aware-dual-architecture-for-query-efficient-autonomous-discovery)  
+   标签：评分：10.0/10、query:ar
+   evidence：具有成本感知的自主发现框架，直接与自主研究相关
+2. [(MPO)$^2$: Multivariate Polynomial Optimization based on Matrix Product Operators](/202607/20/2607.15916v1-mpo2-multivariate-polynomial-optimization-based-on-matrix-product-operators)  
+   标签：评分：9.0/10、query:sr
+   evidence：基于矩阵乘积算子的多元多项式优化，与符号回归相关
 
 ### 速读区论文标签
-1. [SearchOS-V1: Towards Robust Open-Domain Information-Seeking Agent Collaboration](/202607/19/2607.15257v1-searchos-v1-towards-robust-open-domain-information-seeking-agent-collaboration)  
+1. [LOGOS: A Living Logic for AI Agent Teams That Evolve With Humans](/202607/20/2607.10878v1-logos-a-living-logic-for-ai-agent-teams-that-evolve-with-humans)  
    标签：评分：7.0/10、query:ar
-   evidence：自主信息检索多智能体框架
-2. [The Role of Training Paradigms in Shaping Connectivity and Dynamics: A Comparison of Gradient-Based and Evolutionary Methods in Recurrent Neural Network Models](/202607/19/biorxiv-10-64898-2026-07-09-737022-v1-the-role-of-training-paradigms-in-shaping-connectivity-and-dynamics-a-comparison-of-gradient-based-and-evolutionary-methods-in-recurrent-neural-network-models)  
-   标签：评分：7.0/10、query:sr
-   evidence：对比了基于梯度的BPTT和进化算法训练RNN，直接与符号回归方法比较相关
-3. [Medea: An AI agent for therapeutic reasoning across biological contexts](/202607/19/biorxiv-10-64898-2026-01-16-696667-v3-medea-an-ai-agent-for-therapeutic-reasoning-across-biological-contexts)  
-   标签：评分：6.0/10、query:ar
-   evidence：用于自主治疗推理的AI智能体
+   evidence：用于自进化AI代理团队的活逻辑
+2. [SearchOS-V1: Towards Robust Open-Domain Information-Seeking Agent Collaboration](/202607/20/2607.15257v1-searchos-v1-towards-robust-open-domain-information-seeking-agent-collaboration)  
+   标签：评分：7.0/10、query:ar
+   evidence：用于开放域信息搜索的多智能体框架，类似自主研究
+3. [Environment Design for Reliable Shared Autonomy with Probabilistic Guarantees](/202607/20/2607.15487v1-environment-design-for-reliable-shared-autonomy-with-probabilistic-guarantees)  
+   标签：评分：7.0/10、query:ar
+   evidence：具有概率保证的共享自治
+4. [SciForge: An AI-Native, Multimodal Workbench for Scientific Discovery](/202607/20/2607.16038v1-sciforge-an-ai-native-multimodal-workbench-for-scientific-discovery)  
+   标签：评分：7.0/10、query:ar
+   evidence：用于科学发现的AI原生工作台
 
 
 <div class="dpr-home-promo-card">
