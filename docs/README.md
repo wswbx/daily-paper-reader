@@ -6,35 +6,35 @@
 </div>
 
 ## 每次日报
-- 最新运行日期：2026-07-24
-- 运行时间：2026-07-24 21:20:19 UTC
+- 最新运行日期：2026-07-25
+- 运行时间：2026-07-25 21:08:35 UTC
 - 运行状态：成功
 - 本次总论文数：5
-- 精读区：3
-- 速读区：2
+- 精读区：2
+- 速读区：3
 
 ### 今日简报（AI）
-今日深度研读5篇AI自主研究论文，精读重点聚焦递归自我改进智能体（AREX）与闭环多智能体无线优化框架（WARA）两大突破。最值得关注的方向：AREX展示智能体通过递归改进实现深度研究能力；WARA提出多智能体闭环优化无线网络，均属前沿且得分超9.0。建议优先精读这两篇，探索自主智能体与协作优化在真实场景中的应用潜力。
-- 详情：[/202607/24/README](/202607/24/README)
+今日精读两篇高分论文，聚焦自主智能体评估与递归自我改进研究。最值得关注《SciExplore》对科学导航到信息整合能力的评估，以及《AREX》设计的递归自我改进框架。建议优先精读这两篇，速读可快速了解嵌入模型适配与LLM元数据查询生成等方向。
+- 详情：[/202607/25/README](/202607/25/README)
 
 ### 精读区论文标签
-1. [AREX: Towards a Recursively Self-Improving Agent for Deep Research](/202607/24/2607.21461v1-arex-towards-a-recursively-self-improving-agent-for-deep-research)  
-   标签：评分：10.0/10、query:ar
-   evidence：递归自改进的深度研究智能体，实现自主研究
-2. [WARA: A Closed-Loop Multi-Agent Framework for Wireless Optimization Autoresearch](/202607/24/2607.19822v1-wara-a-closed-loop-multi-agent-framework-for-wireless-optimization-autoresearch)  
-   标签：评分：9.0/10、query:ar
-   evidence：首个面向无线领域的端到端自动研究框架
-3. [SciExplore: Evaluating Autonomous Agents from Scientific Navigation to Information Integration](/202607/24/2607.20926v1-sciexplore-evaluating-autonomous-agents-from-scientific-navigation-to-information-integration)  
+1. [SciExplore: Evaluating Autonomous Agents from Scientific Navigation to Information Integration](/202607/25/2607.20926v1-sciexplore-evaluating-autonomous-agents-from-scientific-navigation-to-information-integration)  
    标签：评分：8.0/10、query:ar
-   evidence：评估自主智能体在科研工作流中的基准
+   evidence：自主研究智能体评估基准
+2. [AREX: Towards a Recursively Self-Improving Agent for Deep Research](/202607/25/2607.21461v1-arex-towards-a-recursively-self-improving-agent-for-deep-research)  
+   标签：评分：8.0/10、query:ar
+   evidence：用于深度研究的递归自改进智能体
 
 ### 速读区论文标签
-1. [DocOps: A Verifiable Benchmark for Autonomous Agents in Complex Document Operations](/202607/24/2607.19865v1-docops-a-verifiable-benchmark-for-autonomous-agents-in-complex-document-operations)  
+1. [Adapting Embedding Models for Agent Capability Retrieval](/202607/25/2607.17347v1-adapting-embedding-models-for-agent-capability-retrieval)  
+   标签：评分：6.0/10、query:cli-agent
+   evidence：适配嵌入模型用于智能体能力检索，与CLI智能体技能发现相关
+2. [Natural Language Access to Domain-Specific Metadata: A Reusable Framework for LLM Query Generation](/202607/25/2607.18029v1-natural-language-access-to-domain-specific-metadata-a-reusable-framework-for-llm-query-generation)  
+   标签：评分：6.0/10、query:cli-agent
+   evidence：自然语言转结构化查询以访问领域特定档案
+3. [ChatGEM: An Agentic Architecture Enabling Interactive Simulation of Genome-Scale Metabolic Models](/202607/25/biorxiv-10-64898-2026-07-20-739662-v1-chatgem-an-agentic-architecture-enabling-interactive-simulation-of-genome-scale-metabolic-models)  
    标签：评分：6.0/10、query:ar
-   evidence：自主智能体在文档操作中的可验证基准
-2. [Toward cryptographically verifiable authorization for autonomous AI agents: A security hypothesis, preliminary formal model, and proof-of-concept implementation](/202607/24/2607.21325v1-toward-cryptographically-verifiable-authorization-for-autonomous-ai-agents-a-security-hypothesis-preliminary-formal-model-and-proof-of-concept-implementation)  
-   标签：评分：6.0/10、query:ar
-   evidence：自主智能体的加密可验证授权
+   evidence：用于科学模拟的智能体架构
 
 
 <div class="dpr-home-promo-card">
