@@ -1,48 +1,108 @@
-<div class="dpr-home-notice-card">
-  <h3 class="dpr-home-notice-title">🚀 Start Here</h3>
-  <ul class="dpr-home-notice-list">
-    <li><a href="#/tutorial/README">使用教程</a></li>
-  </ul>
+<div class="dpr-home-notice-card dpr-home-panel">
+  <div class="dpr-home-notice-header dpr-home-panel-header">
+    <h3 class="dpr-home-notice-title">公告与更新</h3>
+    <a class="dpr-home-notice-tutorial" href="#/tutorial/README">使用教程 <span aria-hidden="true">›</span></a>
+  </div>
+  <div class="dpr-home-notice-entry">
+    <time class="dpr-home-notice-date" datetime="2026-07-20">07.20</time>
+    <div>
+      <strong class="dpr-home-notice-entry-title">反馈功能上线</strong>
+      <span class="dpr-home-notice-entry-summary">新增反馈功能，欢迎大家踊跃反馈各种建议，我们会第一时间查看并协调处理。</span>
+    </div>
+  </div>
+  <div class="dpr-home-notice-entry">
+    <time class="dpr-home-notice-date" datetime="2026-07-19">07.19</time>
+    <div>
+      <strong class="dpr-home-notice-entry-title">首页新增社区统计</strong>
+      <span class="dpr-home-notice-entry-summary">现在可以看到今天看论文的人数和项目加入人数。</span>
+    </div>
+  </div>
+  <div class="dpr-home-site-stats" data-dpr-site-stats hidden aria-live="polite">
+    <span>今天有 <strong class="dpr-home-site-stat-value" data-dpr-daily-readers>--</strong> 人在看论文</span>
+    <span class="dpr-home-site-stat-separator" aria-hidden="true">·</span>
+    <span>昨天有 <strong class="dpr-home-site-stat-value" data-dpr-yesterday-readers>--</strong> 人在看论文</span>
+    <span class="dpr-home-site-stat-separator" aria-hidden="true">·</span>
+    <span>已有 <strong class="dpr-home-site-stat-value" data-dpr-fork-count>--</strong> 人加入 Daily Paper Reader</span>
+    <span class="dpr-home-history">
+      <button type="button" class="dpr-home-history-trigger" data-dpr-history-trigger aria-label="查看最近 14 天阅读趋势"><span aria-hidden="true">🔍</span></button>
+      <span class="dpr-home-history-popover" data-dpr-history-popover role="tooltip">
+        <span class="dpr-home-history-header">近 14 天阅读趋势</span>
+        <span class="dpr-home-history-meta">
+          <span data-dpr-history-range>--</span>
+          <span>峰值 <strong data-dpr-history-peak>--</strong></span>
+        </span>
+        <span class="dpr-home-history-chart" data-dpr-history-chart></span>
+      </span>
+    </span>
+  </div>
 </div>
 
-## 每次日报
-- 最新运行日期：2026-07-26
-- 运行时间：2026-07-26 19:52:41 UTC
-- 运行状态：成功
-- 本次总论文数：5
-- 精读区：1
-- 速读区：4
+<div class="dpr-home-dashboard-grid">
+<section class="dpr-home-dashboard-card dpr-home-report-card">
+  <div class="dpr-home-dashboard-header">
+    <div>
+      <span class="dpr-home-dashboard-kicker">2026-07-27</span>
+      <h3 class="dpr-home-dashboard-title">今日汇总</h3>
+    </div>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
+  </div>
+  <dl class="dpr-home-dashboard-stats">
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+  </dl>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-27 20:50:33 UTC<br>状态：成功</p>
+</section>
+<section class="dpr-home-dashboard-card dpr-home-brief-card">
+  <div class="dpr-home-dashboard-header">
+    <div>
+      <span class="dpr-home-dashboard-kicker">合并后生成</span>
+      <h3 class="dpr-home-dashboard-title">今日简报</h3>
+    </div>
+    <strong class="dpr-home-dashboard-count">AI</strong>
+  </div>
+  <div class="dpr-home-dashboard-body">
+<p>今日精选7篇论文，精读6篇速读1篇，聚焦两篇9.0高分研究：递归自我改进智能体AREX与固定深度符号回归搜索神经网络权重更新规则。</p>
+<p>最值得关注：AREX智能体实现深度研究的递归自我改进，另一项通过符号回归自动发现高效权重更新规则，均代表前沿突破。</p>
+<p>建议优先精读这两篇高评分论文，深入了解智能体自优化机制与自动化规则发现方法。</p>
+  </div>
+</section>
+<section class="dpr-home-dashboard-card dpr-home-deep-card">
+  <div class="dpr-home-dashboard-header">
+    <div>
+      <span class="dpr-home-dashboard-kicker">今日累计</span>
+      <h3 class="dpr-home-dashboard-title">精读推荐</h3>
+    </div>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
+  </div>
+  <div class="dpr-home-dashboard-body">
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AREX: Towards a Recursively Self-Improving Agent for Deep Research">AREX: Towards a Recursively Self-Improving Agent for Deep Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="Searching the Space of Feed-Forward Neural-Network Weight-Update Rules with Fixed Depth Symbolic Regression">Searching the Space of Feed-Forward Neural-Network Weight-Update Rules with Fixed Depth Symbolic Regression</span></li><li><span class="dpr-home-dashboard-paper-title" title="CausalForge: A Formally Grounded, Self-Improving Agentic Framework for Automated Research in Causal Inference">CausalForge: A Formally Grounded, Self-Improving Agentic Framework for Automated Research in Causal Inference</span></li></ul>
+  </div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>5</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+</section>
+<section class="dpr-home-dashboard-card dpr-home-skim-card">
+  <div class="dpr-home-dashboard-header">
+    <div>
+      <span class="dpr-home-dashboard-kicker">今日累计</span>
+      <h3 class="dpr-home-dashboard-title">速读推荐</h3>
+    </div>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
+  </div>
+  <div class="dpr-home-dashboard-body">
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AutoIndex: Learning Representation Programs for Retrieval">AutoIndex: Learning Representation Programs for Retrieval</span></li></ul>
+  </div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
+</section>
+</div>
 
-### 今日简报（AI）
-1. 精读一篇9.0分递归自我改进agent研究《AREX》，速读四篇覆盖文档操作、科学导航与工具优化。  
-2. 最值得关注的方向是具备递归自我改进能力的深研Agent，以及自动化文档操作与科学信息整合的自主智能体评测。  
-3. 建议优先精读《AREX》，并速读《DocOps》与《SciExplore》了解agent在复杂任务中的验证框架。
-- 详情：[/202607/26/README](/202607/26/README)
-
-### 精读区论文标签
-1. [AREX: Towards a Recursively Self-Improving Agent for Deep Research](/202607/26/2607.21461v1-arex-towards-a-recursively-self-improving-agent-for-deep-research)  
-   标签：评分：9.0/10、query:ar
-   evidence：递归自我改进的深度研究智能体，直接推进自主研究。
-
-### 速读区论文标签
-1. [DocOps: A Verifiable Benchmark for Autonomous Agents in Complex Document Operations](/202607/26/2607.19865v1-docops-a-verifiable-benchmark-for-autonomous-agents-in-complex-document-operations)  
-   标签：评分：7.0/10、query:ar
-   evidence：文档操作的自主智能体基准
-2. [SciExplore: Evaluating Autonomous Agents from Scientific Navigation to Information Integration](/202607/26/2607.20926v1-sciexplore-evaluating-autonomous-agents-from-scientific-navigation-to-information-integration)  
-   标签：评分：7.0/10、query:ar
-   evidence：评估自主科学代理的基准
-3. [MagicSelector: Joint Optimization for Agent Tool Selection via Counterfactual Decomposition and Progressive Reranking](/202607/26/2607.17751v1-magicselector-joint-optimization-for-agent-tool-selection-via-counterfactual-decomposition-and-progressive-reranking)  
-   标签：评分：6.0/10、query:ar
-   evidence：基于反事实优化的代理工具选择
-4. [ChatGEM: An Agentic Architecture Enabling Interactive Simulation of Genome-Scale Metabolic Models](/202607/26/biorxiv-10-64898-2026-07-20-739662-v1-chatgem-an-agentic-architecture-enabling-interactive-simulation-of-genome-scale-metabolic-models)  
-   标签：评分：6.0/10、query:ar
-   evidence：用于科学模拟的自主智能体
-
-
-<div class="dpr-home-promo-card">
-  <h3 class="dpr-home-promo-title">💬 社区与支持</h3>
-  <ul class="dpr-home-promo-list">
-    <li>欢迎 Star / Fork / Issue / PR</li>
-    <li>QQ群：583867967（欢迎交流，已有：1151人）</li>
-  </ul>
+<div class="dpr-home-promo-card dpr-home-panel">
+  <div class="dpr-home-panel-header">
+    <h3 class="dpr-home-promo-title">社区与支持</h3>
+  </div>
+  <p class="dpr-home-promo-copy">欢迎通过 Star、Fork、Issue 或 PR 一起完善 Daily Paper Reader。</p>
+  <div class="dpr-home-promo-meta">
+    <span>QQ群 <strong>583867967</strong></span>
+    <span class="dpr-home-promo-separator" aria-hidden="true">·</span>
+    <span>已有 <strong>1,491</strong> 人参与交流</span>
+  </div>
 </div>
