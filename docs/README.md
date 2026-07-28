@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-27</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-28</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-27 20:50:33 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-28 20:10:16 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精选7篇论文，精读6篇速读1篇，聚焦两篇9.0高分研究：递归自我改进智能体AREX与固定深度符号回归搜索神经网络权重更新规则。</p>
-<p>最值得关注：AREX智能体实现深度研究的递归自我改进，另一项通过符号回归自动发现高效权重更新规则，均代表前沿突破。</p>
-<p>建议优先精读这两篇高评分论文，深入了解智能体自优化机制与自动化规则发现方法。</p>
+<p>今日收录8篇论文，精读7篇，重点推荐两篇满分研究《AREX: Towards a Recursively Self-Improving Agent for Deep Research》和《Agentic Autoresearch for CT Reconstruction》。最值得关注的是递归自改进研究代理与CT重建自主科研两个方向。建议优先精读上述两篇10分论文，可快速把握AI自主科研的前沿进展。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AREX: Towards a Recursively Self-Improving Agent for Deep Research">AREX: Towards a Recursively Self-Improving Agent for Deep Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="Searching the Space of Feed-Forward Neural-Network Weight-Update Rules with Fixed Depth Symbolic Regression">Searching the Space of Feed-Forward Neural-Network Weight-Update Rules with Fixed Depth Symbolic Regression</span></li><li><span class="dpr-home-dashboard-paper-title" title="CausalForge: A Formally Grounded, Self-Improving Agentic Framework for Automated Research in Causal Inference">CausalForge: A Formally Grounded, Self-Improving Agentic Framework for Automated Research in Causal Inference</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AREX: Towards a Recursively Self-Improving Agent for Deep Research">AREX: Towards a Recursively Self-Improving Agent for Deep Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="Agentic Autoresearch for CT Reconstruction">Agentic Autoresearch for CT Reconstruction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Stress-testing large language model agents in a robotic chemistry laboratory">Stress-testing large language model agents in a robotic chemistry laboratory</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>5</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>6</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -89,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AutoIndex: Learning Representation Programs for Retrieval">AutoIndex: Learning Representation Programs for Retrieval</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AEcroscopyWave: Towards Self-Driving Characterization Platforms for Agentic AI">AEcroscopyWave: Towards Self-Driving Characterization Platforms for Agentic AI</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
 </section>
