@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-06-30 ~ 2026-07-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-29</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 6 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>15</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-29 16:42:48 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-29 20:04:08 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天是因果基础模型DAG-FM与表格基础模型分布外性能的深度评测日；最值得关注的两大方向：异构因果机制下的因果发现新范式（DAG-FM满分），以及表格基础模型在分布偏移下的真实泛化能力；建议下一步深入阅读速读中的TEmBed-T表格嵌入基准，并尝试将随机卷积特征用于时间序列分类的上下文学习方法。</p>
+<p>今日聚焦表格数据前沿：深入评测TabRank的链式思维蒸馏策略，并速览填充预测、生成模型依赖缺口及缩放定律三项研究。</p>
+<p>最值得关注的是TabRank（8.0分），它通过思维链蒸馏显著优化表格重排序效率；同时《Scaling Laws for Classical Machine Learning on Tabular Data》为经典模型规模效应提供了基准参考。</p>
+<p>建议普通读者优先精读TabRank的思路迁移至实际排序任务，并留意缩放定律对算法选型的指导。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">15 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DAG-FM: A Foundation Model for Causal Discovery under Heterogeneous Causal Mechanisms">DAG-FM: A Foundation Model for Causal Discovery under Heterogeneous Causal Mechanisms</span></li><li><span class="dpr-home-dashboard-paper-title" title="Empirical Evaluation of Out-Of-Distribution Performance of Tabular Foundation Models">Empirical Evaluation of Out-Of-Distribution Performance of Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Can Tabular In-Context Learners Generalize to Biomolecular Property Prediction?">Can Tabular In-Context Learners Generalize to Biomolecular Property Prediction?</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TabRank: Chain-of-Thought Distillation for Table Re-Rankers">TabRank: Chain-of-Thought Distillation for Table Re-Rankers</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>15</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">6 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Topological Signatures of Context-Level Reliability in TabPFN">Topological Signatures of Context-Level Reliability in TabPFN</span></li><li><span class="dpr-home-dashboard-paper-title" title="In-Context Time Series Classification with Random Convolutional Features">In-Context Time Series Classification with Random Convolutional Features</span></li><li><span class="dpr-home-dashboard-paper-title" title="TEmBed-T: A Multi-Dimensional Benchmark for Table-Level Embeddings">TEmBed-T: A Multi-Dimensional Benchmark for Table-Level Embeddings</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models">Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Measuring the Dependency Gap: Diagnosing Inter-Column Fidelity in Tabular Generative Models">Measuring the Dependency Gap: Diagnosing Inter-Column Fidelity in Tabular Generative Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Scaling Laws for Classical Machine Learning on Tabular Data: A Benchmark Study">Scaling Laws for Classical Machine Learning on Tabular Data: A Benchmark Study</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>6</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>4</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
 </div>
 
