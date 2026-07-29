@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-28</span>
+      <span class="dpr-home-dashboard-kicker">2026-06-30 ~ 2026-07-29</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 21 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>15</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>6</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-28 20:10:16 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-29 16:42:48 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日收录8篇论文，精读7篇，重点推荐两篇满分研究《AREX: Towards a Recursively Self-Improving Agent for Deep Research》和《Agentic Autoresearch for CT Reconstruction》。最值得关注的是递归自改进研究代理与CT重建自主科研两个方向。建议优先精读上述两篇10分论文，可快速把握AI自主科研的前沿进展。</p>
+<p>今天是因果基础模型DAG-FM与表格基础模型分布外性能的深度评测日；最值得关注的两大方向：异构因果机制下的因果发现新范式（DAG-FM满分），以及表格基础模型在分布偏移下的真实泛化能力；建议下一步深入阅读速读中的TEmBed-T表格嵌入基准，并尝试将随机卷积特征用于时间序列分类的上下文学习方法。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">15 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AREX: Towards a Recursively Self-Improving Agent for Deep Research">AREX: Towards a Recursively Self-Improving Agent for Deep Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="Agentic Autoresearch for CT Reconstruction">Agentic Autoresearch for CT Reconstruction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Stress-testing large language model agents in a robotic chemistry laboratory">Stress-testing large language model agents in a robotic chemistry laboratory</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DAG-FM: A Foundation Model for Causal Discovery under Heterogeneous Causal Mechanisms">DAG-FM: A Foundation Model for Causal Discovery under Heterogeneous Causal Mechanisms</span></li><li><span class="dpr-home-dashboard-paper-title" title="Empirical Evaluation of Out-Of-Distribution Performance of Tabular Foundation Models">Empirical Evaluation of Out-Of-Distribution Performance of Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Can Tabular In-Context Learners Generalize to Biomolecular Property Prediction?">Can Tabular In-Context Learners Generalize to Biomolecular Property Prediction?</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>6</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>15</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="AEcroscopyWave: Towards Self-Driving Characterization Platforms for Agentic AI">AEcroscopyWave: Towards Self-Driving Characterization Platforms for Agentic AI</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Topological Signatures of Context-Level Reliability in TabPFN">Topological Signatures of Context-Level Reliability in TabPFN</span></li><li><span class="dpr-home-dashboard-paper-title" title="In-Context Time Series Classification with Random Convolutional Features">In-Context Time Series Classification with Random Convolutional Features</span></li><li><span class="dpr-home-dashboard-paper-title" title="TEmBed-T: A Multi-Dimensional Benchmark for Table-Level Embeddings">TEmBed-T: A Multi-Dimensional Benchmark for Table-Level Embeddings</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>6</strong></span></div>
 </section>
 </div>
 
