@@ -1,0 +1,1325 @@
+Title: Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models
+
+URL Source: https://arxiv.org/pdf/2607.19847v1
+
+Published Time: Thu, 23 Jul 2026 00:40:01 GMT
+
+Number of Pages: 31
+
+Markdown Content:
+# Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+# Yurong Liu ∗
+
+New York University yurong.liu@nyu.edu 
+
+# Yeye He 
+
+Microsoft Research yeyehe@microsoft.com 
+
+# Haoyu Dong 
+
+Microsoft Research hadong@microsoft.com 
+
+# Junjie Xing 
+
+Microsoft Research junjiexing@microsoft.com 
+
+# Shi Han 
+
+Microsoft Research shihan@microsoft.com 
+
+# Dongmei Zhang 
+
+Microsoft Research dongmeiz@microsoft.com 
+
+# Surajit Chaudhuri 
+
+Microsoft Research surajitc@microsoft.com 
+
+## ABSTRACT 
+
+Predicting missing cell values in tabular data is a fundamental prob-lem in data cleaning. While state-of-the-art reasoning models show great promise in predicting missing values in tables, by reasoning holistically across rows and columns, they are costly to deploy at scale and tend to be overconfident, often generating hallucinated or false-positive predictions. In this paper, we observe that achieving high precision missing-value prediction in tables requires a distinct combination of three capabilities: (1) world knowledge, (2) text-based reasoning, and (3) code-based reasoning. We systematically explore design choices for combining these capabilities, and propose an Auto-Fill approach that post-trains three specialist small language models (SLMs), each optimized for one capability. We develop a calibrated ensemble mechanism that either dynamically selects the most confident spe-cialist or abstains, ensuring high accuracy. Extensive experiments on 11 benchmarks with 2200 real tables drawn from diverse domains show that Auto-Fill achieves supe-rior accuracy compared to state-of-the-art reasoning models (e.g., o3-pro, Gemini 3 Pro, and DeepSeek R1), while operating at a frac-tion (less than 1%) of the cost of these frontier models. Our results highlight the effectiveness of specialization and calibrated absten-tion in the important domain of tabular data. Auto-Fill is publicly available at https://github.com/lyrain2001/auto-fill. 
+
+## 1 INTRODUCTION 
+
+Missing values are prevalent in tabular datasets, which can arise due to missed data entry, unavailable data observation, or errors introduced during data integration [ 6, 41 ]. Prior studies report that up to 45% of real-world tables contain missing cells [ 9, 29 ], making predicting missing values one of the key tasks in data cleaning [3, 6, 17, 41]. Recent advances in end-user data cleaning, such as the built-in cleaning capabilities in widely used spreadsheet software like Excel [ 33 ] and Google Sheets [ 11 ], create new opportunities for deploying missing-value prediction directly within tables used by billions of users, making the problem especially important. Exam-ple 1 shows an example of this capability in spreadsheet settings. 
+
+Example 1. User Alice is viewing the spreadsheet in Figure 1, which lists statistics for past Super Bowl games, including “Date” ,
+
+“Winning team” , and “Score” , etc. She notices a missing value in cell 
+
+> ∗Part of work done while at Microsoft Research.
+
+Figure 1: Example of Auto-Fill in spreadsheet software: con-fident missing-cell predictions appear as “suggestion cards” (right pane) for users to review and accept. Correctly predict-ing “C6” (winner of Super Bowl 2014) requires [ Knowledge ]. 
+
+“C6” and wants to fill it to improve data quality for analytics, a task that traditionally requires substantial manual effort. Prediction from surrounding table context can simplify this task. For “C6” , the system can predict the winning team and its over-all record, format the result consistently with the column (e.g., 
+
+“Seattle Seahawks (2, 1-1)” ), and present it as a “card” in the side pane. Alice can then quickly review and accept the recommendation rather than researching and entering the value manually. □
+
+Unique combination: Knowledge, reasoning, and coding. 
+
+While the example above requires relevant “knowledge”, which seems well suited for today’s language models, we emphasize that filling missing values in tabular data is far more than retrieving facts 
+
+from models’ internal knowledge. Rather, it is a task that requires a distinctive combination of knowledge, reasoning, and coding capabilities, as we show below. 
+
+Example 2. Figure 2 presents two real tables containing missing cells that require non-trivial reasoning to resolve. In the left table, cell A6 in the “Characters” column is missing. Notably, several columns to the right include an “ImageURL” field, whose URL strings embed character names in ad-hoc formats. By leveraging this subtle “inter-column ” relationship, one can infer the missing character name in A6 (in this case, the correct value is “Orochimaru” ). In the right table, cell D6 is missing. Although this may not be immediately apparent, each column actually follows a consistent pattern: the values “1” , “2” , and “3” each appear exactly once, rep-resenting the rankings of the top-3 teams in a given event, while Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Figure 2: Real tables where [ Reasoning ] is required (see Example 2). Left (inter-column) : the missing name in A6 (“Orochimaru” )is embedded ad-hoc within the “ImageURL” string. Right (intra-column) : each column holds “1” /“2” /“3” once, else “NR” , so D6 =“3” .
+
+Figure 3: Real table where [ Coding ] is required (see Exam-ple 3): cell B5 (“34.19%” ) is computed from the implicit relation 
+
+> “Clinton”
+
+=“100%” −“Bush” −“Perot” −“Others” .
+
+the remaining team is labeled “NR” (not ranked). By recognizing this implicit “ intra-column ” pattern, one can confidently infer that the missing value in D6 is “3” . □
+
+In both examples above, factual “knowledge” plays little role in predicting the missing values, as these are really niche facts that language models either cannot recall exactly or tend to halluci-nate [ 48 ]. Instead, it is far more effective to predict by leveraging implicit inter-column and intra-column patterns that exist in the table in these cases, based on the surrounding table context. Given the need to “reason”, and the recent rise of reasoning models (e.g., OpenAI o1, DeepSeek-R1, Gemini 3 Pro), in our initial tests, we found reasoning models to be quite effective for examples like those in Figure 2. For instance, DeepSeek-R1 is able to generate detailed, step-by-step textual reasoning for the right-hand example in Figure 2, ultimately arriving at the correct missing value. Figure 4 (Left) illustrates a representative reasoning trajectory (“ Okay, let’s check . . . Wait, for each column, we see exactly one team ranked as 1, 2, 3 . . . So the only missing value for Guelph should be 3 ”). In addition to text-based reasoning, code is another important “mode” that needs to be used to infer missing values in tables. 
+
+Example 3. Figure 3 shows another example table, where cell  
+
+> B5
+
+is missing. In this case, based on the values in the table, one could infer an implicit inter-column relationship, namely “Clinton” 
+
++ “Bush” + “Perot” + “Others” = “100%” . It is therefore possible to create a small code snippet to calculate the missing value in B5 .It is worth noting that, unlike the example in Figure 4 (Left), which relies on text-based reasoning, the example in Figure 3 in-volves precise numerical computation and is better suited for code-based inference, as illustrated in Figure 4 (Right). In this case, the generated code must be executed over the table to produce the pre-dicted missing value. (Although text-based reasoning can also carry out calculations in natural language, it is susceptible to calculation errors, particularly when the computations are complex). □
+
+Challenges and key requirements. The task of filling missing values in tables we study poses the following unique requirements: (1) High precision : In our task of imputing missing values in tabular data (e.g., user spreadsheets or business-critical tables), pri-oritizing high precision is essential. The system should generate predictions only when they are highly likely to be correct. Repeated inaccurate suggestions not only burden users (since each sugges-tion requires manual verification) but can also contaminate the underlying tables, causing issues in downstream analytics. Achieving high precision necessitates reliable confidence estima-tion, yet vanilla LLMs are known to be systematically overconfident and tend to generate hallucinated predictions even under substan-tial uncertainty [ 55 , 65 ]. We therefore need to train models to not only predict missing values, but also produce well-calibrated con-fidence scores. Producing calibrated confidence is a well-known challenge in LLMs [10], and a key focus of this work. (2) Low cost : Given that tables with missing values are prevalent, and predictions like those in Figure 1 need to be generated at scale (e.g., for all tables containing missing cells so users can review them), maintaining low inference cost is essential, which makes a direct use of frontier models too costly 1. At the same time, while smaller language models (e.g., 8B open-source models) are significantly cheaper, they often yield substantially lower quality. Achieving the best of both worlds, with high-quality predictions at low cost, is therefore a key goal that we aim to achieve in this work. (3) Multi-mode : As the examples in Figure 1, 2 and 3 show, predicting missing values in different types of tables requires ap-proaches of different “modes” (knowledge/reasoning/coding). An effective solution must therefore seamlessly integrate the comple-mentary “modes” in order to make accurate predictions. 
+
+Our approach: Auto-Fill . In this work, we develop an Auto-Fill approach that post-trains small language model (SLM) special-ists , each specializing in knowledge/reasoning/coding, respectively, for the missing value prediction task. These specialist models are then combined holistically using confidence-based ensembles, en-suring high quality while at very low costs as shown in Figure 5. Our work makes the following contributions:  
+
+> •
+
+We develop and release a suite of 11 benchmark datasets curated from diverse tabular sources, enabling systematic comparison of missing-value prediction methods.  
+
+> •
+
+We design Auto-Fill , a high-precision, low-cost, multi-mode method that trains and combines specialist SLMs for knowledge, reasoning, and coding.  
+
+> •
+
+We test Auto-Fill using multiple families of language mod-els (Qwen3 and GPT-4.1), demonstrating state-of-the-art perfor-mance that surpasses frontier models such as o3-pro and Gemini 
+
+> 1Applying frontier reasoning models to predict missing values for all active spreadsheet tables in Excel is estimated to cost over tens of millions of dollars per day.
+
+Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models Predict missing value (Reasoning)                       
+
+> Instruction : In the table below, one cell is marked as
+> “[MISSING] ”, please predict its value and answer
+> using JSON : {“value”: “”, ”confidence”: “”}.
+> Table :
+> | Team | M1 | M2 | M3 | M4 | M5 | M6 |
+> | Alberta Bears | 1 | NR | NR | 2 | 3 | NR |
+> | Bishop's Gaiters | 2 | NR | NR | 1 | NR | NR |
+> |Guelph Gryphons | NR | NR | [MISSING] | …
+> | Laurier Hawks | NR | 1 | NR | NR | NR | NR |
+> Output :
+> <think> Okay, let's check … Wait, for each column,
+> we have exactly one team ranked as 1, 2, 3. Let’s
+> check each column to verify … This is confirmed
+> and the only missing value for Guelph should be 3.
+> </think> {”value": “3”, “confidence”: “95”}.
+> Predict missing value (Coding)
+> Instruction : In the table below, one cell is marked as
+> “[MISSING] ”, please predict its value and answer
+> using JSON : {“code”: “”}.
+> Table :
+> | County | Clinton | Votes | Bush | Perot | Others
+> | Sierra | 34.83% | 12 | 36.85% | 27.68% | 0.64%
+> | Yuba | 34.24% | 140 | 43.40% | 21.53% | 0.83%
+> | Mono | [MISSING] | 48 | 36.05% | 28.66% | 1.10%
+> | Alpine | 34.07% | 8 | 35.18% | 29.48% | 1.27% ||
+> Output :
+> <think> .. reason about col relationship .. </think>
+> <code>
+> df [" Clinton "] =100 -df [" Bush "] -df [" Perot "] -df [" Others "]
+> df [" Clinton "] =df [" Clinton "]. round (2). astype (str )+"%"
+> </code>
+
+Figure 4: Example LLM responses to predict missing values. ( Left ): an example prompt corresponding to Figure 2 (Right), which shows that the LLM needs to “reason” before it can answer correctly. ( Right ): an example corresponding to Fig-ure 3, where the LLM needs to “code” to answer correctly. 
+
+3 Pro, while operating at less than 1% of their cost, which is highlighted in our main result in Figure 5. 
+
+• We map the design space through extensive experiments, docu-menting negative results to inform future work. 
+
+• While reasoning models excel at math and code, their use in tab-ular settings remains limited. We are among the first to demon-strate the potential of training and adapting reasoning models to real-world tabular use cases. 
+
+## 2 RELATED WORK 
+
+We review existing research related to our problem in this section. 
+
+Traditional data cleaning in tables. There is a long and fruit-ful line of research on data cleaning [ 3 , 6 , 17 , 41 ] that leverages formal constraints, such as Functional Dependencies (FDs) and Conditional Functional Dependencies (CFDs), to detect errors and propose fixes (i.e., values to fill in cells). While this line of research is highly influential, these methods typically require constraints to be known and provided a priori on specific datasets, which there-fore do not generalize to open-ended, spreadsheet-like scenarios (Figure 1). Furthermore, formal constraints are inherently limited in their ability to incorporate world knowledge or perform com-plex reasoning, thereby restricting their coverage. As we will show experimentally, these limitations place a low upper bound on the achievable recall of constraint-based methods. 
+
+Language models for value filling . Large language models (LLMs), including recent reasoning-oriented models [ 12 , 19 ], show strong potential for filling missing values in tabular data, and recent works adapt them to diverse table tasks [ 26 , 54 , 64 , 66 , 68 ]. However, they are often overly confident, always producing predictions even when uncertainty is high [ 55 , 65 ], and are prohibitively expensive to deploy at scale (e.g., across all spreadsheet tables with missing cells). These limitations make it impractical to apply LLMs out of the box, motivating our work to adapt them into specialized models that are both more accurate and cost-efficient for our task. 
+
+Data-lake-based imputation. A separate line of work fills missing values using an external corpus of related tables: Lake-Fill [ 58 ] retrieves candidate values from a data lake, and CESID [ 30 ]10 −3 10 −2 10 −1 
+
+Average Cost per Query ($) 
+
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> 0.7
+> Mean Recall @ Precision=0.9
+> DeepSeek-R1
+> Qwen3-8B
+> Gemini 3 Pro
+> GPT-4.1 mini
+> GPT-4.1
+> o4-mini
+> GPT-5.2
+> o3-pro
+> Auto-Fill-Qwen3-8B
+> Auto-Fill-Qwen3-4B
+> Auto-Fill-Qwen3-1.7B
+> Auto-Fill-GPT-4.1
+> Auto-Fill-GPT-4.1 mini
+> Auto-Fill-GPT-4.1 nano
+
+Figure 5: Quality vs. cost comparisons: Auto-Fill variants based on Qwen3 (pink) and GPT-4.1 (purple) form the quality– cost Pareto frontier among the tested models, offering differ-ent trade-offs between quality (y-axis, higher is better) and cost (x-axis in log scale, lower is better). indicates the best quadrant (high quality, low cost). 
+
+hybridizes retrieval with model-based estimation. While these ap-proaches are effective when a large data lake contains many similar tables from which missing values can be retrieved, such resources are often unavailable in the general tabular settings we target. 
+
+Data repair. The broader repair literature spans two paradigms [ 36 ]: rule-driven methods that learn repair actions on top of declared constraints (e.g., BUNNI [ 32 ]), and rule-free methods that learn from observed data distributions (e.g., SCARE [ 56 ], Boost-Clean [ 22 ], Baran [ 31 ]). Both, however, rely on intra-table signals and cannot leverage world knowledge or complex reasoning. 
+
+Reasoning models. Recent advances in reasoning-oriented models, such as DeepSeek-R1 [ 12 ] and OpenAI o1 [ 19 ], demonstrate that models post-trained from LLMs using reinforcement learning with verifiable rewards (RLVR) techniques, such as GRPO [ 43 ], can achieve strong performance on math and coding tasks. While there is substantial research on adapting and post-training reasoning models for math and coding tasks, training reasoning models in tabular settings has been limited so far. We are among the first to demonstrate the potential of post-training reasoning models in important real-world tabular scenarios. 
+
+Data imputation in Machine Learning literature. A related ML literature on “data imputation” [ 8, 15 , 18 , 50 ] aims to fill missing cells with values as close as possible to the ground truth , rather than predicting the exact missing value. The guiding principle is statistical utility: for example, mean imputation may estimate a 
+
+“sales-quantity” value that is close but not exactly correct, which still improves downstream ML training since most models benefit from approximate but complete inputs. This sharply contrasts with our setting, where a prediction must be exactly correct or the system should abstain. Predicting “98” for a true “sales-quantity” of “100” is unacceptable in spreadsheet and analytics scenarios, since even small inaccuracies propagate into Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Table 1: Auto-Fill : Design space choices    
+
+> Architecture Options
+> One hybrid vs. multiple specialist models (1) One hybrid model Training strategy: (1) Mixed SFT (2) Mixed SFT+RL (2) Multiple specialists
+> Modes:
+> (1) Knowledge (2) Reasoning (3) Coding
+> Training strategy:
+> (1) SFT direct complete (2) SFT distillation (3) SFT + RL
+> Ensemble strategy:
+> (1) Learned router (2) Prob. calibration (3) Classical ML
+
+downstream reports. Our problem therefore requires both exact correctness (numeric closeness is insufficient) and high precision. 
+
+## 3 PROBLEM FORMULATION 
+
+We now formally define the problem of missing value prediction studied in this work. 
+
+Definition 1. [High-Precision Missing-Value Prediction ] Let T =
+
+{( 𝑇 𝑖 , 𝑟 𝑖 , 𝑐 𝑖 )} 𝑁 𝑖 =1 be a set of prediction tasks, where each task specifies a relational table 𝑇 𝑖 and a target missing cell (𝑟 𝑖 , 𝑐 𝑖 ) with unknown ground-truth value 𝑣 𝑖 . For each task (𝑇 𝑖 , 𝑟 𝑖 , 𝑐 𝑖 ), an uncertainty-aware model M produces M ( 𝑇 𝑖 , 𝑟 𝑖 , 𝑐 𝑖 ), which is either a predicted value 
+
+ˆ𝑣 𝑖 , or an abstention that is denoted by the symbol ⊥.Let P (M) = {𝑖 | M ( 𝑇 𝑖 , 𝑟 𝑖 , 𝑐 𝑖 ) ≠ ⊥} denote the set of non-abstained predictions produced by M, and let correctness be deter-mined by exact match, 1[ ˆ𝑣 𝑖 = 𝑣 𝑖 ]. We define precision and recall of 
+
+M over T as: Precision (M) = |{ 𝑖 ∈ P (M) | ˆ𝑣 𝑖 = 𝑣 𝑖 }| / |P (M)| , (1) Recall (M) = |{ 𝑖 ∈ P (M) | ˆ𝑣 𝑖 = 𝑣 𝑖 }| / | T|. (2) Given a user-specified precision threshold 𝜏 ∈ [ 0, 1], the problem of 
+
+High-Precision Missing-Value Prediction is to find a model M, such that the precision of M is over the required threshold 𝜏 , while M’s recall is maximized, written as: 
+
+M∗ = arg max 
+
+> M
+
+Recall (M) s.t. Precision (M) ≥ 𝜏 . (3) In our high-precision setting, model M must produce calibrated confidence and abstain when uncertain , avoiding hallucinations or “wild guesses” that corrupt business-critical tabular data. This differs from traditional ML data imputation [ 8 , 18 ] in two fun-damental ways. First, we require “ strict exact match ” rather than “numerical closeness”, since even minor deviations (e.g., 99 instead of 100) can distort downstream results. Second, whereas conven-tional approaches aim to fill all missing values, our high-precision formulation explicitly encourages abstention when evidence is in-sufficient for reliable prediction. The central challenge is therefore obtaining reliable confidence estimates from heterogeneous models (knowledge-, reasoning-, and code-based), enabling abstention that maximizes recall while maintaining high precision, as formalized in Definition 1. Section 4 presents our approach. 
+
+## 4 OVERVIEW: DESIGN SPACE EXPLORATION 
+
+We present Auto-Fill , a confidence-aware tabular missing-value prediction framework built on an ensemble of specialized small language models (SLMs). We will give a high-level overview of the design space in this section before delving into technical details in subsequent sections. Table 1 summarizes the design space options. One hybrid model vs. multiple specialist models? At the archi-tectural level, we can either (1) train a single hybrid model capable of natively switching between knowledge-, reasoning-, and coding-based modes, or (2) use multiple specialist models each specializing in one mode, that are then dynamically combined through an en-semble mechanism. Our findings indicate that combining specialized models consis-tently outperforms a single hybrid model. When we train a small model that combines these capabilities in a shared parameter set, the model must alternate between fundamentally different genera-tion strategies, which leads to interference [ 44 , 62 ]. In contrast, it is easier to train separate specialist models focusing on one capability with strong performance. We will give detailed experimental results in this area (Table 6 of our experiments). Which specialist modes? Our knowledge/reasoning/coding split mirrors the three model archetypes the LLM community has inde-pendently converged on — instruction-tuned chat models for direct completion, reasoning models with chain-of-thought [ 12 , 19 , 52 ], and code-specialized models [ 13 , 42 ]. Prior modular LLM systems also draw the same split between knowledge retrieval, reasoning, and code execution [ 5, 21 , 61 ]. A post-hoc error analysis of our final system supports this split empirically: among 100 sampled failures, 89% fall inside the knowledge/reasoning/coding decom-position rather than indicating a missing fourth mode, with the remaining 11% being unrecoverable cases (Appendix D). How to train specialist models? Given that we employ multiple specialist models, the next design decision concerns the training strategy. We consider three options shown in the middle of Table 1: (1) direct supervised fine-tuning (SFT) , in which the model is trained to predict answers directly; (2) distillation-based SFT , where the model is trained on chain-of-thought reasoning traces generated by a stronger teacher reasoning model; and (3) SFT + reinforcement learning (RL) , where SFT is followed with RL to further enhance the models’ reasoning abilities. Overall, our findings suggest that direct SFT is sufficient when answers use models’ parametric knowledge, or require simple pat-tern matching over tables. However, distillation-based SFT becomes essential for problems involving complex multi-step reasoning or non-trivial code generation. While reinforcement learning (RL) yields modest further gains, it is significantly more expensive to train, so we treat it as an optional enhancement. How to ensemble specialist models? Given multiple specialists, we need a mechanism to select among their predictions, as the same missing cell may be solvable by different specialist models. We explored three approaches, shown on the right of Table 1: (1) a 
+
+learned router that predicts which specialist to invoke for a given input (analogous to router models used in ChatGPT [ 38 ] to select reasoning vs. chat models); (2) a classical ML ensemble (XGBoost) that takes the confidence scores from specialist models as input and uses classifications to select a prediction; and (3) calibrated confidence selection , where each specialist produces a principled confidence score that is calibrated to true probabilities, with the most confident specialist being selected. We find that calibrated confidence selection is the most prin-cipled and effective strategy: it directly captures each specialist’s self-estimated prediction reliability, thereby enabling natural ab-stention when no specialist is sufficiently confident. In contrast, the Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models <think> .. reason about col relationship .. </think> {“code”:                   
+
+> df [' Arrive '] =(pd .to_datetime (df [' Depart '], format =' %H:%M ’)
+> +pd .to_timedelta (df [' Duration '])). dt .strftime (' %H:%M ’) }
+> Flight Depart Duration Arrive
+> AA101 08:30 2h15m [MISSING]
+> UA205 14:20 1h45m 16:05
+> DL308 09:15 3h30m 12:45
+> {“confidence”: 1}
+
+Knowledge !!
+
+Reasoning !"
+
+Coding !#                             
+
+> !
+> !.#$ ⋅!.&# ⋅!.''
+> Geometric Mean
+> {“confidence”: 0.418 }
+> Please fill in the missing
+> value in the input table.
+> df .loc [:,“Arrive” ]=np .nan
+> exec (code ,df )
+> 10:45
+> 16:05
+> 12:45
+> Random mask …Year Age …
+> 2001 25
+> 1973 53
+> 1970 56
+> …Year Age …
+> 2001 25
+> 1973 53
+> 1970 56
+> Teacher !
+> I want suggestions
+> with confidence > 0.9
+> Logprobs -based
+> Verbalized
+> Execution -based
+> Confidence Calibration Specialists Inference
+> 0.24
+> 0.95
+> 0.99
+> Ensemble Selection
+> Confidence Output Specialist
+> 0.24 10:30 !!
+> 0.95 10:45 !"
+> 0.99 10:45 !#
+> Confidence: 0.99 > 0.9
+> KEEP or ABSTAIN?
+> …Depart Duration Arrive
+> 08:30 2h15m 10:45
+> 14:20 1h45m 16:05
+> 09:15 3h30m 12:45
+> [OK –ACCEPT SUGGESTION]
+> SFT Direct SFT Distillation
+> Specialist Training
+> <think> We need to find the missing arrival time for flight
+> AA101. Departure 08:30, duration 2h 15m, so arrival is
+> 08:30 + 2h15m = 10:45. So missing value is 10:45. </think>
+> {“ value”: 10:45, “confidence”: 90 }
+
+{“value” : 10 : 30 }
+
+Figure 6: Auto-Fill : our proposed architecture based on an exploration of the design choices in Table 1. It trains specialist models (middle), which are dynamically selected at inference time based on calibrated confidence estimates (right). 
+
+learned router’s confidence measures certainty about which special-ist to invoke , rather than whether the resulting prediction is correct ,which leads to degraded performance in our high precision set-tings. Classical ML XGBoost improves upon the router, but it does not generalize consistently across datasets. Detailed evaluations of these design choices will be presented in our experiments. 
+
+Auto-Fill : Final design. Building on the above explorations, our proposed Auto-Fill adopts a multi-specialist architecture, as illus-trated in Figure 6. Our approach uses an ensemble of three comple-mentary models: (1) a knowledge specialist M𝐾 trained via direct SFT, with confidence estimated from token-level log-probabilities; (2) a reasoning specialist M𝑅 trained via distillation-based SFT, whose confidence is distilled from sampled reasoning distributions; and (3) a coding specialist M𝐶 , also trained via distillation-based SFT, which generates Python code and derives confidence through self-validation against the observed column values. The distillation of M𝑅 and M𝐶 relies on a teacher model T .In our implementation, we instantiate T with DeepSeek-R1 [ 12 ], as it produces open reasoning trajectories (unlike closed-source reasoning models), though any sufficiently capable reasoning model could serve as the teacher. Confidence signals from M𝐾 , M𝑅 , and M𝐶 are then mapped onto a unified probabilistic scale using principled isotonic cali-bration to reflect their true probabilities [ 63 ]. At inference time, 
+
+Auto-Fill either selects the prediction from the most confident specialist, or abstains if none surpasses a target precision threshold. We will now describe the training stage and ensemble stage of 
+
+Auto-Fill , in Section 5 and Section 6, respectively. 
+
+## 5 TRAINING SPECIALIST MODELS 
+
+This section details the training of three specialist SLMs, each tai-lored to a distinct capability: knowledge, reasoning, and coding. For each specialist, we describe both its post-training procedure and its corresponding confidence estimation mechanism. Confi-dence calibration is particularly critical, as LLMs are known to be systematically overconfident, and different reasoning paradigms necessitate different estimation strategies [10, 55, 59, 65]. At a high level, all three specialists share a common training data construction process. A key advantage of missing value prediction for tabular data as a learning problem is that ground-truth training data can be generated automatically from complete tables: for each complete table in our corpus, we randomly select a non-empty cell (𝑟, 𝑐 ) and replace its value with [MISSING] . The masked table serves as input, and the original cell value serves as the ground-truth label. Cells already empty in the original table are kept, so the model still sees naturally co-occurring missing values in context. 
+
+Example 4. [Masking]. On the left of Figure 6, we have an exam-ple table with flight information. In the self-supervised “masking” procedure, we sample a cell from the table, in this case the top-right cell, replace its original value ( “10:45” ) with the mask “[MISSING]” .Because we know the ground-truth should always be the original value “10:45” , which comes “for free”, it enables us to systematically construct training examples for the knowledge, reasoning, and coding specialists, where the final answer is always “10:45” . This serves as a unified way to “self-supervise” and construct diverse training examples for all specialists. □
+
+This self-supervised paradigm allows us to construct large-scale training corpora without human annotation. From a large shared pool of masked tables, we develop techniques to automatically generate training data for knowledge, reasoning, and coding, re-spectively, which we will describe in the next three subsections. 
+
+## 5.1 Knowledge Specialist 
+
+Not all missing values require complex reasoning. For instance, the missing value in Figure 1 (the winning team of a Super Bowl game) can be answered using the model’s knowledge, together with necessary formatting, so that the predicted value is consistent with other values in the same column to precisely match the ground-truth. Models can answer cases like this without complex reasoning. Interestingly, we in fact find that for tasks requiring knowledge, employing chain-of-thought reasoning models can actually harm prediction quality. For example, when we sample Wikipedia tables with well-known facts as test cases, reasoning-oriented models often perform noticeably worse than chat-style models that directly generate completions; this trend persists even after post-training. 2
+
+> 2
+
+We hypothesize that generating additional intermediate tokens introduces more opportunities for error accumulation and shifts probability mass away from the correct answer token [ 28 ]. Moreover, predicted values in tabular settings must adhere to formatting patterns established by other values in the same column (e.g., in Figure 1). Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Capabilities beyond Knowledge. While we refer to this special-ist as “knowledge” for simplicity, we observe that post-training enhances the model beyond merely retrieving relevant facts from its internal memory. In particular, post-training here improves two capabilities that are critical yet often lacking in vanilla small mod-els. First, the model must be able to “align” a missing cell with other values in the same column, effectively “reading vertically” in the column direction, which is non-trivial especially in large and wide tables [ 26 , 60 ]. If the model mis-aligns the missing cell and associates it with a different column (which happens often with small models), the resulting prediction can be entirely incorrect. Second, the model must generate predictions that conform to the formatting patterns established within the column – e.g., in Fig-ure 1, where win/loss/total records follow a specific format, the predicted output must also use the exact same format, a skill that small models can learn to improve. We observe that post-trained knowledge specialists M𝐾 substantially enhance both capabilities in addition to better knowledge retrieval. Training data generation: direct ground-truth completion. For the knowledge specialist, M𝐾 , we therefore train the model to directly predict the ground-truth value in a structured response of the form {“value” : 𝑣 }, where 𝑣 is the ground-truth that we can automatically construct using our masking procedure in Example 4. Confidence extraction: log probability aggregation. Since M𝐾 
+
+generates 𝑣 as its first substantive output, the token-level log-probability logprob (𝑣 ) reflects the model’s raw belief over its output vocabulary, unconditioned on any potentially incorrect intermedi-ate predictions [ 24 ]. Log-probabilities in the direct-answer setting have been shown to correlate with factual correctness, making them a reliable confidence signal [20, 55]. When the predicted value 𝑣 spans multiple tokens (e.g., multi-word phrases or numeric strings), we compute confidence as the geometric mean of token-level probabilities. Concretely, let {𝑡 𝑖 }𝑛 𝑖 =1
+
+denote the tokens comprising 𝑣 . We extract the log-probability of each token from the model’s output distribution and aggregate them to compute the overall confidence, denoted by conf 𝐾 , as: conf 𝐾 = exp (︄ 1
+
+𝑛 
+
+> 𝑛
+
+∑︂ 
+
+> 𝑖 =1
+
+logprob (𝑡 𝑖 ))︄ =(︄ 
+
+> 𝑛
+
+∏︂ 
+
+> 𝑖 =1
+
+𝑃 (𝑡 𝑖 ))︄ 
+
+> 1/𝑛
+
+, (4) where 𝑛 is the number of tokens in the model-produced answer 𝑣 .The geometric mean is appropriate because the joint probability of generating the full value factorizes as a product of per-token probabilities in auto-regressive models. Averaging in log-space normalizes for sequence length, preventing longer values from being systematically penalized. The resulting score lies in [0, 1] and is the model’s intrinsic confidence in the predicted value. Training. We use standard supervised fine-tuning directly on (table, answer) pairs constructed via the masking procedure in Example 4, similar to table instruction-tuning style training [ 26 , 66 ]. After training, the model learns to predict missing values by not only retrieving relevant facts from its internal knowledge, but also formatting the predicted value in ways consistent with other values in the same column, as in the example of Figure 1 (where the predicted value needs to follow a particular data format). This is 
+
+> Reasoning models can fail to maintain such consistency when they are distracted by intermediate reasoning tokens.
+
+Algorithm 1: Trace Construction for M𝑅                                                                   
+
+> Input: Masked table 𝑇 , target cell (𝑟, 𝑐 ), ground truth 𝑣 ∗, teacher
+> T, sample size 𝑘
+> Output: Training trace with supervision
+> 1Generate reasoning traces R1← { T ( 𝑇 ) } 𝑘 𝑖 =1without confidence ;
+> 2C1← { 𝑟 ∈ R 1:answer (𝑟 )=𝑣 ∗};
+> 3if C1=∅then
+> 4return ⊥
+> 5𝑟 ∗←arg min 𝑟 ∈C 1|𝑟 |// Shortest correct trace
+> 6Generate reasoning traces R2← { T ( 𝑇 ) } 𝑘 𝑖 =1with confidence ;
+> 7conf ←E[𝑐 |answer (𝑟 )=𝑣 ∗] · 𝑃 (answer (𝑟 )=𝑣 ∗)over R2;
+> 8return (𝑟 ∗, 𝑣 ∗,conf );
+
+important in our tabular setting, and is an ability that small models learn to improve during training. 
+
+## 5.2 Reasoning Specialist 
+
+In many other cases, predictions require multi-step complex rea-soning, where direct completion can fall short. Figure 2 shows two illustrative examples in this category, as discussed earlier. For these cases, chain-of-thought reasoning is essential. Training data generation: reasoning distillation. We train M𝑅 
+
+by distilling high-quality chain-of-thought reasoning traces from a teacher model T . Chain-of-thought prompting [ 52 ] substan-tially improves multi-step reasoning by encouraging models to decompose problems into intermediate steps, but effective chain-of-thought generation typically requires either large models or explicit training on reasoning. We address this through distillation: 
+
+T generates reasoning demonstrations, which are used to fine-tune the small M𝑅 student model. Following the <think>...</think> 
+
+convention [ 12 , 57 ], M𝑅 generates its reasoning trace within a structured block before producing its final prediction. This separa-tion forces the model to commit to an explicit logical path before answering and makes the reasoning process inspectable. For each training instance constructed via the masking procedure (Example 4), we prompt T to generate 𝑘 independent reasoning traces (with 𝑘 = 10 , balancing sample diversity and generation cost). We then compare the predicted outcomes from these 𝑘 traces against the ground-truth value known from masking, retaining only those traces that produce the correct answer. Among the correct traces, we select the one with the shortest reasoning length for training, as it typically reflects a clearer logical structure and lowers inference cost in the resulting M𝑅 .Confidence extraction: two-stage sampling. To obtain reliable confidence estimates for reasoning, a straightforward approach is to use token-level log-probabilities of the final answer, as we do for M𝐾 . However, we find this signal to be unreliable in the reasoning settings. Unlike M𝐾 , the final answer token in a reason-ing model is conditioned on the entire preceding chain-of-thought reasoning, which is post-hoc, often making its log-probability ar-tificially high. In fact, we observe that this probability is almost always close to 1.0 , rendering it unusable as a confidence signal. An alternative is to have T generate reasoning traces that ver-balize confidence self-assessment, then use those traces directly for training. However, this creates inconsistencies: the confidence Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+mentioned within a reasoning trace reflects a single sample’s self-assessment, whereas the true reliability of that reasoning path can only be estimated from the distribution of outcomes across multi-ple independent attempts [ 40 , 55 ]. If T verbalizes high confidence within a single reasoning trace but empirically succeeds on that case only occasionally in 𝑘 attempts, we would be training on a trace that claims certainty while the true reliability is low. We address this by decoupling trace selection from confidence computation through a two-stage procedure. For each training case, we first generate the 𝑘 reasoning traces described above without confidence, yielding a clean distribution of prediction outcomes. Second, we prompt T to generate 𝑘 additional completions with explicit confidence verbalization. From this second set, we compute an aggregate confidence score: conf train  
+
+> 𝑅
+
+= E[conf | correct ] × 𝑃 (correct ), (5) where E[conf | correct ] is the mean self-assessed confidence across correct completions, and 𝑃 (correct ) is the fraction of attempts that were correct. This product captures two complementary dimen-sions: how confident the model is when it succeeds, and how reliably it succeeds. A case where T is consistently correct and consistently confident yields a high score; a case with occasional success or low confidence when correct yields a lower score. 
+
+Example 5. [Two-stage confidence generation for M𝑅 ]. Con-sider the table in Figure 6 (lower left), where the “Year” for “Age = 25” is masked (ground truth: “2001” ). In Stage 1 , we prompt T to generate 𝑘 = 10 independent reason-ing traces without confidence. Eight correctly deduce 2026 − 25 =
+
+2001 . We retain the shortest correct trace for training on this case. In Stage 2 , T generates 𝑘 = 10 additional completions with verbal-ized confidence, producing a mean confidence of 95. With eight correct traces and the mean verbalized confidence, using Eq. 5, we obtain 95 × 0.8 = 76 , which is the target confidence we use in the training data for M𝑅 to learn to fit. □
+
+This process for training trace generation is detailed in Algo-rithm 1, and example T traces for both stages are in Appendix D.1. Importantly, we pair the selected reasoning trace (from the first sampling round, generated without confidence) with the aggregate confidence score (computed from the second sampling round, gen-erated with confidence), where the confidence is presented as an externally-derived label. Figure 4 (Left) shows an example from this generation process – given the table from Figure 2 (Right) with a missing cell, the teacher model T produces a reasoning trace that arrives at the correct prediction “3” , together with a confidence estimate “0.95” following Algorithm 1. Training. During distillation-based SFT, M𝑅 is trained to repro-duce the reasoning trace before outputting the predicted value: 
+
+<think> ... </think> {“value”: 𝑣 , “confidence”: 𝑐 }.
+
+Note that the confidence label 𝑐 is learned from T ’s sampling distri-bution, ensuring that M𝑅 learns to produce confidence that reflects true uncertainty rather than post-hoc rationalization [20]. 
+
+## 5.3 Coding Specialist 
+
+A third class of missing values follows column relationships best expressed as code, as opposed to verbose and imprecise text-based 
+
+Algorithm 2: Trace Construction for M𝐶                                                                      
+
+> Input: Masked table 𝑇 , target cell (𝑟, 𝑐 ), ground truth 𝑣 ∗, teacher
+> T, sample size 𝑘 , observed row indices Iobs in column 𝑐
+> Output: Training trace with supervision
+> 1for 𝑖 =1to 𝑘 do
+> 2Generate code 𝑐𝑜𝑑𝑒 𝑖 ← T ( 𝑇 );
+> 3Execute on column 𝑐 to get result 𝑉 𝑖 ;
+> 4if execution fails or 𝑉 𝑖 [𝑟, 𝑐 ]≠𝑣 ∗then
+> 5continue ;
+> 6acc ←1
+> |I obs |∑︁ 𝑗 ∈I obs 1[𝑉 𝑖 [𝑗, 𝑐 ]=𝑇 [𝑗, 𝑐 ] ] // Column-level accuracy on observed rows
+> 7if acc ≥0.8then
+> 8return (𝑐 𝑖 , 𝑣 ∗)
+> // 𝑐𝑜𝑑𝑒 𝑖 generalizes to column
+> 9return ⊥// No valid code found
+
+reasoning. For instance, in Figure 3, the missing value in cell B5 can be computed via the relationship “Clinton” = “100%” − “Bush” − 
+
+> “Perot”
+
+− “Others” . Describing such a relationship and performing the computation in natural language is verbose and error-prone; but in code, they are direct and precise: 
+
+> df[ 'Clinton '] = 1 - df[ 'Bush '] - df[ 'Perot '] - df[ 'Others ']
+
+Similarly, mathematical computations (e.g., calculating tax rates based on different regions), domain-specific formulas (e.g., BMI calculations), or unit conversion, etc., are all best expressed as executable code snippets, rather than text-based reasoning. Training data generation: column-level code. We generate train-ing data for M𝐶 by prompting a teacher model T to first reason about programmatic relationships that exist in a masked table (Ex-ample 4), before producing Python code snippets to instantiate the inferred relationships and predict the missing value. The format of the training traces generated by T is: 
+
+<think> ... </think> {“code”: 𝑐 }
+
+Figure 4 (Right) shows a concrete example of a trace with reasoning and a code snippet, for the example in Figure 3. We note that naive code generation using T can often produce “hard-coded” programs that directly overwrite the predicted value in the missing cell (e.g., df.loc[5, "B"] = "34.19%" for Figure 3), which is ad-hoc and does not reflect column-level relationships. We therefore constrain T to generate column-level code that computes the entire target column as a function of other columns (e.g., df["Clinton"] = 1 - df["Bush"] - df["Perot"] ... ). This has two benefits: it forces the model to discover and leverage column relationships rather than making ad-hoc point-based predictions; and it naturally generalizes to cases where multiple cells in the same column are missing. Our target code snippet 𝑐 , when exe-cuted against the input table, should then compute the entire target column, as in the case of Figure 4 (Right). For each training case that is a masked table, we iteratively prompt T to generate reasoning traces and code for up to 𝑘 times, accepting the first candidate that satisfies three criteria: (1) the code executes without errors, (2) it produces the correct value in the target missing cell, and (3) it produces correct values for at least 80% of cells in the same target column. The third criterion is crucial as it ensures the generated code generalizes to the entire column Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+(note that we do not require a 100% match with the target column, because in real tables, a small fraction of cells, such as total and sub-total rows, can deviate from the dominant column pattern). Cases where no valid code is found within 𝑘 attempts are discarded, as they likely have no programmatic relationships, and are unfit to be used as training data to train M𝐶 .Confidence extraction: execution-based validation. Because 
+
+M𝐶 produces code rather than direct predictions, token-level log-probabilities do not meaningfully reflect whether the code implements the correct transformation. Moreover, unlike M𝑅 ,where the model can reason about answer quality during its thinking process, M𝐶 cannot execute code during generation to verify correctness. We therefore derive confidence from 
+
+execution-based self-validation : after generating code, we execute it against the table and measure how well it reproduces the observed 
+
+(non-missing) values in the target column. Formally, let Iobs denote the set of observed row indices in column 𝑐 , and let 𝑓 code represent the function computed by the generated code. The confidence is: conf 𝐶 = 1
+
+|I obs |∑︂ 𝑖 ∈ I obs 
+
+1[︁ 𝑓 code (𝑇 [𝑖, :]) = 𝑇 [𝑖, 𝑐 ]]︁ . (6) This mechanism is grounded entirely in comparing execution re-sults and observed values in tables. Requiring column-level code makes self-validation meaningful: if the generated code recon-structs 90% of observed values in the target column, it gives strong evidence that the code snippet reliably captures the underlying column relationship. Conversely, low validation accuracy signals that the code is either incorrect or applies to only a subset of rows, lowering our confidence. When code execution fails entirely (due to syntax errors or runtime exceptions), we assign conf 𝐶 = 0. Algo-rithm 2 provides the complete process for coding trace generation. 
+
+Example 6. [Confidence extraction for M𝐶 ]. Consider the table in Figure 4 (Right), where the “Clinton” value for Mono County is missing, and M𝐶 generates the column-level code shown there. To compute confidence conf 𝐶 via Eq. 6, we execute this code and compare its output against the three observed “Clinton” values (Sierra: “34.83%” , Yuba: “34.24%” , Alpine: “34.07%” ). Since the ex-ecution results match the cell values across all three rows in the table, we get conf 𝐶 = 3/3 = 1.0. □
+
+Training. Using the training data prepared above, M𝐶 is trained similar to M𝑅 . The resulting M𝐶 learns to first generate reasoning trace, and then the corresponding code. Confidence estimates are computed via execution-based validation (Eq. 6), as in Example 6. This ensures that M𝐶 ’s confidence reflects execution success rather than the model’s subjective assessment of its own code quality. 
+
+## 5.4 Optional RL-based Training 
+
+The distillation-based SFT described above trains M𝑅 and M𝐶 to reproduce the teacher model’s reasoning traces and confidence signals. A natural question is whether reinforcement learning (RL) can further improve the specialists on top SFT, similar to what the training of DeepSeek-R1 has shown [12]. We explore this using a particular form of RL known as Group Relative Policy Optimization (GRPO) [ 43 ], that is shown to be ef-fective in LLMs. GRPO scores multiple sampled completions for the same input and uses relative rankings as the training signal, avoiding the need for a separate reward model. The key design challenge here is the reward function: standard RL for language models typically optimizes for correctness alone, but our setting requires both the prediction and the confidence to be accurate. Calibration-aware reward We use RLCR (Reinforcement Learn-ing with Calibration Rewards) [ 7], which augments the standard correctness reward with a Brier-score-based calibration term. For a prediction ˆ𝑣 with confidence 𝑞 ∈ [ 0, 1] and binary correctness indicator 1[ ˆ𝑣 = 𝑣 ∗], the reward is: 
+
+𝑅 = 1[ ˆ𝑣 = 𝑣 ∗] − (︁ 𝑞 − 1[ ˆ𝑣 = 𝑣 ∗])︁ 2, (7) where the calibration penalty is minimized when 𝑞 matches the em-pirical correctness—i.e., when the model states high confidence on cases it gets right and low confidence on cases it gets wrong. This re-ward encourages the model to jointly improve its predictions and its self-assessment. For M𝑅 , 𝑞 is the verbalized confidence (an integer 0–100, normalized to [0, 1]) from the model’s output. For M𝐶 , 𝑞 is the execution-based column accuracy conf 𝐶 defined in Equation 6, which serves as an implicit confidence signal grounded in observ-able correctness. We do not apply RL to M𝐾 , as its confidence derives from token-level log-probabilities rather than verifiable output signals suitable for reward-based training. As we will show in our experiments (Table 4), RL yields only modest improvements. We believe this is due to our need to bal-ance two objectives (correctness and confidence), which makes the reward function difficult to design and potentially less effective. Further training details are in Appendix A.3. 
+
+## 6 CALIBRATED ENSEMBLE OF SPECIALISTS 
+
+The three specialist models we described so far produce confi-dence signals through disparate mechanisms: M𝐾 via token log-probabilities, M𝑅 via verbalized probabilities, and M𝐶 via execu-tion, which are not directly comparable. In this section, we describe how to calibrate these into principled true probabilities (Section 6.1), in order to perform dynamic selection and abstention (Section 6.2). 
+
+## 6.1 Confidence Calibration 
+
+In the three specialists we trained, token log-probabilities from 
+
+M𝐾 tend toward binary extremes for common factual queries; ver-balized confidence from M𝑅 reflects uncertainty from the teacher model’s sampling distribution; and execution accuracy from M𝐶 
+
+is inherently discretized by the number of observed rows. Naively selecting the specialist with the highest raw score is therefore un-reliable, since a log-probability of 0.8 from M𝐾 does not carry the same meaning as an 80% execution accuracy from M𝐶 .To address this, we use isotonic regression [ 63 ], to calibrate confidence from each specialist into true probabilities. For each specialist M𝑖 ∈ {M 𝐾 , M𝑅 , M𝐶 }, on a held-out validation set Dval 
+
+disjoint from both training and test data, we collect 𝑛 pairs of raw confidence 𝑐 𝑗 (normalized to [0, 1]) and binary correctness label 
+
+𝑦 𝑗 , and fit a non-decreasing 𝑔 𝑖 : [0, 1] → [ 0, 1] that minimizes the empirical calibration error: 
+
+min 
+
+> 𝑔 𝑖
+> 𝑛
+
+∑︂ 
+
+> 𝑗 =1
+
+(︁ 
+
+𝑔 𝑖 (𝑐 𝑗 ) − 𝑦 𝑗 )︁ 2 s.t. 𝑔 𝑖 (𝑐 𝑗 ) ≤ 𝑔 𝑖 (𝑐 𝑘 ) ∀ 𝑐 𝑗 ≤ 𝑐 𝑘 . (8) Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+The resulting 𝑔 𝑖 is piecewise-constant, making no parametric as-sumption about the raw-confidence distribution, which differs sharply across specialists (log-probabilities, verbalized scores, ex-ecution accuracies). The calibrated probability ˆconf 𝑖 = 𝑔 𝑖 (conf 𝑖 )
+
+then approximates the true correctness probability of M𝑖 , making scores directly comparable across specialists. 
+
+## 6.2 Ensemble Selection 
+
+At inference time, given a table 𝑇 with a missing value at posi-tion (𝑟, 𝑐 ), we invoke all three specialists in parallel, each produc-ing a prediction and calibrated probability: (𝑣 𝐾 , ˆconf 𝐾 ), (𝑣 𝑅 , ˆconf 𝑅 ),
+
+(𝑣 𝐶 , ˆconf 𝐶 ). We select the output from the most confident specialist, or abstain if none of them exceeds a user-specified threshold 𝜏 :
+
+𝑖 ∗ = arg max   
+
+> 𝑖 ∈ { 𝐾,𝑅,𝐶 }
+
+ˆconf 𝑖 , 𝑣 final ={︄ 𝑣 𝑖 ∗ if ˆconf 𝑖 ∗ ≥ 𝜏 
+
+Abstain otherwise. (9) Note that unlike adaptive routing used in ChatGPT [ 38 ] that trains a separate routing model to send queries to appropriate mod-els (reasoning vs. chat), our confidence-based selection provides implicit routing based on true probabilities: a specialist suited for a test case naturally produces higher calibrated probability than oth-ers, and by selecting the specialist with the highest probability, the system dynamically “routes” to an appropriate specialist leveraging its unique specialties (knowledge, reasoning, vs. coding). Principled abstention. Missing cells cannot always be reliably inferred when inter- or intra-column dependencies are weak or absent. In such cases, all three specialists produce calibrated proba-bilities below the target precision threshold 𝜏 (Definition 1), and 
+
+Auto-Fill abstains naturally, a behavior explicitly desirable in business-critical scenarios, in contrast to the hallucinations or wild guesses vanilla LLMs are prone to. Example predictions from each specialist model can be found in Appendix D.2. We use the following example to demonstrate the end-to-end workflow of Auto-Fill with the specialist ensemble. 
+
+Example 7. [End-to-end ensemble selection] Consider the flight table in Figure 6, where the “Arrive” time for AA101 is missing and the target precision threshold is 𝜏 = 0.9. The three specialists are invoked in parallel. M𝐾 produces an (incorrect) answer “10:30” 
+
+directly, where its raw log-probability confidence (Eq (4) ) of 0.418 
+
+is calibrated into a true probability of 0.24 using Eq (8) . M𝑅 rea-sons to the correct value “10:45” , with its verbalized confidence calibrated to ˆconf 𝑅 = 0.95 . M𝐶 generates column-level code that derives arrival times from departure times and durations, validates it on the observed rows, and predicts “10:45” with ˆconf 𝐶 = 0.99 .Because ˆconf 𝐶 is the highest and exceeds 𝜏 , Auto-Fill returns 
+
+M𝐶 ’s prediction; if all three confidences are below 𝜏 , it abstains. □
+
+## 7 EXPERIMENT 7.1 Experimental Setup 
+
+Benchmarks. To rigorously evaluate the performance of Auto-Fill , we built a comprehensive set of 11 benchmarks from 11 diverse tabular data sources. We select 200 test tables per benchmark from each tabular source, for a comprehensive set of 2,200 test tables in total. We test both in-distribution and out-of-distribution settings. Training Data. We train our specialist models using training data built with tables from six tabular sources:  
+
+> •
+
+Pub-XLS is a large collection of 467K relational tables parsed from spreadsheet files (.xlsx) crawled from a search engine index.  
+
+> •
+
+Pub-BI is a collection of 12K relational tables extracted from business intelligence (BI) models obtained from a prior study [ 27 ].  
+
+> •
+
+Pub-Wiki is a set of 292K Wikipedia tables extracted from a recent snapshot of Wikipedia.  
+
+> •
+
+Gov-CSV is a collection of 1.6K CSV files crawled from a govern-ment portal (nationalarchives.gov.uk) [ 45 ], following a similar crawling procedure as [2].  
+
+> •
+
+Git-CSV is a recent crawl of 635 CSV files from GitHub. Com-pared to Gov-CSV, which is often data statistics manually created by government agencies, Git-CSV are more developer-centric, with data programmatically generated by code on GitHub.  
+
+> •
+
+Git-Parquet is a recent crawl of 29k Parquet files from GitHub, which is similar in nature to Git-CSV, but in the Parquet format. This collection spans public web tables, government statistics, and spreadsheet repositories, providing exposure to diverse table con-tent and structures. We sample from this corpus to construct train-ing cases using our masking procedure (Example 4). Test Data: In-Distribution (ID). For in-distribution tests, we sam-pled held-out test tables from five of our training sources: Pub-XLS, Gov-CSV, Pub-BI, Git-Parquet, and Pub-Wiki 3 These test tables are fully disjoint from those used during training. Test Data: Out-of-Distribution (OOD). In addition, we randomly sample tables from six additional tabular sources completely un-seen during training, hereby introducing novel data content and previously unobserved domains, to test models’ generalizability:  
+
+> •
+
+Ent-CSV is a collection of 100k enterprise CSV files obtained from a large enterprise’s data lake behind a corporate firewall. Unlike Gov-CSV or Git-CSV, most files are proprietary and unavailable on the public web, making it a strong “OOD” test set.  
+
+> •
+
+Ent-XLS is a collection of 100k enterprise Spreadsheet files (.xlsx), obtained from a large enterprise. Similar to Ent-CSV, Ent-XLS are proprietary in nature and reserved for OOD evaluation.  
+
+> •
+
+Pub-Web [53] is a large collection of 1k general web tables ex-tracted from public HTML pages.  
+
+> •
+
+Rel-AR is a collection of 6k real tables with known column-level arithmetic relationships (AR), e.g., column “Margin” = “Profit” / “Cost” in the same table [ 14 ]. When a cell in an arithmetic rela-tionship is missing, the missing value can be reverse-engineered from the remaining values in the same row.  
+
+> •
+
+Rel-ST includes 1.1k tables with known string-based relation-ships (e.g. column “full-name” = column “first-name” concatenate column “last-name” [ 14 ]). Like Rel-AR, missing values in a string relationship can be inferred from values in the same row.  
+
+> •
+
+Rel-FD 4 is a set of 167k tables with real Functional Dependencies (FD) (e.g., 𝑃𝑟𝑜𝑑𝑢𝑐𝑡𝐼𝐷 → 𝑃𝑟𝑜𝑑𝑢𝑐𝑡𝑁 𝑎𝑚𝑒 ) [ 14 ]. When a value in a dependent column is missing, the missing value can also be inferred using the FDs in the table. 
+
+> 3Git-CSV has too few tables and could not be used for tests.
+> 4Note that in the case of Rel-AR, Rel-ST, Rel-FD, even if relationships are known, they are not provided as input, therefore requiring models to use their reasoning capabilities to infer implicit relationships before they can fill values in correctly.
+
+Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Table 2: Quality results of all methods. Each cell reports R@P=0.9 / pAUPRC. The FD upper-bound row reports full-distribution recall. Cost reflects LLM inference per query only. First , second , and third best results per column are highlighted. In-Distribution (ID) Out-of-Distribution (OOD) Method Pub-XLS Pub-BI Pub-Wiki Gov-CSV Git-Parquet Ent-CSV Ent-XLS Pub-Web Rel-AR Rel-FD Rel-ST Mean ( ↑) Cost ($) ( ↓)
+
+Non-LLM baselines 
+
+FD upper-bound ∗ 0.06 / — 0.16 / — 0.08 / — 0.07 / — 0.23 / — 0.34 / — 0.13 / — 0.07 / — 0.06 / — 0.48 / — 0.00 / — 0.15 / — —LakeFill-small 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.83 / 0.77 0.00 / 0.00 0.08 / 0.07 —LakeFill-full 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.77 / 0.71 0.00 / 0.00 0.07 / 0.06 —TabPFN 0.00 / 0.00 0.12 / 0.11 0.00 / 0.00 0.16 / 0.15 0.26 / 0.25 0.46 / 0.45 0.30 / 0.30 0.00 / 0.00 0.12 / 0.12 0.68 / 0.66 0.03 / 0.03 0.19 / 0.19 —Baran 0.00 / 0.00 0.07 / 0.07 0.08 / 0.00 0.26 / 0.25 0.30 / 0.28 0.53 / 0.52 0.48 / 0.48 0.00 / 0.00 0.11 / 0.11 0.70 / 0.69 0.03 / 0.03 0.23 / 0.22 —SCARE 0.00 / 0.00 0.07 / 0.06 0.00 / 0.00 0.17 / 0.16 0.24 / 0.22 0.45 / 0.44 0.39 / 0.39 0.00 / 0.00 0.12 / 0.12 0.63 / 0.62 0.03 / 0.03 0.19 / 0.19 —
+
+LLMs with verbalized confidence 
+
+Qwen3-8B 0.00 / 0.00 0.43 / 0.40 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.26 / 0.24 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.06 / 0.06 5.36 ·10 −4
+
+GPT-4.1 mini 0.08 / 0.08 0.27 / 0.25 0.02 / 0.02 0.00 / 0.00 0.15 / 0.14 0.00 / 0.00 0.12 / 0.11 0.02 / 0.02 0.00 / 0.00 0.81 / 0.75 0.90 / 0.84 0.21 / 0.20 1.81 ·10 −3
+
+GPT-4.1 0.31 / 0.28 0.42 / 0.39 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.45 / 0.43 0.00 / 0.00 0.00 / 0.00 0.84 / 0.80 0.99 / 0.97 0.27 / 0.26 9.02 ·10 −3
+
+DeepSeek-R1 0.21 / 0.19 0.59 / 0.56 0.09 / 0.08 0.16 / 0.15 0.00 / 0.00 0.13 / 0.12 0.00 / 0.00 0.00 / 0.00 0.93 / 0.88 0.87 / 0.86 0.98 / 0.96 0.36 / 0.34 6.21 ·10 −3
+
+o4-mini 0.43 / 0.42 0.67 / 0.64 0.13 / 0.12 0.41 / 0.38 0.46 / 0.44 0.42 / 0.41 0.66 / 0.62 0.16 / 0.14 0.98 / 0.98 0.88 / 0.85 0.99 / 0.98 0.56 / 0.54 1.09 ·10 −2
+
+GPT-5.2 0.02 / 0.02 0.57 / 0.55 0.25 / 0.23 0.49 / 0.46 0.44 / 0.42 0.59 / 0.57 0.50 / 0.47 0.00 / 0.00 0.88 / 0.83 0.89 / 0.89 0.98 / 0.98 0.51 / 0.49 7.31 ·10 −3
+
+Gemini 3 Pro 0.00 / 0.00 0.66 / 0.63 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.00 / 0.00 0.65 / 0.58 0.00 / 0.00 0.98 / 0.95 0.94 / 0.92 1.00 / 1.00 0.38 / 0.37 4.30 ·10 −2
+
+o3-pro 0.55 / 0.53 0.02 / 0.02 0.43 / 0.41 0.52 / 0.50 0.54 / 0.51 0.63 / 0.62 0.64 / 0.63 0.00 / 0.00 1.00 / 1.00 0.90 / 0.89 1.00 / 1.00 0.56 / 0.55 1.77 ·10 −1
+
+LLMs with logprob confidence 
+
+GPT-4.1 mini 0.00 / 0.00 0.55 / 0.54 0.07 / 0.06 0.39 / 0.37 0.47 / 0.44 0.49 / 0.46 0.00 / 0.00 0.21 / 0.20 0.58 / 0.57 0.81 / 0.79 0.95 / 0.94 0.41 / 0.40 1.82 ·10 −3
+
+GPT-4.1 0.41 / 0.40 0.00 / 0.00 0.26 / 0.24 0.38 / 0.35 0.52 / 0.51 0.53 / 0.50 0.53 / 0.50 0.00 / 0.00 0.72 / 0.68 0.88 / 0.86 0.98 / 0.97 0.47 / 0.46 9.33 ·10 −3
+
+GPT-5.2 0.48 / 0.46 0.63 / 0.60 0.38 / 0.37 0.03 / 0.03 0.58 / 0.57 0.04 / 0.04 0.66 / 0.62 0.35 / 0.34 0.90 / 0.90 0.89 / 0.88 0.99 / 0.99 0.54 / 0.53 7.22 ·10 −3
+
+LLMs with self-consistency confidence 
+
+DeepSeek-R1 0.00 / 0.00 0.65 / 0.58 0.00 / 0.00 0.00 / 0.00 0.55 / 0.50 0.00 / 0.00 0.53 / 0.48 0.00 / 0.00 0.94 / 0.93 0.89 / 0.86 0.99 / 0.98 0.41 / 0.39 5.90 ·10 −2
+
+o4-mini 0.00 / 0.00 0.74 / 0.68 0.00 / 0.00 0.00 / 0.00 0.59 / 0.54 0.57 / 0.51 0.00 / 0.00 0.00 / 0.00 1.00 / 1.00 0.89 / 0.86 1.00 / 1.00 0.43 / 0.42 1.23 ·10 −1
+
+Ours 
+
+Auto-Fill -Qwen 0.53 / 0.48 0.62 / 0.61 0.29 / 0.28 0.50 / 0.49 0.59 / 0.58 0.59 / 0.56 0.66 / 0.64 0.28 / 0.23 0.99 / 0.99 0.89 / 0.89 1.00 / 0.99 0.63 / 0.61 1.48 ·10 −3
+
+Auto-Fill -GPT 0.47 / 0.44 0.71 / 0.69 0.33 / 0.32 0.55 / 0.50 0.60 / 0.58 0.61 / 0.57 0.69 / 0.67 0.42 / 0.42 0.99 / 0.98 0.89 / 0.89 0.99 / 0.99 0.66 / 0.64 1.13 ·10 −2
+
+Data Filtering and Preprocessing. During pre-processing, we re-move low-information tables, or ones with a missing-value ratio exceeding 70%. We also filtered out cells exceeding 1,000 charac-ters (which likely contain long natural-language texts), to focus on structured tabular content rather than long-form text. From each ID and OOD source, we sample 200 test tables, each masking out exactly one cell (marked as [MISSING] , as in Figure 6). 
+
+Training Details. Our primary experiments use Qwen3-8B as the base architecture for all three specialists [ 1 , 47 , 57 ]; we refer to this configuration as Auto-Fill -Qwen. We also train a GPT-4.1 mini variant, another SLM-class model [ 37 ], via the Microsoft Azure AI Foundry fine-tuning API 5, referred to as Auto-Fill -GPT. We additionally train models of different sizes in the same family (Qwen3-8B, 4B, 1.7B; GPT-4.1-full, mini, nano) for comparisons. For Auto-Fill -Qwen, M𝐾 is trained via standard supervised fine-tuning on 30K direct question-answer pairs without reasoning, while M𝑅 and M𝐶 are each fine-tuned on 50K examples from the DeepSeek-R1 distillation. All three specialists are then calibrated on 2,000 held-out cases from the ID training corpus. During inference, M𝑅 and M𝐶 use a sampling temperature of 0.8 to encourage diverse reasoning paths, while M𝐾 uses 0.1, reflecting its role as a deterministic knowledge retriever. 
+
+Evaluation Metrics. As defined in our problem formulation (Sec-tion 3), we target high-precision scenarios, where models must ab-stain whenever their calibrated confidence falls below a predefined precision threshold 𝜏 (e.g., 𝜏 = 0.9). Accordingly, our evaluation focuses on the high-precision regime . Following [ 4], we use two metrics to assess result quality in this high-precision regime: 
+
+> 5
+
+https://learn.microsoft.com/en-us/azure/ai-services/openai/how-to/fine-tuning. 
+
+R@P=0.9 (Recall@Precision=0.9 ) measures recall at the target pre-cision threshold 6. The reported recall thus reflects a high-precision segment from the top of the ranked list, without crediting recall at lower confidence levels, which directly aligns with our high-precision problem setting in Definition 1. Additional results for R@P=0.8 and full accuracy can be found in Appendix B. 
+
+pAUPRC (partial Area Under the Precision-Recall Curve) mea-sures the area under the curve for precision ≥ 0.9. While R@P=0.9 identifies the maximum coverage before precision drops below the threshold, pAUPRC evaluates the stability of the model’s ac-curacy leading up to that point, rewarding models that maintain near-perfect precision across their most confident predictions. 
+
+Baselines. We compare Auto-Fill with a diverse set of methods: Vanilla Language Models. We evaluate a broad set of open- and closed-source models at various scales. Closed-source baselines in-clude GPT-4.1 and GPT-4.1 mini, frontier OpenAI models (o4-mini, o3-pro, GPT-5.2), as well as Gemini 3 Pro. Open-source baselines include Qwen3-8B (with thinking) and the frontier open-source rea-soning model DeepSeek-R1. By default, we prompt all vanilla LLMs to verbalize a confidence score alongside the prediction. We also evaluate logprob (next-token probability of the predicted answer) for non-reasoning models, and self-consistency [ 51 ] ( 𝑘 =10 sample agreement) for the more affordable reasoning models (DeepSeek-R1, o4-mini); we exclude premium reasoning models (e.g., o3-pro) here as 𝑘 -sample inference becomes prohibitively expensive. Logprob is inapplicable to reasoning models, since chain-of-thought breaks 
+
+> 6
+
+Similar to [ 4 ], predictions are sorted by descending calibrated confidence, and all predictions sharing the same confidence score are evaluated as a group. Recall is recorded at the highest-confidence prefix of the ranked list where precision, computed over all predictions from the top down to that point, remains at or above 0.9 Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 1 5 10          
+
+> Sample size k
+> 0.550
+> 0.575
+> 0.600
+> 0.625
+> 0.650
+> 0.675
+> 0.700
+> R@P=0.9
+> (a) Sample-size ablation
+> 0.0 0.5 0.8 1.0
+> Column reconstruction threshold ( tr)
+> 0.550
+> 0.575
+> 0.600
+> 0.625
+> 0.650
+> 0.675
+> 0.700
+> R@P=0.9
+> (b) Threshold ablation
+> Auto-Fill-Qwen Auto-Fill-GPT
+> 10 −3
+> 10 −2
+> Cost ($)
+> 1.48e-03 1.13e-02 1.60e-03 1.17e-02
+> (c) Trace-selection strategy
+> shortest
+> random
+> 10 −3 10 −2
+> Cost ($, log scale)
+> 0.575
+> 0.600
+> 0.625
+> 0.650
+> 0.675
+> R@P=0.9
+> 10 rows
+> 30 rows
+> 50 rows
+> all rows
+> 10 rows
+> 30 rows
+> 50 rows
+> all rows
+> (d) Row-sample size trade-off
+> Auto-Fill-Qwen Auto-Fill-GPT
+
+Figure 7: Sensitivity of Auto-Fill to trace-construction and inference-time choices: (a) M𝑅 ’s teacher sample size 𝑘 , (b) M𝐶 ’s column-reconstruction threshold 𝑡 𝑟 , (c) shortest vs. random trace selection, and (d) input-table row sampling at inference. Table 3: Quality and cost trade-offs across model sizes. Met-rics are averaged over ID and OOD datasets. Model Size ID OOD Cost ($) R@P=0.9 pAUPRC R@P=0.9 pAUPRC Qwen3 
+
+1.7B 0.362 0.352 0.668 0.663 —4B 0.423 0.411 0.715 0.710 3.27 ·10 −4
+
+8B 0.503 0.488 0.733 0.717 1.48 ·10 −3
+
+GPT-4.1 
+
+Nano 0.279 0.240 0.609 0.588 1.85 ·10 −3
+
+Mini 0.530 0.508 0.762 0.752 1.13 ·10 −2
+
+Full 0.569 0.555 0.757 0.750 5.24 ·10 −2
+
+token-level calibration [ 35 ] and closed-source reasoning APIs do not expose logprobs. Retrieval-Augmented Imputation. We compare against Lake-Fill [ 58 ], a state-of-the-art retrieval-based imputation system for data lakes. LakeFill retrieves related tuples from a data lake and leverages an LLM to perform imputation. We use the authors’ origi-nal implementation with their confidence-aware variant for absten-tion. LakeFill-full runs on a lake of all 50K training tables used by Auto-Fill ; since retrieval often fails at this scale, we also test 
+
+LakeFill-small , which uses only the 200 test tables per benchmark. Tabular ML models. We compare against TabPFN [16 ], a pre-trained transformer for in-context tabular prediction. We adapt it by treating filled rows as in-context training examples and predicting the masked cell in a query row, using the multiclass extension for high-cardinality columns and predicted probability as confidence. Data Repair Approaches. We adapt two repair systems to single-cell imputation: SCARE [56 ], with one masked cell per row, reduces to a Naive-Bayes predictor over the non-target columns (class prob-ability as confidence); and Baran [ 31 ], where, lacking user-labeled corrections, we hold out observed target-column cells as simulated corrections and use its meta-classifier score as confidence. Variants of these baselines are in Appendix A.4. Functional Dependency (FD)-based Methods. FD-based meth-ods exploit deterministic column dependencies (e.g., employee-ID 
+
+⇒ employee-name) widely used in data cleaning. Since FDs yield no calibrated confidence, we adopt an optimistic FD-upper-bound :if a missing cell lies on the RHS of an FD whose LHS appears else-where, we count it as “solved by FD” without imposing the ≥ 0.9
+
+precision threshold required of other methods. 
+
+Auto-Fill Variants. We also compare against alternative design choices from Table 1, including a hybrid model trained on mixed 
+
+Table 4: Effect of RL fine-tuning on specialist models in Auto-Fill -Qwen3-1.7B . The baseline (—) uses SFT-only specialists. Specialist w/ RL ID OOD R@P=0.9 pAUPRC R@P=0.9 pAUPRC 
+
+M𝑅 0.354 (↓0.008) 0.345 (↓0.007) 0.673 (↑0.005) 0.667 (↑0.004) 
+
+M𝐶 0.377 (↑0.015) 0.366 (↑0.014) 0.668 (↑0.000) 0.662 (↓0.001) 
+
+M𝑅 + M 𝐶 0.369 (↑0.007) 0.359 (↑0.007) 0.678 (↑0.010) 0.671 (↑0.008) 
+
+Table 5: Ablation study on specialist combinations, with R@P denoting R@P=0.9. Qwen3-8B GPT-4.1 mini Specialist(s) ID OOD ID OOD R@P pAUPRC R@P pAUPRC R@P pAUPRC R@P pAUPRC                                                                  
+
+> M𝐾 only 0.428 0.421 0.637 0.629 0.501 0.488 0.705 0.697
+> M𝑅 only 0.258 0.246 0.551 0.538 0.338 0.325 0.547 0.525
+> M𝐶 only 0.160 0.151 0.497 0.491 0.187 0.179 0.430 0.430
+> M𝐾 +M𝑅 0.466 0.451 0.692 0.678 0.512 0.499 0.729 0.713
+> M𝐾 +M𝐶 0.467 0.452 0.718 0.707 0.526 0.449 0.748 0.697
+> M𝑅 +M𝐶 0.371 0.356 0.598 0.591 0.347 0.330 0.555 0.550
+> All (Ours) 0.503 0.488 0.733 0.717 0.530 0.508 0.762 0.752
+
+data, and a learned router or a classical classifier for ensemble se-lections. We report these results in our ablation study (Section 7.4). 
+
+## 7.2 Overall comparisons 
+
+Quality comparisons. Table 2 reports R@P=0.9 and pAUPRC across all 11 datasets. Auto-Fill -Qwen achieves 0.628 and 0.613, and 
+
+Auto-Fill -GPT further improves to 0.656 and 0.641, both outper-forming all baselines on both metrics. The FD upper-bound row reports the maximum recall achiev-able under perfect abstention. Even so, recall stays low, showing that formal constraints cannot capture the knowledge or reasoning needed to fill missing values. Both LakeFill variants score low, of-ten because the target is absent from the retrieved tuples (or the lake itself) and their confidence is unreliable; LakeFill-small does slightly better, suggesting a larger lake adds more noise than signal. Likewise, TabPFN and classical repair methods (Baran, SCARE) rely on statistical association across rows—succeeding on Rel-FD and enterprise tables where targets recur as lookup values, but failing on Rel-AR / Rel-ST (computed, unique per row) and on knowledge-intensive benchmarks whose answers lie outside the table. Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Table 6: Ablation study on ensemble strategies in Auto-Fill -
+
+Qwen . # M denotes the number of models used. Parentheses show drops from the full calibrated ensemble. Variant #M ID ( ↑) OOD ( ↑) Cost ($) ( ↓)R@P=0.9 pAUPRC R@P=0.9 pAUPRC                               
+
+> Hybrid Model 10.000 (↓0.503) 0.000 (↓0.488) 0.358 (↓0.375) 0.357 (↓0.360) 5.45 ·10 −5
+> Learned Router 20.158 (↓0.345) 0.153 (↓0.335) 0.423 (↓0.310) 0.413 (↓0.304) 4.58 ·10 −4
+> Classical ML 30.178 (↓0.325) 0.156 (↓0.332) 0.570 (↓0.163) 0.565 (↓0.152) 1.48 ·10 −3
+
+Vanilla LLMs are known to be overconfident and to hallucinate under uncertainty, and this is on full display on our benchmarks. While stronger frontier models perform well when answers are certain and directly derivable from the table context – e.g., o3-pro and Gemini 3 Pro both reach near-perfect quality on relational datasets (Rel-AR, Rel-FD, Rel-ST), they all drop sharply on other less deterministic benchmarks that require abstention (overcon-fident errors can quickly push precision below 0.9 and collapse R@P=0.9). Even DeepSeek-R1, our distillation teacher T , achieves only modest mean scores, confirming that raw reasoning capability alone does not yield reliable uncertainty estimation. Smaller models such as Qwen3-8B and GPT-4.1 mini collapse to near-zero recall on almost all benchmarks. Replacing verbalized confidence with log-prob or self-consistency yields mixed results. Logprob helps weaker non-reasoning models like GPT-4.1 mini substantially, but only marginally improves GPT-5.2. Self-consistency helps DeepSeek-R1 yet hurts o4-mini, while inflating cost ∼ 10 ×. As no alternative ap-plies uniformly across all backbones, and none matches Auto-Fill ,we adopt verbalized confidence as the default in all other results. In comparison, Auto-Fill addresses this using each special-ist’s trained confidence (tailored to its mode), and calibration for true probabilities. On relational datasets, both Auto-Fill vari-ants achieve near-perfect recall via M𝐶 ’s execution-based self-validation. On the noisier and more challenging Pub-Web, Auto-Fill -GPT reaches 0.42 versus 0.00 for most baselines, benefiting from GPT-4.1’s richer world knowledge and strong abstention. PR curves for all methods are provided in Appendix B.4 Cost comparisons. The last column of Table 2 reports per-query LLM inference cost, computed using the lowest publicly available API prices. 7 Per-dataset costs can be found in Appendix B.3. 
+
+Auto-Fill -Qwen is over 100 × cheaper than o3-pro and 29 ×
+
+cheaper than Gemini 3 Pro while achieving higher mean quality than both. Auto-Fill -GPT remains cost-competitive with o4-mini while substantially outperforming it in quality. Figure 5 summarizes the joint comparison: both Auto-Fill vari-ants form the quality–cost Pareto frontier and achieve substantial quality gains at less than 1% of the cost of frontier models. 
+
+## 7.3 Sensitivity analysis 
+
+Sensitivity to base model sizes. Table 3 reports performance across Qwen3 (1.7B, 4B, 8B) and GPT-4.1 (Nano, Mini, Full) variants. 8
+
+Within each family, quality generally improves with model size. For Qwen3, performance improves consistently with size, though with  
+
+> 7Prices sourced from OpenRouter for DeepSeek-R1 and Gemini 3 Pro, Azure OpenAI for GPT family models, and SiliconFlow for Qwen3 models. (accessed February 2026)
+> 8GPT-4.1 Mini and Nano are SLM-class models per OpenAI [ 37 ], while GPT-4.1 Full is included to assess the ceiling when using a frontier backbone.
+
+Table 7: Ablation study on confidence extraction mechanisms. Each row replaces one specialist’s confidence signal with random verbal confidence, keeping other components fixed. Specialist Ablation ID OOD R@P=0.9 pAUPRC R@P=0.9 pAUPRC                            
+
+> M𝐾 Logprob 0.290 (↓0.213) 0.274 (↓0.214) 0.625 (↓0.108) 0.616 (↓0.101)
+> M𝑅 Avg. verbal 0.467 (↓0.036) 0.458 (↓0.030) 0.715 (↓0.018) 0.705 (↓0.012)
+> M𝐶 Execution 0.466 (↓0.037) 0.451 (↓0.037) 0.706 (↓0.027) 0.691 (↓0.026)
+
+diminishing OOD returns, suggesting that moderate model sizes are likely sufficient. Similarly, for GPT-4.1, Mini achieves comparable OOD performance to Full. This result shows that Auto-Fill is robust to model architectures and sizes, allowing practitioners to select a backbone that fits their cost profiles using our framework. Sensitivity to Trace Construction Choices. Figure 7(a-c) varies three choices in our distillation pipeline. For M𝑅 (Fig. 7a), quality improves with the number of teacher samples 𝑘 used for confidence aggregation. For M𝐶 (Fig. 7b), the column-reconstruction threshold peaks at 𝑡 𝑟 = 0.8: 𝑡 𝑟 = 0.0 admits hard-coded snippets that fit only the masked row, while 𝑡 𝑟 = 1.0 rejects tables with legitimate outliers such as sub-totals. Finally, selecting the shortest trace achieves comparable quality to random selection at slightly lower inference cost because it produces shorter student outputs (Fig. 7c). Sensitivity to Input-Table Row Sampling. Real-world tables can exceed an SLM’s context window. To probe Auto-Fill at this scale, Figure 7d sub-samples the input from 10, 30, 50, or all rows. Going from all rows down to 10 reduces R@P=0.9 only mildly ( ∼0.05 for both backbones) while cutting input-token cost, indicating that uniform row sampling is a practical strategy for large tables. Sensitivity to RL fine-tuning Table 4 reports the effect of adding RL on top of distillation-based SFT, with Qwen3-1.7B as the base. Unlike standard tasks where RL optimizes a single accuracy signal, our setting requires jointly improving prediction accuracy and 
+
+confidence calibration – a harder target where gains on one can come at the expense of the other [ 25 , 46 ]. This challenge is reflected in the results: GRPO yields only modest gains, and combining both 
+
+M𝑅 and M𝐶 produces the most consistent improvement, with gains across all four metrics. Given the marginal overall gains and additional training cost, we treat GRPO as optional in Auto-Fill ,which is a potential area for future research. 
+
+## 7.4 Ablation studies 
+
+Contributions of individual SLMs. Table 5 ablates the contribution of each specialist. Among single specialists, M𝐾 achieves the strongest performance. M𝐶 achieves the lowest overall recall, as programmatic column patterns exist in only a subset of tables. Among pairwise combinations, M𝐾 +M𝐶 performs best overall, suggesting that knowledge and coding are especially complemen-tary. Combining all three specialists achieves the best performance across both settings, confirming the benefit of the full design. Per-dataset breakdowns revealing further insights, such as M𝑅 ’s col-lapse on knowledge-intensive datasets and M𝐶 ’s near-perfect recall on relational ones, are discussed in Appendix B.6. Contributions of specialist composition strategy. Table 6 com-pares alternative composition strategies. The single hybrid model Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+collapses to zero ID recall, likely because conflicting training signals prevent it from learning reliable confidence [ 44 , 62 ]. The learned router also performs worse because it predicts which specialist to invoke rather than producing a calibrated probability. The classi-cal ML ensemble improves over the router on OOD data but still trails calibration, suggesting that its learned confidence mapping does not generalize reliably. Overall, calibrated confidence selection provides the strongest and most consistent performance. Contributions of confidence extraction. Table 7 evaluates each specialist’s confidence mechanism by replacing it with verbalized confidence at inference time, and with T ’s verbalized confidence during training. M𝐾 ’s substitution incurs the largest drop, con-firming the value of log-probabilities in the direct-answer setting. 
+
+M𝑅 drops moderately, as single-trace verbal confidence is noisier than 𝑘 -run aggregation, and M𝐶 drops comparably, since verbal confidence removes the execution-grounded correctness signal. 
+
+## 8 CONCLUSIONS AND FUTURE WORK 
+
+We study the problem of predicting missing values in tables with calibrated precision estimates, and develop Auto-Fill that post-trains specialist SLMs for knowledge/reasoning/coding, respec-tively, which are then combined using a dynamic calibrated ensem-ble that can abstain when no specialist SLM is confident. Extensive experiments show that Auto-Fill achieves state-of-the-art accu-racy, while operating at less than 1% of the cost of frontier models. Future directions include jointly predicting interdependent missing cells and context pruning for large tables. 
+
+## ACKNOWLEDGMENTS 
+
+We sincerely thank Dr. Juliana Freire of New York University for her thoughtful feedback, as well as Tal Kariv, Tsofiya Aiello, Gil Kulish, Arnon Peretz, Dorli Hanson, Danielle Rifinski Fainman, Shir Zehavi Zoran, and many others on the Excel Clean Data team for their invaluable support. 
+
+## REFERENCES 
+
+[1] Peter Belcak, Greg Heinrich, Shizhe Diao, Yonggan Fu, Xin Dong, Saurav Mu-ralidharan, Yingyan Celine Lin, and Pavlo Molchanov. 2025. Small language models are the future of agentic ai. arXiv preprint arXiv:2506.02153 (2025). [2] Alex Bogatu, Alvaro AA Fernandes, Norman W Paton, and Nikolaos Konstanti-nou. 2020. Dataset discovery in data lakes. In 2020 ieee 36th international confer-ence on data engineering (icde) . IEEE, 709–720. [3] Christine P Chai. 2020. The importance of data cleaning: Three visualization examples. Chance 33, 1 (2020), 4–9. [4] Qixu Chen, Yeye He, Raymond Chi-Wing Wong, Weiwei Cui, Song Ge, Haidong Zhang, Dongmei Zhang, and Surajit Chaudhuri. 2025. Auto-Test: Learning Semantic-Domain Constraints for Unsupervised Error Detection in Tables. Pro-ceedings of the ACM on Management of Data 3, 3 (2025), 1–27. [5] Wenhu Chen, Xueguang Ma, Xinyi Wang, and William W. Cohen. 2023. Pro-gram of Thoughts Prompting: Disentangling Computation from Reasoning for Numerical Reasoning Tasks. Transactions on Machine Learning Research (2023). [6] Xu Chu, Ihab F Ilyas, Sanjay Krishnan, and Jiannan Wang. 2016. Data cleaning: Overview and emerging challenges. In Proceedings of the 2016 international conference on management of data . 2201–2206. [7] Mehul Damani, Isha Puri, Stewart Slocum, Idan Shenfeld, Leshem Choshen, Yoon Kim, and Jacob Andreas. 2025. Beyond binary rewards: Training lms to reason about their uncertainty. arXiv preprint arXiv:2507.16806 (2025). [8] Tlamelo Emmanuel, Thabiso Maupong, Dimane Mpoeleng, Thabo Semong, Bany-atsang Mphago, and Oteng Tabona. 2021. A survey on missing data in machine learning. Journal of Big data 8, 1 (2021), 140. [9] Pedro J García-Laencina, José-Luis Sancho-Gómez, and Aníbal R Figueiras-Vidal. 2010. Pattern classification with missing data: a review. Neural Computing and Applications 19, 2 (2010), 263–282. [10] Jiahui Geng, Fengyu Cai, Yuxia Wang, Heinz Koeppl, Preslav Nakov, and Iryna Gurevych. 2024. A survey of confidence estimation and calibration in large lan-guage models. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) . 6577–6595. [11] Google. 2020. Connected Sheets is Generally Available. Retrieved February 2026 from https://workspace.google.com/blog/product-announcements/connected-sheets-is-generally-available [12] Daya Guo, Dejian Yang, Haowei Zhang, Junxiao Song, Peiyi Wang, Qihao Zhu, Runxin Xu, Ruoyu Zhang, Shirong Ma, Xiao Bi, et al . 2025. Deepseek-r1: Incen-tivizing reasoning capability in llms via reinforcement learning. arXiv preprint arXiv:2501.12948 (2025). [13] Daya Guo, Qihao Zhu, Dejian Yang, Zhenda Xie, Kai Dong, Wentao Zhang, Guanting Chen, Xiao Bi, Yifan Wu, YK Li, et al . 2024. DeepSeek-Coder: when the large language model meets programming–the rise of code intelligence. arXiv preprint arXiv:2401.14196 (2024). [14] Ziyan Han, Yeye He, Shuyuan Kang, Min Xie, Weiwei Cui, Song Ge, Haidong Zhang, Dongmei Zhang, Surajit Chaudhuri, Rui Mao, et al . 2026. Auto-Relate: A Unified Approach to Discovering Reliable Functional Relationships Leveraging Statistical Tests. arXiv preprint arXiv:2606.07060 (2026). [15] Xinrui He, Yikun Ban, Jiaru Zou, Tianxin Wei, Curtiss Cook, and Jingrui He. 2025. LLM-forest: Ensemble learning of LLMs with graph-augmented prompts for data imputation. In Findings of the Association for Computational Linguistics: ACL 2025 . 6921–6936. [16] Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. 2022. Tabpfn: A transformer that solves small tabular classification problems in a second. arXiv preprint arXiv:2207.01848 (2022). [17] Ming Hua and Jian Pei. 2007. Cleaning disguised missing data: a heuristic approach. In Proceedings of the 13th ACM SIGKDD international conference on Knowledge discovery and data mining . 950–958. [18] Anil Jadhav, Dhanya Pramod, and Krishnan Ramanathan. 2019. Comparison of performance of data imputation methods for numeric dataset. Applied Artificial Intelligence 33, 10 (2019), 913–933. [19] Aaron Jaech, Adam Kalai, Adam Lerer, Adam Richardson, Ahmed El-Kishky, Aiden Low, Alec Helyar, Aleksander Madry, Alex Beutel, Alex Carney, et al . 2024. Openai o1 system card. arXiv preprint arXiv:2412.16720 (2024). [20] Saurav Kadavath, Tom Conerly, Amanda Askell, Tom Henighan, Dawn Drain, Ethan Perez, Nicholas Schiefer, Zac Hatfield-Dodds, Nova DasSarma, Eli Tran-Johnson, et al . 2022. Language models (mostly) know what they know. arXiv preprint arXiv:2207.05221 (2022). [21] Ehud Karpas, Omri Abend, Yonatan Belinkov, Barak Lenz, Opher Lieber, Nir Ratner, Yoav Shoham, Hofit Bata, Yoav Levine, Kevin Leyton-Brown, et al . 2022. MRKL Systems: A modular, neuro-symbolic architecture that combines large language models, external knowledge sources and discrete reasoning. arXiv preprint arXiv:2205.00445 (2022). [22] Sanjay Krishnan, Michael J. Franklin, Ken Goldberg, and Eugene Wu. 2017. BoostClean: Automated Error Detection and Repair for Machine Learning. arXiv preprint arXiv:1711.01299 (2017). [23] Meelis Kull, Telmo Silva Filho, and Peter Flach. 2017. Beta calibration: a well-founded and easily implemented improvement on logistic calibration for binary classifiers. In Artificial intelligence and statistics . PMLR, 623–631. [24] Tamera Lanham, Anna Chen, Ansh Radhakrishnan, Benoit Steiner, Carson Deni-son, Danny Hernandez, Dustin Li, Esin Durmus, Evan Hubinger, Jackson Kernion, et al . 2023. Measuring faithfulness in chain-of-thought reasoning. arXiv preprint arXiv:2307.13702 (2023). [25] Jixuan Leng, Chengsong Huang, Banghua Zhu, and Jiaxin Huang. 2024. Taming overconfidence in llms: Reward calibration in rlhf. arXiv preprint arXiv:2410.09724 
+
+(2024). [26] Peng Li, Yeye He, Dror Yashar, Weiwei Cui, Song Ge, Haidong Zhang, Danielle Rifinski Fainman, Dongmei Zhang, and Surajit Chaudhuri. 2024. Table-gpt: Table fine-tuned gpt for diverse table tasks. Proceedings of the ACM on Management of Data 2, 3 (2024), 1–28. [27] Yiming Lin, Yeye He, and Surajit Chaudhuri. 2023. Auto-bi: Automatically build bi-models leveraging local join prediction and global schema graph. arXiv preprint arXiv:2306.12515 (2023). [28] Ryan Liu, Jiayi Geng, Addison J Wu, Ilia Sucholutsky, Tania Lombrozo, and Thomas L Griffiths. 2024. Mind your step (by step): Chain-of-thought can reduce performance on tasks where thinking makes humans worse. arXiv preprint arXiv:2410.21333 (2024). [29] Fábio MF Lobato, Vincent W Tadaiesky, Igor M Araújo, and Ádamo L de Santana. 2015. An evolutionary missing data imputation method for pattern classification. In Proceedings of the companion publication of the 2015 annual conference on genetic and evolutionary computation . 1013–1019. [30] Feng Luo, Hai Lan, Hui Luo, Zhifeng Bao, J. Shane Culpepper, Shazia Sadiq, and Xiaoli Wang. 2026. Missing Value Imputation in Tabular Data Lakes Unleashed: A Hybrid Approach. The VLDB Journal 35, 2 (2026), 11. [31] Mohammad Mahdavi and Ziawasch Abedjan. 2020. Baran: Effective error cor-rection via a unified context representation and transfer learning. Proceedings of the VLDB Endowment 13, 12 (2020), 1948–1961. Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+[32] Giansalvatore Mecca, Paolo Papotti, Donatello Santoro, and Enzo Veltri. 2024. BUNNI: Learning Repair Actions in Rule-driven Data Cleaning. Journal of Data and Information Quality 16, 2, Article 12 (2024), 31 pages. [33] Microsoft. 2026. Clean Data in Excel with Copilot. Retrieved February 2026 from https://support.microsoft.com/en-us/office/clean-data-in-excel-7fe20d89-3f57-46d3-b659-e8f3ee853bda?ns=XLWAENDUSER&version=16 [34] Mahdi Pakdaman Naeini, Gregory Cooper, and Milos Hauskrecht. 2015. Obtain-ing well calibrated probabilities using bayesian binning. In Proceedings of the AAAI conference on artificial intelligence , Vol. 29. [35] Preetum Nakkiran, Arwen Bradley, Adam Goliński, Eugene Ndiaye, Michael Kirchhof, and Sinead Williamson. 2025. Trained on Tokens, Calibrated on Concepts: The Emergence of Semantic Calibration in LLMs. arXiv preprint arXiv:2511.04869 (2025). [36] Wei Ni, Xiaoye Miao, Xiangyu Zhao, Yangyang Wu, Shuwei Liang, and Jianwei Yin. 2024. Automatic Data Repair: Are We Ready to Deploy? Proceedings of the VLDB Endowment 17, 10 (2024), 2617–2630. [37] OpenAI. 2025. Introducing GPT-4.1 in the API. Retrieved February 2026 from https://openai.com/index/gpt-4-1/ [38] OpenAI. 2025. Introducing GPT-5. Retrieved February 2026 from https://openai. com/index/introducing-gpt-5/ [39] John Platt et al . 1999. Probabilistic outputs for support vector machines and com-parisons to regularized likelihood methods. Advances in large margin classifiers 
+
+10, 3 (1999), 61–74. [40] Jakub Podolak and Rajeev Verma. 2025. Read Your Own Mind: Reasoning Helps Surface Self-Confidence Signals in LLMs. In Proceedings of the 2nd Workshop on Uncertainty-Aware NLP (UncertaiNLP 2025) . 247–258. [41] Erhard Rahm, Hong Hai Do, et al . 2000. Data cleaning: Problems and current approaches. IEEE Data Eng. Bull. 23, 4 (2000), 3–13. [42] Baptiste Roziere, Jonas Gehring, Fabian Gloeckle, Sten Sootla, Itai Gat, Xiao-qing Ellen Tan, Yossi Adi, Jingyu Liu, Romain Sauvestre, Tal Remez, et al . 2023. Code llama: Open foundation models for code. arXiv preprint arXiv:2308.12950 
+
+(2023). [43] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al . 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 (2024). [44] Leyang Shen, Gongwei Chen, Rui Shao, Weili Guan, and Liqiang Nie. 2024. Mome: Mixture of multimodal experts for generalist multimodal large language models. 
+
+Advances in neural information processing systems 37 (2024), 42048–42070. [45] Jie Song and Yeye He. 2021. Auto-validate: Unsupervised data validation us-ing data-domain patterns inferred from data lakes. In Proceedings of the 2021 International Conference on Management of Data . 1678–1691. [46] Paul Stangel, David Bani-Harouni, Chantal Pellegrini, Ege Özsoy, Kamilia Zaripova, Matthias Keicher, and Nassir Navab. 2025. Rewarding doubt: A re-inforcement learning approach to calibrated confidence expression of large language models. arXiv preprint arXiv:2503.02623 (2025). [47] Shreyas Subramanian, Vikram Elango, and Mecit Gungor. 2025. Small language models (slms) can still pack a punch: A survey. arXiv preprint arXiv:2501.05465 
+
+(2025). [48] Kai Sun, Yifan Xu, Hanwen Zha, Yue Liu, and Xin Luna Dong. 2024. Head-to-tail: How knowledgeable are large language models (LLMs)? AKA will LLMs replace knowledge graphs?. In Proceedings of the 2024 Conference of the North Ameri-can Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) . 311–325. [49] Miles Turpin, Julian Michael, Ethan Perez, and Samuel Bowman. 2023. Language models don’t always say what they think: Unfaithful explanations in chain-of-thought prompting. Advances in Neural Information Processing Systems 36 (2023), 74952–74965. [50] Jianwei Wang, Kai Wang, Ying Zhang, Wenjie Zhang, Xiwei Xu, and Xuemin Lin. 2025. On LLM-Enhanced Mixed-Type Data Imputation with High-Order Message Passing. Proc. VLDB Endow. 18, 10 (June 2025), 3421–3434. https: //doi.org/10.14778/3748191.3748205 [51] Xuezhi Wang, Jason Wei, Dale Schuurmans, Quoc Le, Ed Chi, Sharan Narang, Aakanksha Chowdhery, and Denny Zhou. 2022. Self-consistency improves chain of thought reasoning in language models. arXiv preprint arXiv:2203.11171 (2022). [52] Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Fei Xia, Ed Chi, Quoc V Le, Denny Zhou, et al . 2022. Chain-of-thought prompting elicits reason-ing in large language models. Advances in neural information processing systems 
+
+35 (2022), 24824–24837. [53] Junjie Xing, Yeye He, Mengyu Zhou, Haoyu Dong, Shi Han, Lingjiao Chen, Dong-mei Zhang, Surajit Chaudhuri, and H. V. Jagadish. 2025. MMTU: A Massive Multi-Task Table Understanding and Reasoning Benchmark. In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Bench-marks Track . https://openreview.net/forum?id=ryUzgwD6UQ [54] Junjie Xing, Yeye He, Mengyu Zhou, Haoyu Dong, Shi Han, Dongmei Zhang, and Surajit Chaudhuri. 2024. Table-llm-specialist: Language model special-ists for tables using iterative generator-validator fine-tuning. arXiv preprint arXiv:2410.12164 (2024). [55] Miao Xiong, Zhiyuan Hu, Xinyang Lu, Yifei Li, Jie Fu, Junxian He, and Bryan Hooi. 2023. Can llms express their uncertainty? an empirical evaluation of confidence elicitation in llms. arXiv preprint arXiv:2306.13063 (2023). [56] Mohamed Yakout, Laure Berti-Équille, and Ahmed K Elmagarmid. 2013. Don’t be scared: use scalable automatic repairing with maximal likelihood and bounded changes. In Proceedings of the 2013 ACM SIGMOD International Conference on Management of Data . 553–564. [57] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al . 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 (2025). [58] Chenyu Yang, Yuyu Luo, Chuanxuan Cui, Ju Fan, Chengliang Chai, and Nan Tang. 2025. Data Imputation with Limited Data Redundancy Using Data Lakes. Proc. VLDB Endow. 18, 10 (June 2025), 3354–3367. https://doi.org/10.14778/3748191. 3748200 [59] Yuqing Yang, Ethan Chern, Xipeng Qiu, Graham Neubig, and Pengfei Liu. 2024. Alignment for honesty. Advances in Neural Information Processing Systems 37 (2024), 63565–63598. [60] Yuqing Yang, Qi Zhu, Zhen Han, Boran Han, Zhengyuan Shen, Shuai Wang, Vassilis N. Ioannidis, and Huzefa Rangwala. 2026. When LLMs Read Tables Carelessly: Measuring and Reducing Data Referencing Errors. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers), ACL 2026, San Diego, California, United States, July 2-7, 2026 , Maria Liakata, Viviane P. Moreira, Jiajun Zhang, and David Jurgens (Eds.). Association for Computational Linguistics, 16734–16752. https://aclanthology.org/2026.acl-long.762/ [61] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. 2023. ReAct: Synergizing Reasoning and Acting in Language Models. In International Conference on Learning Representations (ICLR) .[62] Tianhe Yu, Saurabh Kumar, Abhishek Gupta, Sergey Levine, Karol Hausman, and Chelsea Finn. 2020. Gradient surgery for multi-task learning. Advances in neural information processing systems 33 (2020), 5824–5836. [63] Bianca Zadrozny and Charles Elkan. 2002. Transforming classifier scores into ac-curate multiclass probability estimates. In Proceedings of the eighth ACM SIGKDD international conference on Knowledge discovery and data mining . 694–699. [64] Haochen Zhang, Yuyang Dong, Chuan Xiao, and Masafumi Oyamada. 2024. Jellyfish: Instruction-tuning local large language models for data preprocessing. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing . 8754–8782. [65] Mozhi Zhang, Mianqiu Huang, Rundong Shi, Linsen Guo, Chong Peng, Peng Yan, Yaqian Zhou, and Xipeng Qiu. 2024. Calibrating the confidence of large language models by eliciting fidelity. In Proceedings of the 2024 Conference on Empirical Methods in Natural Language Processing . 2959–2979. [66] Tianshu Zhang, Xiang Yue, Yifei Li, and Huan Sun. 2024. Tablellama: Towards open large generalist models for tables. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (Volume 1: Long Papers) . 6024–6044. [67] Yuze Zhao, Jintao Huang, Jinghan Hu, Xingjun Wang, Yunlin Mao, Daoze Zhang, Zeyinzi Jiang, Zhikai Wu, Baole Ai, Ang Wang, Wenmeng Zhou, and Yingda Chen. 2024. SWIFT:A Scalable lightWeight Infrastructure for Fine-Tuning. arXiv:2408.05517 [cs.CL] https://arxiv.org/abs/2408.05517 [68] Wei Zhou, Jun Zhou, Haoyu Wang, Zhenghao Li, Qikang He, Shaokun Han, Guoliang Li, Xuanhe Zhou, Yeye He, Chunwei Liu, et al . 2026. Can LLMs Clean Up Your Mess? A Survey of Application-Ready Data Preparation with LLMs. 
+
+arXiv preprint arXiv:2601.17058 (2026). Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+Table 8: R@P=0.9 of all classical-baseline variants, averaged across the 5 ID datasets and the 6 OOD datasets. The variant reported in the main paper (Table 2) is marked with ★.                  
+
+> Method ID OOD
+> TabPFN variants
+> TabPFN-10class 0.104 0.250 TabPFN-MultiClass ★0.106 0.260
+> SCARE variants
+> SCARE-Single ★0.093 0.270
+> SCARE-Partition 0.089 0.260
+> Baran variants
+> Baran-A 0.115 0.290 Baran-B-20 ★0.140 0.310
+> Baran-B-50 0.119 0.300 Baran-B-100 0.115 0.290
+
+## A TECHNICAL DETAILS A.1 Benchmark Construction Details 
+
+For each dataset, we construct 200 distinct evaluation cases where exactly one cell is masked with the token [MISSING] . We employ two selection strategies based on dataset characteristics. (1) For datasets testing broad table comprehension or external knowledge (e.g., the public web-based and private-lake series), we uniformly sample non-null, non-empty cells as masking targets. This simu-lates realistic missing data scenarios where models must rely on surrounding context without structural information. (2) For datasets derived from relationship detection tasks, we apply domain-specific selection criteria to generate evaluation cases that target cells par-ticipating in semantic relationships.  
+
+> •
+
+Arithmetic Reasoning (Rel-AR): Tables in this dataset contain columns related through algebraic formulas. We strategically mask cells that participate in these algebraic relationships, testing whether models can perform quantitative reasoning by inferring missing values from learned arithmetic patterns.  
+
+> •
+
+Functional Dependencies (Rel-FD): Tables contain columns with functional dependencies, where one column’s value uniquely determines another’s. We mask cells in dependent columns, re-quiring models to exploit these deterministic relationships.  
+
+> •
+
+Semantic Transformations (Rel-ST): Tables contain columns de-rived through transformations of other columns, like concatena-tion, format conversion, etc. We mask cells in derived columns whose values can be reconstructed from source columns within the same table. 
+
+## A.2 Additional Fine-Tuning Details 
+
+Auto-Fill -Qwen models are fine-tuned for 2 epochs on 4 × A100 (80GB) GPUs, using a learning rate of 1e-5 for M𝐾 and M𝐶 , and 2e-5 for M𝑅 . Training M𝐾 requires ∼11 hours, while M𝑅 and M𝐶 
+
+each require ∼40 hours due to long chain-of-thought traces. 
+
+## A.3 RL Training Details 
+
+We apply GRPO-based RL fine-tuning [ 43 ] on top of the distillation-based SFT checkpoints of M𝑅 and M𝐶 , using the ms-swift frame-work [ 67 ]. RL fine-tuning is not applied to M𝐾 , as its confidence signal derives from token-level log-probabilities rather than a veri-fiable output suitable for reward-based training. Both M𝑅 and M𝐶 are fine-tuned on 5,000 examples sampled from the same masking corpus used for SFT. Training runs for one epoch on 4 ×A100 (80 GB) GPUs with a per-device batch size of 1 and gradient accumulation over 16 steps, yielding an effective batch size of 32. We use a learning rate of 1 × 10 −6 with cosine decay and a warmup ratio of 0.01. For GRPO, we sample 𝐺 = 4 completions per prompt and set the KL penalty coefficient to 𝛽 = 0.01 . Rollout generation uses a sampling temperature of 0.8, consistent with SFT inference settings. The maximum completion length is 8,192 tokens, and the maximum total context length is 24,576 tokens; generation is performed using vLLM in colocated mode. Reward function. We use the RLCR reward described in Sec-tion 5.4 (Eq. 7). For M𝑅 , 𝑞 is the verbalized integer confidence (0–100, normalized to [0, 1]) parsed from the model’s JSON output; when the confidence field is absent or unparseable, we default to 
+
+𝑞 = 0.5, the maximally uncertain prior, which penalizes the model symmetrically regardless of correctness and thereby incentivizes it to always emit an explicit confidence value. For M𝐶 , 𝑞 is the execution-based column accuracy conf 𝐶 (Eq. 6), computed by exe-cuting the generated code against the input table and measuring reproduction accuracy over observed column values. Completions that fail to produce a parseable prediction, or that result in a code execution error, receive a reward of 0.
+
+## A.4 Baseline Details 
+
+This section details our adaptation of one tabular ML baseline (TabPFN [ 16 ]) and two classical data-repair systems ( SCARE [56 ]and Baran [31 ]) to the single-cell imputation setting used in our experiments. TabPFN. TabPFN [ 16 ] is a pretrained transformer that performs in-context tabular prediction. For a case with a [MISSING] cell at position (𝑖, 𝑗 ), we treat the rows where column 𝑗 is filled as the in-context training set and the row with the missing cell as the test instance. The target column is predicted with a classifier by default, and with a regressor when the column is numeric and most of its values are distinct, so that unseen numeric targets remain reach-able. Because TabPFN-v2 supports at most 10 output classes, target columns with more than 10 distinct values require an additional adaptation, for which we evaluate two variants. TabPFN-10class 
+
+restricts the prediction head to the 10 most frequent training values in the target column, dropping any candidate outside this short-list. TabPFN-MultiClass instead uses the ManyClassClassifier 
+
+output-coding wrapper from tabpfn-extensions , which decom-poses the 𝑁 -way problem into ⌈log 10 (𝑁 )⌉ sub-calls of arity 10 
+
+and aggregates their outputs, keeping all training values reach-able. Confidence is the top class probability for the classifier (or the aggregated wrapper probability under TabPFN-MultiClass); for the regressor branch, it is exp (︁ −( 𝑞 90 − 𝑞 10 )/ 𝜎 𝑦 )︁ , where 𝜎 𝑦 is the training-target standard deviation and 𝑞 10 , 𝑞 90 are the predicted decile bounds, so that a narrower predictive interval yields higher confidence. As shown in Table 8, TabPFN-MultiClass slightly im-proves on TabPFN-10class on ID and outperforms on OOD, so we report TabPFN-MultiClass as TabPFN in the main paper. Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Table 9: Ablation study on confidence calibration methods. Calibration Method ID ( ↑) OOD ( ↑) ECE ( ↓)                                                 
+
+> R@P=0.9 pAUPRC R@P=0.9 pAUPRC M𝐾 M𝑅 M𝐶 Mean None 0.434 0.421 0.694 0.675 0.201 0.111 0.035 0.116 Platt 0.424 0.411 0.683 0.676 0.114 0.082 0.032 0.076 Beta 0.482 0.471 0.715 0.706 0.030 0.110 0.038 0.059
+> Isotonic (Ours) 0.503 0.488 0.733 0.717 0.033 0.021 0.029 0.028 0.0 0.5 1.0
+> Calibrated Confidence
+> 0.0
+> 0.2
+> 0.4
+> 0.6
+> 0.8
+> 1.0
+> Empirical Accuracy
+> Knowledge
+> 0.0 0.5 1.0
+> Calibrated Confidence
+> Reasoning
+> 0.0 0.5 1.0
+> Calibrated Confidence
+> Coding
+> Perfect calibration Isotonic Platt Beta None
+
+Figure 8: calibration reliability diagram 
+
+SCARE. SCARE [ 56 ] repairs erroneous cells by chaining multino-mial Naive-Bayes models that condition each “flexible” attribute on a small set of “reliable” attributes, partitioning the table by reliable-attribute values, fitting a per-partition model, and resolving multi-cell repairs with a hitting-set heuristic over a value-vote graph. Under our setting of one masked cell per case, the error-detection step and the graph pruning become vacuous, and the chain col-lapses to a single predictor. Our main adaptation, SCARE-Single ,is therefore a single global multinomial Naive-Bayes classifier over the one-hot-encoded non-target columns, fit on rows where the target is filled and predicting over the full column domain; for purely numeric high-cardinality targets we substitute a Bayesian-ridge regressor on the same features. Confidence is the predicted class probability, or exp (︁ −( 𝑞 90 − 𝑞 10 )/ 𝜎 𝑦 )︁ in the regressor branch, with 𝑞 10 , 𝑞 90 approximated from the regressor’s posterior standard deviation under a Gaussian assumption. We additionally evaluate 
+
+SCARE-Partition , which more faithfully preserves SCARE’s parti-tioning: it selects the two lowest-cardinality non-target columns as reliable attributes, trains a per-partition Naive-Bayes model for each reliable-attribute value, and aggregates predictions across partitions weighted by partition size. As shown in Table 8, SCARE-Partition does not outperform SCARE-Single—partitioning shrinks each per-partition training set and yields noisier estimates—so we report SCARE-Single as SCARE in the main paper. Baran. Baran [ 31 ] generates correction candidates from three corrector families—value-based, vicinity-based, and domain-based— and trains a per-column AdaBoost meta-classifier on user-labeled corrections to rank them. Two adaptations are required for our setting. First, we omit the value-based corrector, whose character-level edit transformations are learned from real ⟨old , new ⟩ typo pairs and are undefined for the [MISSING] placeholder. Second, since our benchmark provides no user labels, we simulate the la-beling budget by holding out 𝐾 filled cells from the target col-umn as ⟨missing , ground truth ⟩ corrections. We evaluate four la-bel regimes. Baran-A uses no labels and takes the argmax over summed channel posteriors with the AdaBoost meta-classifier omit-ted, matching the original paper’s 𝐹 1 = 0 at zero labels. Baran-B-𝐾 
+
+for 𝐾 ∈ { 20 , 50 , 100 } trains an AdaBoost meta-classifier ( 100 esti-mators) on the resulting candidate-score vectors and applies it to the masked cell, with the positive-class probability as confidence; 
+
+𝐾 = 20 matches the original paper’s default labeling budget. As shown in Table 8, Baran-B-20 is the strongest variant on both ID and OOD splits, with larger budgets ( 𝐾 = 50 , 100 ) giving no addi-tional gain and Baran-A degenerating as expected. We therefore report Baran-B-20 as Baran in the main paper. 
+
+## B ADDITIONAL RESULTS 
+
+This section provides supplementary results that extend the analysis in the main paper. 
+
+## B.1 Additional Sensitivity Analysis 
+
+Sensitivity to Numerical-Matching Tolerance. Our results so far use strict exact-match. To verify our gains are not sensitive to this, Figure 9 re-computes R@P=0.9 under a relative-error toler-ance 𝜖 ∈ { 0, 0.001 , 0.01 , 0.05 }, where 𝜖 = 0 recovers exact-match 9.Both Auto-Fill variants stay almost flat across 𝜖 , indicating their accepted predictions are already essentially exact, whereas base-lines like o3-pro, GPT-5.2, and Qwen3-8B improve markedly under looser tolerance, suggesting frequent near-misses. Even at the loos-est 𝜖 = 0.05 , Auto-Fill -GPT remains the strongest method. 
+
+## B.2 Confidence Calibration 
+
+We compare isotonic regression against Platt scaling [ 39 ], beta cal-ibration [ 23 ], and an uncalibrated baseline. Besides overall task performance using R@P=0.9 and pAUPRC, we also assess calibra-tion quality using Expected Calibration Error (ECE) , which measures the gap between calibrated probability and empirical accuracy [ 34 ]. Baselines. 
+
+• Isotonic regression , our default method, fits a non-parametric monotonic mapping between raw confidence and empirical ac-curacy as described in Section 6.1. 
+
+• Platt scaling [39 ] fits a logistic regression model 𝜎 (𝑎 · conf +𝑏 ) to map raw confidence to calibrated probability, assuming a sigmoid relationship. 
+
+• Beta calibration [ 23 ] extends Platt scaling by applying logistic regression in the log-odds space: logit (𝑝 ) = 𝑎 ·log (𝑐 )+ 𝑏 ·log (1−𝑐 ),where 𝑐 is the raw confidence, providing additional flexibility for probability-like inputs. 
+
+• None applies no calibration, using raw confidence scores directly (with M𝑅 ’s verbalized confidence normalized to [0, 1]). Expected Calibration Error (ECE) [34]. This metric quantifies how well a model’s predicted confidence scores align with its empir-ical accuracy. Intuitively, a well-calibrated model should be correct 
+
+𝑝 % of the time on predictions made with confidence 𝑝 .Formally, predictions are grouped into 𝑚 equal-width bins based on their calibrated confidence scores. ECE is then computed as the weighted average of the absolute difference between mean          
+
+> 9A numeric prediction counts as correct iff |pred −gt |/| gt | ≤ 𝜖 ; a non-numeric one iff its normalized Levenshtein distance to the ground truth is ≤𝜖 .Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 00.001 0.01 0.05
+> Allowable absolute relative error
+> 0.1
+> 0.2
+> 0.3
+> 0.4
+> 0.5
+> 0.6
+> R@P=0.9
+> Auto-Fill-GPT
+> o3-pro
+> Auto-Fill-Qwen
+> GPT-5.2
+> o4-mini
+> DeepSeek-R1
+> GPT-4.1
+> Gemini 3 Pro
+> GPT-4.1 mini
+> Qwen3-8B
+
+Figure 9: R@P=0.9 as a function of the relative-error toler-ance 𝜖 used to judge correctness ( 𝜖 = 0 is exact-match). 
+
+confidence and empirical accuracy across bins: ECE =
+
+> 𝑚
+
+∑︂ 
+
+> 𝑖 =1
+
+𝑛 𝑖 
+
+𝑁 |conf 𝑖 − acc 𝑖 | (10) where 𝑛 𝑖 is the number of predictions in bin 𝑖 , 𝑁 is the total number of predictions, conf 𝑖 is the mean confidence of predictions in bin 𝑖 ,and acc 𝑖 is the empirical accuracy (fraction of correct predictions) in bin 𝑖 . We use 𝑚 = 10 equal-width bins in all experiments. A lower ECE indicates better calibration, with ECE = 0 representing perfect calibration. Table 9 shows that isotonic regression achieves the best overall performance. Beta calibration excels on M𝐾 (ECE=0.030), where its log-odds parameterization aligns well with log-probability-based confidence, but degrades on M𝑅 (ECE=0.110), where integer-valued verbalized confidence violates its smoothness assumptions. Platt scaling reduces ECE relative to no calibration (0.076 vs. 0.116) but un-derperforms on task metrics, as its sigmoid assumption is too rigid. Isotonic regression’s non-parametric monotonic fitting achieves the most consistent performance across all metrics and both splits. Figure 8 compares the calibration reliability of the three meth-ods, which further confirms that isotonic regression produces well-calibrated confidence across all specialists, while beta calibration shows systematic miscalibration for M𝑅 , and the uncalibrated base-line severely underestimates true correctness probability for M𝐾 .
+
+## B.3 Detailed Cost Analysis 
+
+Tables 11 and 12 give pricing details and a full per-dataset cost breakdown for all evaluated models, complementing the mean-cost figures reported in Table 2. Table 11 reports the lowest publicly available API prices we found for each model at the time of writing (February 2026), measured in USD per 1M tokens. The per-dataset breakdown reveals that cost variation across datasets is driven primarily by differences in average table size, which ranges from 
+
+89 ± 110 cells (Pub-Wiki) to 1,359 ± 774 cells (Rel-FD), with an overall average of 494 ± 560 cells across all 2,200 cases. Auto-Fill -Qwen remains the most cost-efficient option across every dataset, spending on average $0.00148 per query—over 100 × less than o3-pro and 29 × less than Gemini 3 Pro. 
+
+## B.4 Precision-Recall Curves 
+
+Figures 10 and 11 present the macro-averaged and per-dataset precision-recall curves in the high-precision regime, offering a curve-level view of the quality-coverage trade-off summarized by R@P=0.9 and pAUPRC in the main text. For each dataset, predic-tions are sorted by descending calibrated confidence, and precision and recall are computed at each distinct confidence threshold, where recall is measured as over all 200 cases. The macro-averaged curve averages recall across all 11 datasets at each precision level, using the same contiguous-prefix convention as R@P=0.9 (break at the first drop below the threshold), so that the macro-averaged recall at precision = 0.9 matches the per-dataset R@P=0.9 values reported in Table 2. Both Auto-Fill variants extend their curves to the highest recall values on the macro-averaged plot, confirming that calibrated specialization achieves superior coverage across all datasets. On the per-dataset plot, the coding specialist’s execution-backed con-fidence enables near-perfect recall on relational datasets (Rel-AR, Rel-FD, Rel-ST), while Auto-Fill -GPT’s broader world knowledge gives it a clear advantage on the hardest OOD dataset (Pub-Web), where most baselines collapse to zero recall. 
+
+## B.5 Additional Precision Thresholds 
+
+While our primary evaluation targets the high-precision regime (P ≥0.9), we include R@P=0.8 (Table 13) and full-accuracy results (Table 14) for completeness. As discussed in Section 1, our problem setting prioritizes high precision because inaccurate suggestions burden users with manual verification and can contaminate down-stream analytics; relaxed precision thresholds and unconstrained prediction therefore do not reflect our target deployment scenario. Under R@P=0.8, Auto-Fill -GPT remains the top-performing method (0.698), while Auto-Fill -Qwen (0.657) is outperformed by o3-pro (0.679) and o4-mini (0.667) as overconfident frontier models benefit from the relaxed threshold. However, Auto-Fill -Qwen achieves this competitive recall at over 100 × lower cost than o3-pro, making it a substantially more practical option. Full accuracy, which applies no abstention, isolates raw predic-tion quality from calibration quality. Gemini 3 Pro (0.786) and o3-pro (0.757) lead on this metric, yet neither translates this advantage to R@P=0.9 (Table 2), confirming that confidence calibration—not raw prediction ability—is the key bottleneck in our high-precision setting. Both Auto-Fill -Qwen (0.690) and Auto-Fill -GPT (0.727) remain competitive with frontier models at a fraction of their cost. Among the Auto-Fill -Qwen variants, the Learned Router (0.634) and Classical ML (0.626) trail the main Auto-Fill setting by a smaller margin than in the high-precision setting, offering cheaper alternatives when strict precision guarantees are not required. The Hybrid Model (0.558) remains the weakest variant, consistent with its collapse under abstention. 
+
+## B.6 Detailed Specialist Combination Ablation 
+
+Tables 15 provides per-dataset breakdowns of the specialist-combination ablation under R@P=0.9, extending the averaged re-sults reported in Table 5. M𝐾 alone achieves the strongest indi-vidual performance (mean 0.542/0.612 for Qwen/GPT), as world knowledge suffices for many ID tables and even some relational tasks. However, it underperforms on Rel-AR (0.550/0.755), where an-swers require arithmetic computation. M𝑅 alone shows a more un-even profile: competitive on pattern-heavy and relational datasets (Gov-CSV: 0.455/0.420, Rel-ST: 0.975/0.945) but collapsing to 0.000 Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Macro-Averaged Recall
+> 0.86
+> 0.88
+> 0.90
+> 0.92
+> 0.94
+> 0.96
+> 0.98
+> 1.0
+> Precision
+> gpt-4.1-nano
+> Qwen3-8B-no-think
+> Qwen3-8B-think
+> LakeFill-full
+> LakeFill-small
+> GPT-4.1 mini
+> GPT-4.1
+> DeepSeek-R1
+> Gemini 3 Pro
+> GPT-5.2
+> o4-mini
+> o3-pro
+> Auto-Fill-Qwen
+> Auto-Fill-GPT
+
+Figure 10: Macro-averaged PR curve in the high-precision regime (precision ≥ 0.85 shown). 
+
+on knowledge-intensive datasets like Pub-BI and Pub-Web, where chain-of-thought reasoning cannot compensate for missing world knowledge and may even lead to confidently wrong predictions [ 49 ]. 
+
+M𝐶 alone achieves the lowest mean recall (0.344/0.320), as pro-grammatic column patterns exist in only a subset of datasets. Yet it provides an irreplaceable contribution: near-perfect recall on Rel-AR (0.955/0.940), where execution-based confidence is grounded in verifiable column relationships rather than model self-assessment. Among pairwise combinations, M𝐾 +M𝐶 performs best overall (0.604/0.647), combining strong factual coverage with execution-grounded relational reasoning. M𝐾 +M𝑅 provides complementary gains on knowledge-intensive OOD datasets like Pub-Web. Nei-ther pairwise combination consistently dominates the other, and both fall short of the full ensemble. Combining all three special-ists achieves the best or near-best recall on every dataset (mean 0.628/0.656), confirming that missing-value prediction requires a distinct combination of knowledge, reasoning, and coding capabili-ties that no single specialist can fully cover. Table 16 shows the specialist-combination ablation under full ac-curacy, where the overall trends are consistent. Notably, M𝐾 +M𝑅 
+
+now performs better than M𝐾 +M𝐶 (0.667/0.712 vs. 0.664/0.703). The full ensemble still achieves the best mean accuracy (0.690/0.727), confirming that all three specialists contribute to overall prediction quality even beyond the high-precision regime. 
+
+## C QUALITATIVE EXAMPLES 
+
+This section presents qualitative examples of teacher-generated training traces and specialist predictions at inference time. 
+
+## D RESIDUAL ERROR ANALYSIS 
+
+We audit what is left after specialisation, calibration, and ensem-bling. A full-ensemble failure is a test case on which the highest-confidence specialist of Auto-Fill -Qwen disagrees with the ground truth; across the 11 datasets this yields 682 failures (Rel-ST has zero). We draw a stratified random sample of 100, proportional to each dataset’s failure count with a floor of one per non-empty dataset, and label each by hand from the input table, the ground truth, and the three specialists’ full trajectories. Each failure is assigned to one of three categories according to what would have to change to recover the ground truth. A failure is within-M𝐾 /M𝑅 /M𝐶 if a stronger version of the corresponding specialist would solve it; mis-routed if one of the other two specialists was already individually correct, so that the ensemble contained the right answer but cali-bration ranked the wrong one on top; and unrecoverable if neither the observed rows and columns of the table nor external knowledge point to the ground truth, leaving any predictor reduced to random guessing. The label refers to the mode of fix, not the chosen spe-cialist: a case in which M𝑅 was selected but the ground truth is a factual lookup is counted as within-M𝐾 , because what would fix it is a stronger knowledge specialist rather than stronger reasoning. Table 10 reports the per-dataset breakdown. The M𝐾 /M𝑅 /M𝐶 
+
+decomposition absorbs 89 of the 100 failures (52 within-M𝐾 , 23 within-M𝑅 , 4 within-M𝐶 , and 10 mis-routes), indicating that the residual is dominated by capability gaps within individual special-ists rather than by missing modalities. Within-M𝐾 failures are predictions whose ground truth is a fact about the world that the specialist failed to recall. Some involve facts common enough that a stronger M𝐾 would memorise them: on Pub-Web the specialist predicts “Nintendo DS” as the platform of Tamagotchi: Party On! (GT 
+
+“Wii” ). Others involve facts too specific to be reliably memorized at any realistic scale but reachable by a targeted web query, such as the IAU coordinates of the lunar crater Cleomedes S (“59.0 ◦ E” ), the tracklist position of the Hindi-film song Mission Tadofier , or a competitor’s surname on a small French triathlon roster. This subset could in principle be recovered by augmenting M𝐾 with a retrieval module. Retrieval belongs to the knowledge modality: the ground truth is a fact about the world, and an external index simply broadens M𝐾 ’s knowledge store beyond model parameters without altering the solving strategy. We leave retrieval integration to future work, as it would substantially increase per-query cost for a modest aggregate gain. Within-M𝑅 and within-M𝐶 failures share a common character: a coherent solution attempt that misses on a single step. Within-M𝑅 
+
+failures are reasoning chains that land one step off the ground truth. On Pub-Wiki, M𝑅 correctly enforces a sum-to-100 % constraint over an election table and returns “33.96%” , off GT “33.95%” by a 0.01-point rounding. On Pub-Web, M𝑅 computes offense-per-game with the wrong season length (assuming 8 games where 10 is implied) and returns “179.6” instead of “143.7” . Within-M𝐶 failures commit to a column-level rule that fits part of the column but breaks on the masked row: on Pub-XLS, M𝐶 uses “(Max+Min)/2” even though its own trace notes that the formula does not hold across other rows. Mis-routes are concentrated on Ent-XLS and Pub-Web. The remaining 11 cases are unrecoverable: the visible rows and columns simply do not determine the ground truth. It arises in tables (particularly private enterprise data) where ad-hoc entries coexist with structured-looking ones, so that the masked cell either contradicts an apparent column-wide rule or takes a value for which the observed rows provide no signal. On Pub-XLS, a row whose non-target columns are identical to another row labelled “Moyen” is Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+Table 10: Per-dataset breakdown of 100 stratified-sampled 
+
+Auto-Fill -Qwen full-ensemble failures, labelled by mode of fix. M𝐾 /M𝑅 /M𝐶 count within-mode failures—the residual is recoverable by improving the corresponding specialist ( M𝐾 
+
+includes both short-tail recall slips and long-tail lookups recoverable by a retrieval-augmented M𝐾 , which is an ex-tension of the knowledge specialist, not a fourth modality). 
+
+Mis-route marks failures in which another specialist was individually correct (a calibration error, not a capability gap). 
+
+Unrecoverable marks ground truths that cannot be derived from the prompt by any deducible rule and are not retrievable from external knowledge. The first four columns account for 89/100 of the residuals.                                                                         
+
+> Dataset M𝐾 M𝑅 M𝐶 Mis-route Unrecoverable 𝑛
+> Pub-XLS 3511212 Pub-BI 610029Pub-Wiki 14 300017 Gov-CSV 6401112 Git-Parquet 5311111 Ent-CSV 8100110 Ent-XLS 130318Pub-Web 8114317 Rel-AR 001001Rel-FD 120003
+> Total 52 23 410 11 100
+
+itself labelled “Bien” , breaking the only deducible rule (“same fea-tures ⇒ same label”). On Git-Parquet, the visible sequence “Talk01, Talk02” extrapolates to “Talk03” , but the GT “Thanks00” breaks the naming convention. On Pub-BI, six dispatchers appear in the previous week and only one continues at a different rate the next week, with nothing in the row indicating which. On Ent-XLS, a column otherwise populated with percentages contains the sen-tinel “Already Met” , an override unsupported by any column-level rule. These are precisely the cases where, under our high-precision setting (R@P =0.9), a well-calibrated system should abstain rather than commit, and the abstention mechanism (Section 6.1) is de-signed to filter exactly this regime by driving calibrated confidence low when no specialist’s evidence is reliable. Counting them as silent deferrals rather than ensemble errors is consistent with the deployment scenario the benchmark targets: a missing-value tool that offers a prediction only when the evidence warrants it, and defers to the user otherwise. Taken together, this analysis confirms that knowledge, reasoning, and code partition the space of solving strategies for missing-value prediction. The residual error lies not in missing modalities but in within-modality capacity, which stronger base models, more sophisticated training, or specialised modules such as retrieval would help close. Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Table 11: Model pricing (USD per 1M tokens). 
+
+Open-source Commercial 
+
+Qwen3-1.7B Qwen3-4B Qwen3-8B DeepSeek-R1 GPT-4o GPT-4.1 nano GPT-4.1 mini GPT-4.1 o4-mini o3-pro GPT-5.2 Gemini 3 Pro 
+
+Input — 0.01 0.04 0.70 2.50 0.10 0.40 2.00 1.10 20.00 1.75 2.00 ( ≤200K) 4.00 ( >200K) 
+
+Output — 0.03 0.14 2.50 10.00 0.40 1.60 8.00 4.40 80.00 14.00 12.00 ( ≤200K) 18.00 ( >200K) 
+
+Table 12: Per-dataset inference cost ($). Values < $0 .01 use small scientific notation ( 𝑥 ·10 −𝑦 ). Lower is better. The second row reports the average number of cells per table (mean ± std) for each benchmark. In-Distribution (ID) Out-of-Distribution (OOD) Model Pub-XLS Pub-BI Pub-Wiki Gov-CSV Git-Parquet Ent-CSV Ent-XLS Pub-Web Rel-AR Rel-FD Rel-ST Mean 
+
+#cells 235 ±265 114 ±196 89 ±110 343 ±394 386 ±403 790 ±408 524 ±595 135 ±129 671 ±360 1359 ±774 789 ±509 494 ±560 
+
+DeepSeek-R1 6.15 ·10 −3 4.09 ·10 −3 4.33 ·10 −3 6.12 ·10 −3 6.88 ·10 −3 0.010 6.86 ·10 −3 4.32 ·10 −3 6.04 ·10 −3 8.15 ·10 −3 5.11 ·10 −3 6.21 ·10 −3
+
+o4-mini 8.89 ·10 −3 6.10 ·10 −3 0.012 9.93 ·10 −3 0.012 0.017 0.014 0.010 9.29 ·10 −3 0.013 7.70 ·10 −3 0.011 GPT-5.2 3.07 ·10 −3 1.72 ·10 −3 1.39 ·10 −3 4.38 ·10 −3 7.01 ·10 −3 0.020 7.09 ·10 −3 1.82 ·10 −3 7.88 ·10 −3 0.018 8.89 ·10 −3 7.31 ·10 −3
+
+Gemini 3 Pro 0.045 0.031 0.031 0.034 0.047 0.080 0.046 0.032 0.038 0.067 0.024 0.043 o3-pro 0.162 0.098 0.134 0.148 0.204 0.313 0.203 0.139 0.196 0.224 0.132 0.177 GPT-4.1 3.65 ·10 −3 2.07 ·10 −3 1.59 ·10 −3 5.23 ·10 −3 8.15 ·10 −3 0.021 8.24 ·10 −3 2.15 ·10 −3 9.28 ·10 −3 0.028 0.010 9.02 ·10 −3
+
+Auto-Fill -Qwen 1.30 ·10 −3 9.00 ·10 −4 9.00 ·10 −4 1.30 ·10 −3 1.90 ·10 −3 2.20 ·10 −3 1.70 ·10 −3 9.00 ·10 −4 1.40 ·10 −3 2.50 ·10 −3 1.30 ·10 −3 1.48 ·10 −3
+
+Auto-Fill -GPT 0.011 8.12 ·10 −3 8.69 ·10 −3 0.011 0.013 0.020 0.013 9.34 ·10 −3 8.52 ·10 −3 0.014 7.94 ·10 −3 0.011 0.86 
+
+> 0.88
+> 0.90
+> 0.92
+> 0.94
+> 0.96
+> 0.98
+> 1.0
+> Precision
+> ID
+
+Pub-XLS Pub-BI Pub-Wiki Gov-CSV Git-Parquet     
+
+> 0.00 0.25 0.50 0.75 1.00
+> Recall
+> 0.86
+> 0.88
+> 0.90
+> 0.92
+> 0.94
+> 0.96
+> 0.98
+> 1.0
+> Precision
+> OOD
+
+Ent-CSV     
+
+> 0.00 0.25 0.50 0.75 1.00
+> Recall
+
+Ent-XLS     
+
+> 0.00 0.25 0.50 0.75 1.00
+> Recall
+
+Pub-Web     
+
+> 0.00 0.25 0.50 0.75 1.00
+> Recall
+
+Rel-AR     
+
+> 0.00 0.25 0.50 0.75 1.00
+> Recall
+
+Rel-FD 
+
+> 0.86
+> 0.88
+> 0.90
+> 0.92
+> 0.94
+> 0.96
+> 0.98
+> 1.0
+
+Rel-ST 
+
+> Auto-Fill-GPT
+> Auto-Fill-Qwen
+> Qwen3-8B-think
+> DeepSeek-R1
+> GPT-4.1 mini
+> GPT-4.1
+> GPT-5.2
+> o4-mini
+> o3-pro
+> Gemini 3 Pro
+> LakeFill-small
+> LakeFill-full
+
+Figure 11: Per-dataset PR curves in the high-precision regime for all 11 benchmarks. Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+Table 13: R@P=0.8 performance of all methods. Cost reflects LLM inference per query only. First , second , and third best results per column are highlighted. In-Distribution (ID) Out-of-Distribution (OOD) Method Pub-XLS Pub-BI Pub-Wiki Gov-CSV Git-Parquet Ent-CSV Ent-XLS Pub-Web Rel-AR Rel-FD Rel-ST Mean ( ↑) Cost ($) ( ↓)
+
+Non-LLM baselines 
+
+LakeFill-small 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.000 0.830 0.790 0.147 —LakeFill-full 0.000 0.000 0.000 0.000 0.000 0.000 0.515 0.000 0.000 0.835 0.785 0.194 —TabPFN 0.090 0.155 0.000 0.220 0.350 0.525 0.445 0.000 0.120 0.690 0.035 0.239 —Baran 0.185 0.170 0.000 0.290 0.375 0.545 0.505 0.000 0.145 0.695 0.030 0.267 —SCARE 0.080 0.065 0.000 0.220 0.290 0.475 0.450 0.000 0.115 0.660 0.030 0.217 —
+
+LLM baselines 
+
+Qwen3-8B 0.285 0.595 0.000 0.285 0.285 0.145 0.350 0.220 0.805 0.660 0.840 0.406 5.36 ·10 −4
+
+GPT-4.1 mini 0.075 0.265 0.100 0.285 0.340 0.200 0.430 0.125 0.300 0.830 0.900 0.350 1.81 ·10 −3
+
+GPT-4.1 0.330 0.590 0.155 0.420 0.475 0.475 0.495 0.290 0.775 0.860 0.985 0.532 9.02 ·10 −3
+
+DeepSeek-R1 0.495 0.730 0.090 0.525 0.515 0.495 0.540 0.390 0.930 0.870 0.975 0.596 6.21 ·10 −3
+
+o4-mini 0.615 0.685 0.255 0.550 0.625 0.620 0.715 0.450 0.970 0.865 0.985 0.667 1.09 ·10 −2
+
+GPT-5.2 0.490 0.695 0.310 0.525 0.615 0.645 0.725 0.000 0.895 0.890 0.980 0.615 7.31 ·10 −3
+
+Gemini 3 Pro 0.560 0.770 0.000 0.000 0.615 0.570 0.785 0.000 0.975 0.940 1.000 0.565 4.30 ·10 −2
+
+o3-pro 0.625 0.790 0.540 0.570 0.655 0.660 0.740 0.000 0.995 0.895 0.995 0.679 1.77 ·10 −1
+
+Ours 
+
+Auto-Fill -Qwen 0.560 0.680 0.305 0.540 0.600 0.625 0.690 0.355 0.990 0.890 0.995 0.657 1.48 ·10 −3
+
+Auto-Fill -GPT 0.560 0.750 0.430 0.580 0.660 0.620 0.730 0.480 0.990 0.890 0.985 0.698 1.13 ·10 −2
+
+Table 14: Full accuracy (no abstention) performance of all methods. The FD upper-bound row reports full-distribution recall. Cost reflects LLM inference per query only. First , second , and third best results per column are highlighted. In-Distribution (ID) Out-of-Distribution (OOD) Method Pub-XLS Pub-BI Pub-Wiki Gov-CSV Git-Parquet Ent-CSV Ent-XLS Pub-Web Rel-AR Rel-FD Rel-ST Mean ( ↑) Cost ($) ( ↓)
+
+Non-LLM baselines 
+
+FD upper-bound ∗ 0.060 0.160 0.080 0.070 0.230 0.340 0.130 0.070 0.060 0.480 0.000 0.153 —LakeFill-small 0.320 0.320 0.305 0.345 0.380 0.530 0.540 0.245 0.560 0.830 0.790 0.470 —LakeFill-full 0.285 0.295 0.240 0.390 0.355 0.520 0.630 0.265 0.585 0.835 0.785 0.471 —TabPFN 0.220 0.290 0.170 0.330 0.405 0.530 0.505 0.150 0.160 0.690 0.090 0.322 —Baran 0.235 0.300 0.210 0.345 0.420 0.550 0.515 0.180 0.180 0.695 0.110 0.340 —SCARE 0.210 0.285 0.165 0.340 0.440 0.510 0.525 0.165 0.165 0.670 0.095 0.325 —
+
+LLM baselines 
+
+Qwen3-8B 0.500 0.670 0.330 0.485 0.515 0.455 0.525 0.435 0.805 0.665 0.840 0.566 5.36 ·10 −4
+
+GPT-4.1 mini 0.470 0.670 0.395 0.470 0.555 0.565 0.610 0.440 0.700 0.830 0.900 0.600 1.81 ·10 −3
+
+GPT-4.1 0.535 0.705 0.450 0.540 0.600 0.600 0.645 0.535 0.785 0.860 0.985 0.658 9.02 ·10 −3
+
+DeepSeek-R1 0.590 0.735 0.510 0.600 0.625 0.585 0.645 0.565 0.930 0.870 0.975 0.694 6.21 ·10 −3
+
+o4-mini 0.620 0.750 0.470 0.605 0.645 0.650 0.720 0.555 0.970 0.865 0.985 0.712 1.09 ·10 −2
+
+GPT-5.2 0.580 0.730 0.505 0.600 0.655 0.655 0.735 0.575 0.895 0.890 0.980 0.709 7.31 ·10 −3
+
+Gemini 3 Pro 0.660 0.775 0.725 0.665 0.720 0.690 0.785 0.710 0.975 0.940 1.000 0.786 4.30 ·10 −2
+
+o3-pro 0.655 0.790 0.645 0.630 0.660 0.665 0.745 0.650 0.995 0.895 0.995 0.757 1.77 ·10 −1
+
+Ours 
+
+Auto-Fill -Qwen 0.595 0.725 0.425 0.565 0.625 0.655 0.695 0.425 0.990 0.890 1.000 0.690 1.48 ·10 −3
+
+Auto-Fill -GPT 0.600 0.770 0.510 0.610 0.675 0.655 0.740 0.565 0.990 0.895 0.990 0.727 1.13 ·10 −2
+
+Auto-Fill -Qwen Variants 
+
+Hybrid Model 0.495 0.655 0.250 0.500 0.540 0.445 0.605 0.320 0.600 0.765 0.960 0.558 5.45 ·10 −5
+
+Learned Router 0.550 0.660 0.345 0.565 0.605 0.575 0.610 0.405 0.860 0.830 0.965 0.634 4.58 ·10 −4
+
+Classical ML 0.520 0.655 0.340 0.510 0.560 0.545 0.585 0.400 0.960 0.850 0.960 0.626 1.48 ·10 −3Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Table 15: Full ablation study on specialist combinations across 11 datasets (R@P=0.9). In-Distribution (ID) Out-of-Distribution (OOD) Base Model Specialist(s) Pub-XLS Pub-BI Pub-Wiki Gov-CSV Git-Parquet Ent-CSV Ent-XLS Pub-Web Rel-AR Rel-FD Rel-ST Mean Qwen3-8B 
+
+M𝐾 only 0.335 0.580 0.210 0.450 0.565 0.570 0.640 0.235 0.550 0.865 0.960 0.542 
+
+M𝑅 only 0.360 0.000 0.000 0.455 0.475 0.115 0.535 0.000 0.815 0.865 0.975 0.418 
+
+M𝐶 only 0.235 0.000 0.110 0.150 0.305 0.215 0.315 0.100 0.955 0.590 0.805 0.344 
+
+M𝐾 + M𝑅 0.460 0.570 0.265 0.470 0.565 0.555 0.650 0.240 0.835 0.885 0.985 0.589 
+
+M𝐾 + M𝐶 0.465 0.590 0.245 0.450 0.585 0.590 0.660 0.240 0.975 0.865 0.975 0.604 
+
+M𝑅 + M𝐶 0.430 0.465 0.000 0.465 0.495 0.215 0.550 0.000 0.965 0.870 0.990 0.495 
+
+All (Ours) 0.525 0.615 0.285 0.500 0.590 0.585 0.660 0.275 0.990 0.890 0.995 0.628 GPT-4.1 mini 
+
+M𝐾 only 0.425 0.645 0.325 0.530 0.580 0.590 0.665 0.365 0.755 0.875 0.980 0.612 
+
+M𝑅 only 0.100 0.570 0.100 0.420 0.500 0.015 0.440 0.145 0.910 0.825 0.945 0.452 
+
+M𝐶 only 0.245 0.320 0.000 0.150 0.220 0.175 0.000 0.100 0.940 0.550 0.815 0.320 
+
+M𝐾 + M𝑅 0.420 0.695 0.340 0.515 0.590 0.540 0.645 0.440 0.895 0.875 0.980 0.630 
+
+M𝐾 + M𝐶 0.510 0.680 0.305 0.535 0.600 0.605 0.690 0.370 0.970 0.875 0.980 0.647 
+
+M𝑅 + M𝐶 0.240 0.580 0.000 0.375 0.540 0.360 0.000 0.180 0.985 0.840 0.965 0.460 
+
+All (Ours) 0.470 0.705 0.330 0.545 0.600 0.605 0.685 0.415 0.990 0.890 0.985 0.656 Table 16: Full ablation study on specialist combinations across 11 datasets (full accuracy). In-Distribution (ID) Out-of-Distribution (OOD) Base Model Specialist(s) Pub-XLS Pub-BI Pub-Wiki Gov-CSV Git-Parquet Ent-CSV Ent-XLS Pub-Web Rel-AR Rel-FD Rel-ST Mean Qwen3-8B 
+
+M𝐾 only 0.495 0.695 0.365 0.495 0.595 0.625 0.670 0.365 0.580 0.865 0.960 0.610 
+
+M𝑅 only 0.555 0.670 0.355 0.575 0.610 0.575 0.610 0.410 0.855 0.865 0.975 0.641 
+
+M𝐶 only 0.315 0.365 0.165 0.245 0.305 0.320 0.415 0.255 0.955 0.615 0.805 0.433 
+
+M𝐾 + M𝑅 0.575 0.715 0.380 0.565 0.630 0.625 0.690 0.420 0.865 0.885 0.985 0.667 
+
+M𝐾 + M𝐶 0.545 0.710 0.380 0.505 0.605 0.645 0.685 0.390 0.985 0.875 0.980 0.664 
+
+M𝑅 + M𝐶 0.570 0.680 0.365 0.565 0.610 0.575 0.630 0.420 0.985 0.870 0.990 0.660 
+
+All (Ours) 0.595 0.725 0.425 0.565 0.625 0.655 0.695 0.425 0.990 0.890 1.000 0.690 GPT-4.1 mini 
+
+M𝐾 only 0.545 0.725 0.460 0.595 0.650 0.630 0.705 0.500 0.775 0.875 0.980 0.676 
+
+M𝑅 only 0.565 0.710 0.485 0.580 0.625 0.580 0.610 0.480 0.910 0.835 0.945 0.666 
+
+M𝐶 only 0.265 0.355 0.115 0.170 0.230 0.180 0.295 0.195 0.940 0.550 0.815 0.374 
+
+M𝐾 + M𝑅 0.605 0.760 0.515 0.625 0.675 0.635 0.705 0.560 0.895 0.880 0.980 0.712 
+
+M𝐾 + M𝐶 0.585 0.740 0.460 0.605 0.660 0.640 0.715 0.495 0.975 0.875 0.980 0.703 
+
+M𝑅 + M𝐶 0.580 0.715 0.495 0.580 0.595 0.590 0.645 0.500 0.985 0.865 0.980 0.685 
+
+All (Ours) 0.600 0.770 0.510 0.610 0.675 0.655 0.740 0.565 0.990 0.895 0.990 0.727 Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+## D.1 Teacher-Generated Training Traces 
+
+We show example traces generated by T during training data generation, covering reasoning traces (with and without verbalized confidence) and coding traces. 
+
+Example of one trace generated by T without confidence on Git-Parquet for M𝑅 training. 
+
+Prompt: 
+
+Please fill in the missing value in the input table. The missing value is denoted by '[MISSING] '. Please return the value filled in JSON format: {"value": "filled_value"}. Input Table: | Sku | jan | feb | mar | apr | may | jun | jul | aug | sep | oct | nov | dec | unit cost | lead-time | retail_price | quantity_on_hand | backlog | |:----------|:------|:------|:------|:------|:------|:------|:------|:------|:------|:------|:------|:------|:------------|:------------|:---------------|:-------------------|:----------| | KR202-209 | 1509 | 1855 | 2665 | 1841 | 1231 | 2598 | 1988 | 1988 | 2927 | 2707 | 731 | 2598 | 1001 | 2 | 5000 | 1003 | 10 | | KR202-210 | 1006 | 206 | 2588 | 670 | 2768 | 2809 | 1475 | 1537 | 919 | 2525 | 440 | 2691 | 394 | 2 | 1300 | 3224 | 10 | | [MISSING] | 1840 | 2284 | 850 | 983 | 2737 | 1264 | 2002 | 1980 | 235 | 1489 | 218 | 525 | 434 | 4 | 1200 | 390 | 10 | | KR202-212 | 104 | 2262 | 350 | 528 | 2570 | 1216 | 1101 | 2755 | 2856 | 2381 | 1867 | 2743 | 474 | 3 | 10 | 390 | 10 | | KR202-213 | 489 | 954 | 1112 | 199 | 919 | 330 | 561 | 2372 | 921 | 1587 | 1532 | 1512 | 514 | 1 | 2000 | 2095 | 10 | | KR202-214 | 2416 | 2010 | 2527 | 1409 | 1059 | 890 | 2837 | 276 | 987 | 2228 | 1095 | 1396 | 554 | 2 | 1800 | 55 | 10 | | KR202-215 | 403 | 1737 | 753 | 1982 | 2775 | 380 | 1561 | 1230 | 1262 | 2249 | 824 | 743 | 594 | 1 | 2500 | 4308 | 10 | | KR202-216 | 2908 | 929 | 684 | 2618 | 1477 | 1508 | 765 | 43 | 2550 | 2157 | 937 | 1201 | 634 | 3 | 3033 | 34 | 10 | | KR202-217 | 2799 | 2197 | 1647 | 2263 | 224 | 2987 | 2366 | 588 | 1140 | 869 | 1707 | 1180 | 674 | 3 | 5433 | 390 | 10 | | KR202-218 | 1333 | 402 | 804 | 318 | 1408 | 830 | 1028 | 534 | 1871 | 2730 | 2022 | 94 | 714 | 2 | 3034 | 3535 | 10 | | KR202-219 | 813 | 969 | 745 | 1001 | 2732 | 1987 | 717 | 599 | 2722 | 171 | 639 | 2108 | 754 | 3 | 5000 | 334 | 10 | | KR202-220 | 1481 | 905 | 1067 | 2513 | 861 | 1670 | 650 | 2630 | 1245 | 997 | 1936 | 2780 | 794 | 3 | 7500 | 3434 | 10 | | KR202-221 | 771 | 2941 | 1360 | 2714 | 1801 | 1744 | 1428 | 1660 | 436 | 578 | 1956 | 1101 | 834 | 2 | 4938 | 4433 | 10 | | KR202-222 | 2349 | 4 | 345 | 524 | 340 | 2698 | 2137 | 1164 | 498 | 1583 | 1241 | 2965 | 874 | 2 | 4922 | 3435 | 10 | | KR202-223 | 2045 | 2055 | 552 | 81 | 2780 | 176 | 2316 | 1475 | 2566 | 1678 | 1553 | 2745 | 914 | 1 | 4894 | 34533 | 10 | | KR202-224 | 2482 | 1887 | 1911 | 1446 | 2939 | 1241 | 1281 | 692 | 119 | 627 | 1941 | 1383 | 954 | 2 | 2942 | 33 | 10 | | KR202-225 | 2744 | 2770 | 2697 | 1726 | 1776 | 2264 | 332 | 2420 | 2722 | 1161 | 1986 | 2587 | 994 | 6 | 8999 | 2000 | 10 | | KR202-226 | 2509 | 914 | 903 | 877 | 1859 | 2263 | 383 | 593 | 236 | 189 | 920 | 1686 | 1034 | 3 | 4342 | 4344 | 10 | | KR202-227 | 368 | 2502 | 2955 | 2994 | 1270 | 2884 | 2208 | 699 | 854 | 877 | 2320 | 160 | 1074 | 3 | 4920 | 489 | 10 | | KR202-228 | 1468 | 1109 | 2464 | 2799 | 948 | 589 | 2858 | 1140 | 501 | 2691 | 93 | 1060 | 1114 | 2 | 15000 | 9439 | 10 | | KR202-229 | 2114 | 198 | 1479 | 1249 | 1475 | 744 | 407 | 2280 | 226 | 2285 | 796 | 1948 | 1154 | 2 | 13000 | 8939 | 10 | | KR202-230 | 1023 | 1150 | 1672 | 2026 | 1590 | 441 | 2484 | 2300 | 2928 | 1082 | 2064 | 2412 | 1194 | 2 | 10000 | 349 | 10 | | KR202-231 | 482 | 546 | 299 | 2304 | 2953 | 1029 | 1863 | 2809 | 454 | 927 | 2488 | 2341 | 1234 | 4 | 9999 | 3434 | 10 | | KR202-232 | 614 | 2138 | 962 | 2017 | 2398 | 2963 | 2189 | 1804 | 414 | 2016 | 1350 | 2464 | 1274 | 2 | 7500 | 234 | 10 | | KR202-233 | 2395 | 2521 | 2157 | 728 | 1028 | 43 | 138 | 826 | 570 | 2825 | 181 | 787 | 1314 | 4 | 6000 | 349 | 10 | | KR202-234 | 1336 | 1478 | 865 | 533 | 1562 | 422 | 2287 | 1302 | 1230 | 1059 | 1153 | 399 | 1354 | 2 | 20000 | 324 | 10 | | KR202-235 | 2565 | 2762 | 2721 | 1431 | 845 | 2163 | 2413 | 2227 | 1753 | 740 | 1139 | 2300 | 1394 | 3 | 59500 | 850 | 10 | | KR202-236 | 1912 | 1726 | 1569 | 316 | 71 | 2082 | 108 | 174 | 1974 | 609 | 2896 | 566 | 1434 | 3 | 2300 | 4930 | 10 | | KR202-237 | 2153 | 1112 | 16 | 130 | 590 | 2619 | 2576 | 2390 | 2567 | 1531 | 842 | 242 | 1474 | 2 | 4500 | 9483 | 10 | | KR202-238 | 1417 | 2044 | 1981 | 1936 | 2377 | 780 | 1544 | 1521 | 51 | 1056 | 1876 | 1356 | 1514 | 3 | 8000 | 839 | 10 | | KR202-239 | 2717 | 2186 | 2300 | 677 | 2157 | 2328 | 1917 | 2519 | 561 | 281 | 1162 | 1146 | 1554 | 2 | 39000 | 433 | 10 | | KR202-240 | 1015 | 741 | 2754 | 2925 | 2302 | 695 | 2869 | 440 | 406 | 1083 | 2334 | 1015 | 1594 | 3 | 3943 | 390 | 10 | | KR202-241 | 3050 | 1507 | 3637 | 1112 | 1963 | 1675 | 898 | 1986 | 2262 | 3895 | 1229 | 2904 | 769 | 5 | 8007 | 2125 | 10 | | KR202-242 | 1875 | 2368 | 830 | 823 | 868 | 1409 | 1845 | 3095 | 3247 | 1894 | 2558 | 3048 | 1819 | 1 | 13225 | 1253 | 10 | | KR202-243 | 1717 | 593 | 3006 | 2935 | 3139 | 2753 | 3247 | 3845 | 1720 | 3413 | 3399 | 2799 | 1120 | 3 | 14682 | 1128 | 10 | | KR202-244 | 2383 | 2046 | 2487 | 3827 | 1674 | 3118 | 2849 | 2233 | 3888 | 2566 | 2216 | 3817 | 1067 | 5 | 11997 | 1191 | 10 | | KR202-245 | 1115 | 2694 | 3038 | 3366 | 1058 | 2724 | 2863 | 1930 | 1787 | 838 | 3087 | 1565 | 1623 | 2 | 12876 | 611 | 10 | | KR202-246 | 3108 | 1197 | 2472 | 1264 | 3179 | 3638 | 1268 | 1581 | 3456 | 1630 | 1788 | 2288 | 608 | 2 | 6548 | 2192 | 10 | | KR202-247 | 3439 | 1854 | 652 | 1827 | 1645 | 2257 | 2733 | 1337 | 2034 | 2106 | 877 | 2409 | 1578 | 2 | 10463 | 1017 | 10 | 
+
+Completion: 
+
+<think> Okay, let 's see. I need to find the missing SKU in the table. The existing SKUs are from KR202-209 up to KR202-247. Let me check the sequence. Looking at the list, the first one is KR202-209, then 210, then the missing one, followed by 212, 213, and so on up to 247. So the missing SKU should be between 210 and 212. That would be KR202-211. Let me confirm that there 's no other gaps. The next after the missing is 212, so yes, 211 is missing. The other entries are in order, so the missing value is KR202-211. </think> {"value": "KR202-211"} Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Example of a trace generated by T with verbalized confidence on Gov-CSV for M𝑅 training. The reasoning trace is discarded after training data generation; only the confidence score is used in computing Eq. 5 for conf train 
+
+> 𝑅
+
+Prompt: 
+
+Please fill in the missing value in the input table and provide your confidence level as an integer between 0 (no confidence) and 100 (full confidence). The missing value is denoted by '[MISSING] '. Please return the value filled in JSON format: {"value": "filled_value", " confidence": "confidence_level"}. Input Table: | Financial year | Period | Class | Tests | Pass after rectification at MOT test station | Fails | Initial fail rate | Final fail rate | Tests failed with at least one dangerous item | Initial fail rate for tests with at least one dangerous item | Tests failed with no dangerous items | Initial fail rate for tests with no dangerous item | |:-----------------|:-----------------------------|:------------------------------------------------------------------------|:-----------|:-----------------------------------------------|:----------|:--------------------|:------------------|:------------------------------------------------|:---------------------------------------------------------------|:---------------------------------------|:-----------------------------------------------------| | 2019 to 2020 | Quarter 1: April to June | Classes 1 & 2: Motorcycles | 367,128 | 24,885 | 33,227 | 15.83% | 9.05% | 17,279 | 4.71% | 40,833 | 11.12% | | 2019 to 2020 | Quarter 1: April to June | Classes 3 & 4: Cars, vans and passenger vehicles with up to 12 seats | 7,902,799 | 571,809 | 2,000,009 | 32.54% | 25.31% | 740,449 | 9.37% | 1,831,369 | 23.17% | | 2019 to 2020 | Quarter 1: April to June | Class 5: Private passenger vehicles with more than 12 seats | 12,179 | 671 | 2,903 | 29.35% | 23.84% | 945 | 7.76% | 2,629 | 21.59% | | 2019 to 2020 | Quarter 1: April to June | Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight | 198,217 | 16,237 | 65,221 | 41.10% | 32.90% | 25,662 | 12.95% | 55,796 | 28.15% | | 2019 to 2020 | Quarter 1: April to June | Total | 8,480,323 | 613,602 | 2,101,360 | 32.01% | 24.78% | 784,335 | 9.25% | 1,930,627 | 22.77% | | 2018 to 2019 | Total | Classes 1 & 2: Motorcycles | 980,543 | 68,778 | 97,204 | 16.90% | 9.90% | nan | nan | nan | nan | | 2018 to 2019 | Total | Classes 3 & 4: Cars, vans and passenger vehicles with up to 12 seats | 29,560,831 | 2,198,630 | 7,731,619 | 33.60% | 26.20% | nan | nan | nan | nan | | 2018 to 2019 | Total | Class 5: Private passenger vehicles with more than 12 seats | 47,862 | 2,719 | 11,555 | 29.80% | 24.10% | nan | nan | nan | nan | | 2018 to 2019 | Total | Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight | 746,539 | 60,538 | 254,800 | 42.20% | 34.10% | nan | nan | nan | nan | | 2018 to 2019 | Total | Total | 31,335,775 | 2,330,665 | 8,095,178 | 33.30% | 25.80% | nan | nan | nan | nan | | 2018 to 2019 | 20 May 2018 to 31 March 2019 | Classes 1 & 2: Motorcycles | 751,027 | 53,524 | 76,668 | 17.30% | 10.20% | nan | nan | nan | nan || 2018 to 2019 | 20 May 2018 to 31 March 2019 | Classes 3 & 4: Cars, vans and passenger vehicles with up to 12 seats | 25,306,281 | 1,859,502 | 6,586,903 | 33.40% | 26.00% | nan | nan | nan | nan | | 2018 to 2019 | 20 May 2018 to 31 March 2019 | Class 5: Private passenger vehicles with more than 12 seats | 41,053 | 2,307 | 9,922 | 29.80% | 24.20% | nan | nan | nan | nan | | 2018 to 2019 | 20 May 2018 to 31 March 2019 | Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight | 644,570 | 51,461 | 219,193 | 42.00% | 34.00% | nan | nan | nan | nan | | 2018 to 2019 | 20 May 2018 to 31 March 2019 | Total | 26,742,931 | 1,966,794 | 6,892,686 | 33.10% | 25.80% | nan | nan | nan | nan | | 2018 to 2019 | 1 April 2018 to 19 May 2018 | Classes 1 & 2: Motorcycles | 229,516 | 15,254 | 20,536 | 15.60% | 6.60% | nan | nan | nan | nan | | 2018 to 2019 | 1 April 2018 to 19 May 2018 | Classes 3 & 4: Cars, vans and passenger vehicles with up to 12 seats | 4,254,550 | 339,128 | 1,144,716 | 34.90% | 8.00% | nan | nan | nan | nan | | 2018 to 2019 | 1 April 2018 to 19 May 2018 | Class 5: Private passenger vehicles with more than 12 seats | 6,809 | 412 | 1,633 | 30.00% | 6.10% | nan | nan | nan | nan | | 2018 to 2019 | 1 April 2018 to 19 May 2018 | Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight | 101,969 | 9,077 | 35,607 | 43.80% | 8.90% | nan | nan | nan | nan | | 2018 to 2019 | 1 April 2018 to 19 May 2018 | Total | 4,592,844 | 363,871 | 1,202,492 | 34.10% | 7.90% | nan | nan | nan | nan | | 2017 to 2018 | Total | Classes 1 & 2: Motorcycles | 968,338 | 68,982 | 96,408 | 17.10% | 10.00% | nan | nan | nan | nan | | 2017 to 2018 | Total | Classes 3 & 4: Cars, vans and passenger vehicles with up to 12 seats | 28,877,225 | 2,384,216 | 7,571,216 | 34.50% | 26.20% | nan | nan | nan | nan | | 2017 to 2018 | Total | Class 5: Private passenger vehicles with more than 12 seats | 47,816 | 2,980 | 11,500 | 30.30% | 25.00% | nan | nan | nan | nan | | 2017 to 2018 | Total | Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight | [MISSING] | 64,986 | 241,378 | 43.75% | 34.50% | nan | nan | nan | nan | | 2017 to 2018 | Total | Total | 30,594,038 | 2,521,164 | 7,920,502 | 34.10% | 25.90% | nan | nan | nan | nan | | 2016 to 2017 | Total | Classes 1 & 2: Motorcycles | 1,011,080 | 75,240 | 103,734 | 17.70% | 10.30% | nan | nan | nan | nan | | 2016 to 2017 | Total | Classes 3 & 4: Cars, vans and passenger vehicles with up to 12 seats | 28,684,053 | 2,451,012 | 7,699,812 | 35.40% | 26.80% | nan | nan | nan | nan | | 2016 to 2017 | Total | Class 5: Private passenger vehicles with more than 12 seats | 47,853 | 3,175 | 11,997 | 31.70% | 25.10% | nan | nan | nan | nan | | 2016 to 2017 | Total | Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight | 680,461 | 64,691 | 244,496 | 45.40% | 35.90% | nan | nan | nan | nan | | 2016 to 2017 | Total | Total | 30,423,447 | 2,594,118 | 8,060,039 | 35.00% | 26.50% | nan | nan | nan | nan | | 2015 to 2016 | Total | Classes 1 & 2: Motorcycles | 1,003,500 | 75,212 | 107,048 | 18.20% | 10.70% | nan | nan | nan | nan | | 2015 to 2016 | Total | Classes 3 & 4: Cars, vans and passenger vehicles with up to 12 seats | 28,027,320 | 2,474,710 | 7,827,865 | 36.80% | 27.90% | nan | nan | nan | nan | | 2015 to 2016 | Total | Class 5: Private passenger vehicles with more than 12 seats | 45,611 | 3,121 | 11,433 | 31.90% | 25.10% | nan | nan | nan | nan | | 2015 to 2016 | Total | Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight | 644,353 | 61,547 | 239,971 | 46.80% | 37.20% | nan | nan | nan | nan | | 2015 to 2016 | Total | Total | 29,720,784 | 2,614,590 | 8,186,317 | 36.30% | 27.50% | nan | nan | nan | nan | | 2014 to 2015 | Total | Classes 1 & 2: Motorcycles | 1,008,577 | 77,979 | 115,969 | 19.20% | 11.50% | nan | nan | nan | nan | | 2014 to 2015 | Total | Classes 3 & 4: Cars, vans and passenger vehicles with up to 12 seats | 27,688,292 | 2,542,733 | 8,056,025 | 38.30% | 29.10% | nan | nan | nan | nan | Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+| 2014 to 2015 | Total | Class 5: Private passenger vehicles with more than 12 seats | 44,805 | 3,258 | 11,673 | 33.30% | 26.10% | nan | nan | nan | nan | | 2014 to 2015 | Total | Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight | 613,769 | 59,870 | 240,534 | 48.90% | 39.20% | nan | nan | nan | nan | | 2014 to 2015 | Total | Total | 29,355,443 | 2,683,840 | 8,424,201 | 37.80% | 28.70% | nan | nan | nan | nan | | 2013 to 2014 | Total | Classes 1 & 2: Motorcycles | 1,027,707 | 82,650 | 122,345 | 19.90% | 11.90% | nan | nan | nan | nan | | 2013 to 2014 | Total | Classes 3 & 4: Cars, vans and passenger vehicles with up to 12 seats | 27,481,013 | 2,561,673 | 8,424,279 | 40.00% | 30.70% | nan | nan | nan | nan | | 2013 to 2014 | Total | Class 5: Private passenger vehicles with more than 12 seats | 47,044 | 3,406 | 13,576 | 36.10% | 28.90% | nan | nan | nan | nan | | 2013 to 2014 | Total | Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight | 601,942 | 56,557 | 246,213 | 50.30% | 40.90% | nan | nan | nan | nan | | 2013 to 2014 | Total | Total | 29,157,706 | 2,704,286 | 8,806,413 | 39.50% | 30.20% | nan | nan | nan | nan | 
+
+Completion: 
+
+<think> Okay, let 's tackle this problem. The missing value is in the 2017 to 2018 financial year, under Class 7: Goods vehicles between 3,000 and 3,500 kg gross vehicle weight, in the "Tests" column. The other years have data in that class, so maybe I can look for a pattern or use the data from adjacent years to estimate the missing value. Looking at the "Tests" for Class 7 in other years: - 2013-2014: 601,942 - 2014-2015: 613,769 - 2015-2016: 644,353 - 2016-2017: 680,461 - 2017-2018: [MISSING] - 2018-2019: 746,539 (Total for the year) - 2019-2020: 198,217 (But that 's only for Quarter 1, so maybe not helpful here) Wait, the 2018-2019 total is 746,539. Let 's check the trend. The numbers are increasing each year from 2013 to 2017. For example: 2013-2014: 601,942 2014-2015: 613,769 (+11,827) 2015-2016: 644,353 (+30,584) 2016-2017: 680,461 (+36,108) So the trend is an increase each year. If we follow that, the next year (2017-2018) might be around 680,461 + similar increment. But the 2018-2019 total is 746,539. Let 's see the difference between 2016-2017 and 2018-2019: 746,539 - 680,461 = 66,078 over two years, so about 33,039 per year. If 2017-2018 is between 680,461 and 746,539, maybe around 680,461 + 33,039 = 713,500? But wait, the 2017-2018 's Class 7 Tests is missing, and the Total for 2017-2018 is 30,594,038. Let 's check if the sum of the other classes in 2017-2018 adds up to the total minus the missing value. In 2017-2018 Total row, Tests is 30,594,038. The other classes in that year are: - Classes 1 & 2: 968,338 - Classes 3 & 4: 28,877,225 - Class 5: 47,816 - Class 7: [MISSING] So sum of the known classes: 968,338 + 28,877,225 + 47,816 = 29,893,379. The total is 30,594,038. So the Class 7 Tests would be 30,594,038 -29,893,379 = 700,659. That 's the exact value needed to make the total add up. Therefore, the missing value should be 700,659. Let me check if that makes sense with the trend. The previous year (2016-2017) was 680,461, so 700,659 would be an increase of 20,198, which is a bit less than the previous increases (30k and 36k). But since the total is given, this must be the correct value. The confidence here is high because it 's derived from the total and the other values. So confidence level 100. </think> {"value": "700,659", "confidence": "100"} Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Example of one trace generated by T on Git-CSV for M𝐶 training. 
+
+Prompt: 
+
+Please write a concise Python pandas snippet to fill in the missing value in the input table. The missing value is denoted by '[MISSING] '.Assume the table is in a DataFrame named `df `
+
+Only output non-empty `code ` if you can write **one** pandas statement that fills **all** values in the target column using a column-level rule (i.e., it generalizes to every value in that column and depends on other column(s), not row indices). If such a general rule does not exist, leave the `code ` field empty. The code must be vectorized (no loops or row-wise indexing) and must not hard-code row-specific constants. Do NOT use `.fillna() ` with a scalar literal or literal assignment for trivial cases. During evaluation, all existing values in the target column are masked to `nan `. Therefore do not read from that column in your computation. Return exactly one JSON object: {"code": "<CODE or empty string>"} Example: Input Table: | A | B | Total | |---|---|-------| | 1 | 2 | 3 | | 4 | [MISSING] | 9 | {"code": "df[ 'B'] = df[ 'Total '] - df[ 'A']"} Input Table: | cut | color | clarity | carat | depth | table | price | x | y | z | |:----------|:--------|:----------|:--------|:--------|:--------|:--------|:-----|:----------|:-----| | Fair | E | VS2 | 0.22 | 65.1 | 61.0 | 337 | 3.87 | 3.78 | 2.49 | | Good | E | VS1 | 0.23 | 56.9 | 65.0 | 327 | 4.05 | [MISSING] | 2.31 | | Good | J | SI2 | 0.31 | 63.3 | 58.0 | 335 | 4.34 | 4.35 | 2.75 | | Ideal | E | SI2 | 0.23 | 61.5 | 55.0 | 326 | 3.95 | 3.98 | 2.43 | | Premium | E | SI1 | 0.21 | 59.8 | 61.0 | 326 | 3.89 | 3.84 | 2.31 | | Premium | I | VS2 | 0.29 | 62.4 | 58.0 | 334 | 4.2 | 4.23 | 2.63 | | Very Good | H | SI1 | 0.26 | 61.9 | 55.0 | 337 | 4.07 | 4.11 | 2.53 | | Very Good | H | VS1 | 0.23 | 59.4 | 61.0 | 338 | 4.0 | 4.05 | 2.39 | | Very Good | I | VVS1 | 0.24 | 62.3 | 57.0 | 336 | 3.95 | 3.98 | 2.47 | | Very Good | J | VVS2 | 0.24 | 62.8 | 57.0 | 336 | 3.94 | 3.96 | 2.48 | 
+
+Completion: 
+
+<think> Okay, let 's see. The user wants a pandas code snippet to fill the missing value in the input table. The missing value is in the 'y' column. The code needs to be a single pandas statement that fills all missing values in the target column using a column-level rule, without hardcoding row-specific constants. Also, during evaluation, all existing values in the target column are masked as NaN, so the code shouldn 't rely on existing values in that column. Looking at the input table, the columns include 'x', 'y', 'z', and others. The missing value is in the 'y' column. Let me think about possible relationships between these columns. In diamond datasets, sometimes x, y, z are dimensions (length, width, depth), and carat is weight. But maybe there 's a formula that relates these. For example, maybe the product of x, y, z relates to carat. But I 'm not sure. Alternatively, perhaps the missing 'y' can be calculated from other columns. Wait, in the first example, the missing 'B' was filled by Total - A. So maybe here, there 's a similar relationship. Let 's check the existing rows. For example, in the first row, x=3.87, y=3.78, z=2.49. Let 's see if x * y * z relates to carat. 3.87 * 3.78 * 2.49 ≈let 's calculate that. 3.87 *3.78 is about 14.6286, multiplied by 2.49 gives around 36.44. The carat is 0.22. Hmm, but 36.44 is way larger than 0.22. Maybe that 's not the case. Alternatively, maybe the product of x, y, z multiplied by some factor equals the carat. But that might not be a standard formula. Alternatively, maybe the depth is calculated as (z * 2) / (x + y) * 100. Wait, depth percentage is calculated as (z / mean(x, y)) * 100. Let me check. For the first row, depth is 65.1. z is 2.49. x is 3.87, y is 3.78. The average of x and y is (3.87 +3.78)/2 = 3.825. Then z / ( average) *100 = 2.49 / 3.825 *100 ≈65.1, which matches the depth. So depth = (z / ((x + y)/2 )) * 100. So the formula for depth is (2*z)/( x + y) *100. Wait, no. Wait, depth is calculated as (z / ((x + y)/2 )) * 100. So depth = (2*z)/(x + y) * 100. So rearranging that formula, we can solve for y. Let 's see. Given that depth = (2*z)/(x + y) * 100, then solving for y: depth = 200*z / (x + y) => x + y = 200*z / depth => y = (200*z / depth) - x So if that 's the case, then the missing 'y' can be calculated using this formula. Let 's check the existing rows to see if this holds. Take the first row: depth=65.1, z=2.49, x=3.87. Compute (200 * 2.49) / 65.1 = 498 /65.1 ≈7.65. Then subtract x (3.87) gives 7.65 -3.87 = 3.78, which matches the y value. Another row: the second row has depth=56.9, z=2.31, x=4.05. Let 's compute (200*2.31)/56.9 = 462 /56.9 ≈8.12. Subtract x (4.05) gives 8.12-4.05=4.07. But the missing y is in this row. Wait, the existing y in the second row is missing. Wait, the second row 's y is missing. But according to the formula, if we compute (200*z/depth) -x, then for the second row, that would be (200*2.31)/56.9 -4.05. Let 's compute that. 200*2.31=462. 462/56.9 ≈8.12. 8.12 -4.05=4.07. So the missing y should be 4.07. But in the input table, the second row 's y is missing, so the code would fill it with that value. Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+Looking at other rows. For example, the third row: x=4.34, y=4.35, z=2.75, depth=63.3. Let 's check. (200*2.75)/(4.34 +4.35) = 550 /8.69 ≈63.3. Which matches the depth. So the formula holds. So the general rule is y = (200 * z / depth) - x. Therefore, the missing 'y' can be filled using this formula. So the code would be: df[ 'y'] = (200 * df[ 'z'] / df[ 'depth ']) - df[ 'x']This is a column-level rule, vectorized, and doesn 't use any row-specific constants. Also, during evaluation, existing values in 'y' are masked, but since the code doesn 't read from 'y', it 's okay. Therefore, the correct code is as above. </think> {"code": "df[’y’] = (200 *df[’z’] / df[’depth’]) - df[’x’]"} Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+## D.2 Specialist Inference Examples 
+
+We show example predictions produced by each specialist ( M𝐾 , M𝑅 , M𝐶 ) at inference time. 
+
+Example of Knowledge Specialist ( M𝐾 ) on Pub-XLS benchmark. This table records Summer Olympic Games statistics from 1896 to 2008, including the number of events, participating countries, and competitors by gender. The missing value of “161” 
+
+events for the 1964 Tokyo Games is recoverable from external knowledge 
+
+Prompt: 
+
+Please fill in the missing value in the input table. The missing value is denoted by '[MISSING] '. Please return the value filled in JSON format: {"value": "filled_value"}. Input Table: | Year | Participating Countries | Events | Competitors (Men) | Competitors (Women) | |:-------|:--------------------------|:----------|:--------------------|:----------------------| | 1896 | 14 | 43 | 241 | 0 | | 1900 | 24 | 85 | 975 | 22 | | 1904 | 12 | 94 | 645 | 6 | | 1908 | 22 | 110 | 1971 | 37 | | 1912 | 28 | 102 | 2359 | 48 | | 1920 | 29 | 156 | 2561 | 65 | | 1924 | 44 | 126 | 2954 | 135 | | 1928 | 46 | 109 | 2606 | 277 | | 1932 | 37 | 117 | 1206 | 126 | | 1936 | 49 | 129 | 3632 | 331 | | 1948 | 59 | 136 | 3714 | 390 | | 1952 | 69 | 149 | 4436 | 519 | | 1956 | 72 | 151 | 2938 | 376 | | 1960 | 83 | 150 | 4727 | 611 | | 1964 | 93 | [MISSING] | 4473 | 678 | | 1968 | 112 | 172 | 4735 | 781 | | 1972 | 121 | 195 | 6075 | 1059 | | 1976 | 92 | 198 | 4824 | 1260 | | 1980 | 80 | 203 | 4064 | 1115 | | 1984 | 140 | 221 | 5263 | 1566 | | 1988 | 159 | 237 | 6197 | 2194 | | 1992 | 169 | 257 | 6652 | 2704 | | 1996 | 197 | 271 | 6806 | 3512 | | 2000 | 199 | 300 | 6582 | 4069 | | 2004 | 201 | 301 | 6296 | 4329 | | 2008 | 204 | 302 | 6305 | 4637 | 
+
+Completion: 
+
+<think> </think> {"value": "161"} Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+Example of Reasoning Specialist ( M𝑅 ) on Pub-BI benchmark 
+
+Prompt: 
+
+Please fill in the missing value in the input table and provide your confidence level as an integer between 0 (no confidence) and 100 (full confidence). The missing value is denoted by '[MISSING] '. Please return the value filled in JSON format: {"value": "filled_value", " confidence": "confidence_level"}. Input Table: | VesselVisitCode | UnitCount | SummedUnitCount | |:------------------|:------------|:------------------| | SCB3129 | 377 | 642 | | SCB3129 | 265 | 642 | | ALO3372 | 304 | 533 | | ALO3372 | 229 | 533 | | MDY3433 | 574 | 1415 | | MDY3433 | 841 | 1415 | | INN3414 | 253 | 563 | | INN3414 | 310 | 563 | | MBU3696 | [MISSING] | 443 | | MBU3696 | 270 | 443 | | BLI3440 | 235 | 235 | 
+
+Completion: 
+
+<think> Okay, let 's see. I need to find the missing UnitCount value for MBU3696 where the SummedUnitCount is 443. The table has two entries for each VesselVisitCode, and the SummedUnitCount is the total of those two entries. Looking at the other rows, like SCB3129: 377 + 265 = 642, which matches the SummedUnitCount. Same with ALO3372: 304 + 229 = 533. So the pattern is that each VesselVisitCode has two entries, and their UnitCount values add up to the SummedUnitCount. For MBU3696, there are two entries. One is missing, the other is 270, and the SummedUnitCount is 443. So the missing value plus 270 should equal 443. Let me do the math: 443 - 270 = 173. So the missing UnitCount is 173. Let me check the other entries to confirm. BLI3440 only has one entry with SummedUnitCount 235, which matches the single UnitCount. So the pattern holds. Therefore, the missing value is 173. </think> {"value": "173", "confidence": 98} Yurong Liu, Yeye He, Haoyu Dong, Junjie Xing, Shi Han, Dongmei Zhang, and Surajit Chaudhuri 
+
+Example of Coding Specialist ( M𝐶 ) on Rel-AR benchmark 
+
+Prompt: 
+
+Please write a concise Python pandas snippet to fill in the missing value in the input table. The missing value is denoted by '[MISSING] '.Assume the table is in a DataFrame named `df `
+
+Only output non-empty `code ` if you can write **one** pandas statement that fills **all** values in the target column using a column-level rule (i.e., it generalizes to every value in that column and depends on other column(s), not row indices). If such a general rule does not exist, leave the `code ` field empty. The code must be vectorized (no loops or row-wise indexing) and must not hard-code row-specific constants. Do NOT use `.fillna() ` with a scalar literal or literal assignment for trivial cases. During evaluation, all existing values in the target column are masked to `nan `. Therefore do not read from that column in your computation. Return exactly one JSON object: {"code": "<CODE or empty string>"} Example: Input Table: | A | B | Total | |---|---|-------| | 1 | 2 | 3 | | 4 | [MISSING] | 9 | {"code": "df[ 'B'] = df[ 'Total '] - df[ 'A']"} Input Table: | DISTRICT | COUNTY | HIGHWAY | C C S J | DATE FINAL ESTIMATE PAID | CONTRACT AWARD | CHANGE ORDERS | AMOUNT PAID | UNDER/OVER BUDGET | CONTRACT DAYS | DAYS ADDED | DAYS USED | UNDER/OVER SCHEDULE | |:-----------|:----------|:----------|:----------|:---------------------------|:-----------------|:------------------|:------------------|:--------------------|:----------------|:-------------|:------------|:----------------------| | ABILENE | CALLAHAN | FM 18 | 611022 | 43405 | 1810774.89 | 209253.46 | 2054601.63 | 34573.28 | 63 | 2 | 64 | -1 | | ABILENE | CALLAHAN | IH 20 | 701054 | 43480 | 8248492.44 | 77820.66 | 8964788.599999998 | 638475.4999999992 | 303 | 0 | 259 | -44 | | ABILENE | CALLAHAN | CR | 90834022 | 43371 | 1472447.5 | 54790.0 | 1527827.5 | 590.0 | 241 | 0 | 201 | -40 | | ABILENE | HASKELL | US 277 | 15704051 | 43367 | 708783.0 | 0.0 | 708851.25 | 68.25 | 88 | 15 | 100 | -3 | | ABILENE | HOWARD | IH 20 | 506119 | 43353 | 1664669.16 | 28652.91 | 1644893.16 | -48428.91 | 93 | 0 | 93 | 0 | | ABILENE | HOWARD | IH 20 | 506120 | 43409 | 1637144.66 | 0.0 | 1637988.27 | 843.6100000001024 | 80 | 0 | 43 | -37 | | ABILENE | JONES | US 83 | 3305091 | 43371 | 5078876.0 | 140087.92 | 5786525.67 | 567561.7499999999 | 110 | 0 | 82 | -28 | | ABILENE | JONES | US 83 | 3305092 | 43493 | 9187304.69 | 231846.87 | 8856936.859999998 | -562214.7000000001 | 88 | 0 | 82 | -6 | | ABILENE | MITCHELL | BS 208B | 33202026 | 43399 | 1291681.52 | 123625.96 | 1354788.57 | -60518.90999999996 | 50 | 0 | 46 | -4 | | ABILENE | NOLAN | BI 20-L | 614004 | 43468 | 1848432.22 | 100935.04 | 1956428.5 | 7061.240000000033 | 90 | 50 | 140 | 0 | | ABILENE | TAYLOR | IH 20 | 606099 | 43378 | 14639000.0 | 225180.5 | 14719347.87 | -144832.63000000082 | 445 | 0 | 361 | -84 | | ABILENE | TAYLOR | SH 351 | 1101036 | 43501 | 1708497.38 | -1630.0 | 1740552.03 | 33684.65000000014 | 67 | 0 | 67 | 0 | | ABILENE | TAYLOR | VA | 90800087 | 43511 | 1386588.15 | 963832.16 | 2412691.41 | 62271.10000000021 | 60 | 0 | 56 | -4 | | ABILENE | TAYLOR | SL 322 | 239801051 | 43416 | 763962.2 | 33932.75 | 795254.2 | -2640.75 | 93 | 0 | 77 | -16 | | AMARILLO | LIPSCOMB | SH 15 | 35501048 | 43453 | 8150619.8 | 352604.3 | 8589168.42 | 85944.32000000012 | 77 | 19 | 159 | 63 | | AMARILLO | OCHILTREE | US 83 | 3002044 | 43399 | 2999163.7 | 169845.75 | 3410361.06 | 241351.60999999987 | 131 | 4 | 136 | 1 | | AMARILLO | POTTER | VA | 90400180 | 43355 | 482197.48 | 0.0 | 467648.43 | -14549.049999999988 | 36 | 0 | 26 | -10 | | ATLANTA | BOWIE | US 67 | 1011069 | 43487 | 1398421.5 | 70170.79 | 1473788.14 | 5195.849999999904 | 192 | 47 | 235 | -4 | | ATLANTA | BOWIE | US 67 | 1011070 | 43454 | 3481443.5 | 236157.9 | 3939018.01 | 221416.60999999972 | 55 | 0 | 49 | -6 | | ATLANTA | BOWIE | US 259 | 8504035 | 43448 | 5371369.95 | 75945.64999999998 | 5652720.5 | 205404.89999999985 | 317 | 0 | 248 | -69 | | ATLANTA | BOWIE | US 71 | 21702035 | 43487 | 435854.53 | 0.0 | 438497.75 | 2643.219999999972 | 160 | 0 | 115 | -45 | | ATLANTA | BOWIE | US 59 | 21801095 | 43354 | 175785.35 | 0.0 | 176388.91 | 603.5599999999977 | 72 | 0 | 54 | -18 | | ATLANTA | BOWIE | IH 30 | 61006080 | 43354 | 640525.98 | 0.0 | 640256.7 | -269.28000000002794 | 96 | 0 | 91 | -5 | | ATLANTA | BOWIE | IH 30 | 61006088 | 43509 | 798693.0 | 20194.1 | 843502.68 | 24615.580000000053 | 69 | 0 | 61 | -8 | | ATLANTA | CASS | SH 77 | 27703027 | 43515 | 3512191.16 | 4833.0 | 3672660.12 | 155635.95999999996 | 70 | 0 | 76 | 6 | | ATLANTA | HARRISON | US 59 | 6301095 | 43367 | 2387610.51 | 2100.0 | 2533641.74 | 143931.23000000045 | 50 | 0 | 47 | -3 | | ATLANTA | HARRISON | IH 20 | 49508100 | 43474 | 13599302.66 | 661867.06 | 15034808.84 | 773639.1199999996 | 250 | 0 | 231 | -19 | | ATLANTA | HARRISON | FM 2625 | 84307016 | 43474 | 2284633.31 | 35126.0 | 2282445.54 | -37313.77000000002 | 124 | 0 | 124 | 0 | | ATLANTA | HARRISON | FM 1997 | 191902037 | 43354 | 823436.65 | 8796.0 | 831627.29 | -605.359999999986 | 114 | 1 | 108 | -7 | | ATLANTA | PANOLA | US 59 | 6310013 | 43371 | 260188.2 | 0.0 | 260229.03 | 40.8299999999872 | 90 | 0 | 49 | -41 | | ATLANTA | PANOLA | SH 43 | 20704036 | 43360 | 2083697.62 | 25113.86 | 2109751.84 | 940.3599999997384 | 40 | 0 | 38 | -2 | | ATLANTA | PANOLA | SH 149 | 39303034 | 43453 | 4016607.46 | 18360.0 | 4098014.15 | 63046.68999999994 | 82 | 5 | 99 | 12 | | ATLANTA | TITUS | SH 49 | 24801072 | 43383 | 418186.6 | 0.0 | 418276.6 | 90.0 | 161 | 0 | 143 | -18 | | ATLANTA | TITUS | IH 30 | 61003079 | 43476 | 33725327.54 | 4178284.48 | 40740908.03 | 2837296.010000002 | 595 | 166 | 742 | -19 | | ATLANTA | UPSHUR | US 271 | 24804068 | 43419 | 370150.0 | 34408.9 | 385304.5 | -19254.4 | 90 | 25 | 100 | -15 | | ATLANTA | UPSHUR | SH 154 | 40201023 | 43368 | 1158627.94 | 0.0 | 1115842.27 | -42785.669999999925 | 76 | 0 | 108 | 32 | | AUSTIN | BASTROP | SH 71 | 26505079 | 43515 | 5983021.72 | -272929.33 | 6182508.67 | 472416.2800000002 | 95 | 9 | 104 | 0 | | AUSTIN | BURNET | SH 29 | 15101051 | 43500 | 612820.24 | 22165.28 | 652240.67 | 17255.150000000052 | 70 | 0 | 69 | -1 | | AUSTIN | BURNET | US 183 | 27302024 | 43507 | 1383923.15 | -72930.0 | 1189443.7 | -121549.44999999995 | 17 | 0 | 9 | -8 | | AUSTIN | GILLESPIE | US 87 | 7201052 | 43504 | 963063.11 | 1950.0 | 1017530.5 | 52517.390000000014 | 240 | 0 | 179 | -61 | | AUSTIN | GILLESPIE | US 87 | 7201053 | 43500 | 885285.24 | -43185.51 | 789603.32 | -52496.41000000004 | 37 | 0 | 24 | -13 | | AUSTIN | HAYS | IH 35 | 1602145 | 43420 | 8969400.82 | 801053.36 | 10083115.66 | 312661.47999999986 | 270 | 112 | 382 | 0 | | AUSTIN | HAYS | IH 35 | 1602148 | 43500 | 1054131.89 | 730537.39 | 1860307.11 | 75637.83000000019 | 28 | 8 | 28 | -8 | | AUSTIN | HAYS | SH 21 | 47102071 | 43473 | 630023.0 | -65171.97 | 584321.82 | [MISSING] | 30 | 0 | 28 | -2 | | AUSTIN | HAYS | CR | 91433070 | 43385 | 149765.0 | -3427.0 | 149797.0 | 3459.0 | 38 | 0 | 38 | 0 | | AUSTIN | LEE | US 290 | 11407080 | 43417 | 844010.32 | 17208.17 | 894330.52 | 33112.03000000007 | 100 | 0 | 74 | -26 | | AUSTIN | LEE | US 290 | 11407082 | 43353 | 1336982.72 | 57131.21 | 1378273.43 | -15840.500000000036 | 118 | 0 | 85 | -33 | | AUSTIN | LEE | CR | 91421031 | 43370 | 313217.77 | -10103.3 | 293098.71 | -10015.759999999998 | 72 | 0 | 61 | -11 | | AUSTIN | TRAVIS | IH 35 | 1601114 | 43376 | 630022.0 | -686.0 | 625084.0 | -4252.0 | 120 | 0 | 86 | -34 | | AUSTIN | TRAVIS | IH 35 | 1601117 | 43381 | 9232872.16 | 1445059.43 | 11062681.36 | 384749.76999999926 | 306 | 41 | 347 | 0 | | AUSTIN | TRAVIS | US 290 | 11308077 | 43524 | 1856165.1 | 459907.97 | 2538897.15 | 222824.07999999984 | 87 | 64 | 149 | -2 | | AUSTIN | TRAVIS | US 290 | 11402100 | 43448 | 834000.0 | 0.0 | 829619.8 | -4380.199999999953 | 120 | 0 | 109 | -11 | Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models 
+
+| AUSTIN | TRAVIS | US 183 | 15109145 | 43349 | 2711157.55 | -275101.91 | 2539755.7 | 103700.06000000036 | 54 | 0 | 74 | 20 | | AUSTIN | TRAVIS | SH 130 | 44006014 | 43396 | 642322.0 | 0.0 | 662521.0 | 20199.0 | 60 | 0 | 60 | 0 | | AUSTIN | TRAVIS | VA | 91400319 | 43445 | 1113486.73 | 13123.36 | 1191395.92 | 64785.829999999936 | 365 | 0 | 365 | 0 | | AUSTIN | TRAVIS | VA | 91400320 | 43418 | 452778.7 | -6395.0 | 529117.09 | 82733.38999999996 | 77 | 0 | 47 | -30 | | AUSTIN | TRAVIS | VA | 91400393 | 43462 | 496481.33 | 2507.73 | 520193.97 | 21204.90999999996 | 180 | 0 | 129 | -51 | 
+
+Completion: 
+
+<think> Okay, let 's see. The user provided a table with a missing value in the 'UNDER/OVER BUDGET ' column for one of the rows. The task is to write a pandas code snippet that fills in the missing value using a column-level rule, without hardcoding row-specific values and using vectorized operations. First, I need to figure out how the 'UNDER/OVER BUDGET ' is calculated based on the other columns. Looking at the existing data, maybe it 'sderived from other columns. Let 's check the example rows. For instance, in the first row, 'AMOUNT PAID ' is 2054601.63, 'CONTRACT AWARD ' is 1810774.89, and 'CHANGE ORDERS ' is 209253.46. Adding 'CONTRACT AWARD ' and 'CHANGE ORDERS ' gives 1810774.89 + 209253.46 = 2020028.35. The 'AMOUNT PAID ' is 2054601.63, which is higher. The 'UNDER/OVER BUDGET ' is 34573.28, which is 2054601.63 - (1810774.89 + 209253.46) = 2054601.63 - 2020028.35 = 34573.28. So that matches. Another row: '
+
+CONTRACT AWARD ' 8248492.44 + 'CHANGE ORDERS ' 77820.66 = 8326313.1. 'AMOUNT PAID ' is 8964788.599999998. The difference is 8964788.6 -8326313.1 = 638475.5, which matches the 'UNDER/OVER BUDGET ' value. So the formula seems to be 'AMOUNT PAID ' minus ( 'CONTRACT AWARD ' + '
+
+CHANGE ORDERS '). So the missing value in the 'UNDER/OVER BUDGET ' column for the row where it 's [MISSING] can be calculated as 'AMOUNT PAID ' - (CONTRACT AWARD + CHANGE ORDERS). But the problem states that during evaluation, all existing values in the target column are masked. So the code must not read from the 'UNDER/ OVER BUDGET ' column. Therefore, the code should compute the value for the entire column using the formula, replacing the missing values. So the pandas code would be: df[ 'UNDER/OVER BUDGET '] = df[ 'AMOUNT PAID '] - (df[ 'CONTRACT AWARD '] + df[ 'CHANGE ORDERS ']) This is a vectorized operation, applies to all rows, doesn 't use row indices, and doesn 't hardcode any values. It uses the columns that are related. Therefore, this should be the correct code. </think> {"code": "df[’UNDER/OVER BUDGET’] = df[’AMOUNT PAID’] - (df[’CONTRACT AWARD’] + df[’CHANGE ORDERS’])"}
