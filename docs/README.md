@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-07-30</span>
+      <span class="dpr-home-dashboard-kicker">2026-07-31</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-07-30 20:54:51 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-07-31 21:51:14 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读两篇高分论文，聚焦多输出符号回归的物理一致性新骨架与专家语言模型精准预测缺失值。</p>
-<p>最值得关注的是《Shared Symbolic Backbones》提出的多输出物理一致骨架，以及《Auto-Fill》通过专用语言模型高效填补数据空缺。</p>
-<p>建议优先尝试将符号回归骨架用于物理建模场景，并实验Auto-Fill处理实际数据集中的缺失值问题。</p>
+<p>今日精读聚焦表格基础模型与LLM科学发现，另有速读覆盖蒸馏、表格相似性等方向；最值得关注的是满分论文《Memory Efficient Tabular Foundation Models》。建议优先阅读该文，了解如何以低内存实现高效表格建模，对资源受限场景尤为实用。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,9 +74,9 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Shared Symbolic Backbones for Physically Consistent Multi-Output Symbolic Regression">Shared Symbolic Backbones for Physically Consistent Multi-Output Symbolic Regression</span></li><li><span class="dpr-home-dashboard-paper-title" title="Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models">Auto-Fill: Learning to Predict Missing Values Accurately with Specialist Language Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Memory Efficient Tabular Foundation Models">Memory Efficient Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Scientific Knowledge Discovery in the Age of Large Language Models">Scientific Knowledge Discovery in the Age of Large Language Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="CURED: Creating, Understanding, and Repairing Errors Demonstrator">CURED: Creating, Understanding, and Repairing Errors Demonstrator</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Hybrid Mechanistic--Data-Driven Modeling Toward Neuro-Symbolic AI: What, Why, and How">From Hybrid Mechanistic--Data-Driven Modeling Toward Neuro-Symbolic AI: What, Why, and How</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Cross-Tokenizer On-Policy Distillation via Byte-Prefix Marginalization">Cross-Tokenizer On-Policy Distillation via Byte-Prefix Marginalization</span></li><li><span class="dpr-home-dashboard-paper-title" title="Human Preference aligned Tabular Similarity">Human Preference aligned Tabular Similarity</span></li><li><span class="dpr-home-dashboard-paper-title" title="Interpretable Column Annotation with LLM-Symbolized Decision Process Materialization">Interpretable Column Annotation with LLM-Symbolized Decision Process Materialization</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span><span class="dpr-home-dashboard-tag">opd <strong>1</strong></span></div>
 </section>
 </div>
 
