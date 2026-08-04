@@ -1,0 +1,1658 @@
+Title: LAB-Tab: LLM-Augmented Bayesian Network Adaptation for Few-Shot Tabular Generation
+
+URL Source: https://arxiv.org/pdf/2608.01879v1
+
+Published Time: Tue, 04 Aug 2026 02:01:55 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+# LAB-Tab: LLM-Augmented Bayesian Network Adaptation for Few-Shot Tabular Generation 
+
+Zijian Shen, Taijie Chen, Bin Zhou, Ziyang Jiang, Jintao Ke ∗
+
+Department of Civil Engineering, The University of Hong Kong 
+
+Abstract 
+
+Tabular data generation supports analysis and decision-making when target-domain data are scarce, yet collecting complete target samples is often costly. A practical but under-explored setting provides only a few target records together with richer source data from a related domain. Existing few-shot tabular generators often either fit sparse target statistics directly, which can overfit incidental patterns, or reuse source-domain generators, which may preserve dependencies that no longer hold in the target domain. To address this problem, we propose LAB-Tab , an LLM-augmented Bayesian network (BN) adaptation framework for source-aware few-shot tabular generation. LAB-Tab first fits a BN from source data and then uses an LLM to propose plausible target-domain BN edges that are absent from the source BN graph. This step converts semantic and weak statistical evidence into explicit structural hypotheses, thereby expanding the editable edge space beyond the source-fitted graph. Because the proposed edges may be noisy and interact with existing dependencies, a PPO policy calibrates edges in the augmented BN through edge-level ac-tions, including keep , weaken , strengthen , flip , and deactivate .The PPO policy is trained with a reward that combines dis-tributional alignment, downstream utility, and preservation of target-relevant dependencies. The adapted BN is then sampled to synthesize target-domain tables. Across six source–target distribution-shift scenarios built from three US Census (ACS) prediction tasks, LAB-Tab achieves the best performance at the 10% target-data budget, leads four of the six individual scenarios, and reduces the macro Overall score by 33.8% rel-ative to the strongest baseline. It also obtains the best macro JSD, WAPE, and UtilityGap while maintaining competitive feature–label preservation. 
+
+1 Introduction 
+
+Tabular data generation supports data analysis, privacy-preserving sharing, simulation, and benchmark construc-tion across domains such as healthcare, finance, transporta-tion, and public-sector analytics. In many real-world appli-cations, however, obtaining a representative target-domain table is difficult. Collecting sufficient target-domain records, together with the annotations required for downstream tasks, is often costly and time-consuming (Zhuang et al. 2021). Even when some records are accessible, they may be sparse, incomplete, or affected by missing values (Dong and Peng 2013; Emmanuel et al. 2021). Consequently, practitioners may have access to only a small number of target-domain 
+
+> ∗
+
+Corresponding author. 
+
+records. In this low-data regime, both marginal distribu-tions and multivariate dependencies must be estimated un-der substantial uncertainty, making it difficult to learn a target-domain generator without overfitting incidental pat-terns. This practical challenge motivates the problem of few-shot tabular generation. Although target-domain data are scarce in this setting, a substantially larger table from a related source domain is often available. The source table may originate from an earlier survey, another geographic region, or a broader pop-ulation, and can provide more reliable statistical informa-tion than the few observed target records. However, source-domain information cannot be transferred indiscriminately. As illustrated in Figure 1, distribution shift may affect both column marginals and conditional relationships among vari-ables (Quiñonero-Candela et al. 2009; Koh et al. 2021). Some dependencies from the source data may remain useful, while others may change dramatically within the target-specific re-lationships. For example, education may remain associated with income across regions, whereas the relationship be-tween working hours and income may vary with local labor markets. The central challenge is therefore to exploit reli-able source-domain knowledge while accommodating target-specific changes supported by only limited evidence. Existing tabular generators, transfer-learning methods, and recent LLM-based approaches offer complementary capa-bilities in distribution modeling, cross-domain reuse, and semantic guidance (Solatorio and Dupriez 2023; Shi et al. 2025; Yang et al. 2025; Chen et al. 2026). However, they do not jointly support explicit source-to-target dependency adaptation and feedback-driven calibration under limited tar-get evidence. To address this gap, we propose LAB-Tab , an LLM-augmented Bayesian network (BN) adaptation frame-work for source-aware few-shot tabular generation. LAB-Tab first learns a BN from the source table, using its ex-plicit structure and conditional distributions as a stable and inspectable prior. Then, LAB-Tab utilizes an LLM to pro-pose target-relevant edges absent from the source graph, expanding the structural search space through sparse tar-get data. Finally, PPO calibrates these dependencies using target-domain data, resolving inaccurate edges before sam-pling. This design allows transferable source dependencies to be retained while introducing structural changes based on few-shot target-specific dataset. arXiv:2608.01879v1 [cs.LG] 3 Aug 2026 Source Domain                                          
+
+> Target Domain
+> Generate full target dat a
+> Data d istribution
+> Regression Coefficients
+> X₁ X₂ …Xₚ
+> X₁ X2…Xp
+> 1
+> 2
+> …
+> n
+> Data d istribution
+> X₁ X2…Xp
+> 1
+> 2
+> …
+> 50
+> X₁ X₂ …Xₚ
+> Regression Coefficients
+> Data drift
+> X₁X₂X
+> ₚ
+> Y
+> …
+> Feature &Label
+> Relationships
+> X₁X₂X
+> ₚ
+> Y
+> …
+> Feature &Label
+> Relationships
+> X₁ X₂ …Xₚ
+> X₁  X₂  … Xₚ
+> X₁ X₂ …Xₚ
+> X₁  X₂  … Xₚ
+> Coefficient Correlations
+> Coefficient Correlations
+> X₁ X2…Xp
+> 1
+> 2
+> …
+> n
+> X₁ X2…Xp
+> 1
+> 2
+> …
+> 50
+> Generator
+> Source (full) Target (few -shot)
+> X₁ X2…Xp
+> 1
+> 2
+> …
+> 50
+> Target (Full)
+
+Figure 1: Source-aware few-shot tabular generation under distribution shift. A large source table and a small target subset are used to generate a full synthetic target table. The target domain may differ from the source in marginal distributions, predictive coefficients, feature–label relationships, and cross-feature associations. Our contributions are summarized as follows: 
+
+• We introduce LAB-Tab , a source-aware few-shot tabular generation framework that combines a source-fitted BN, LLM-guided candidate-edge augmentation, and PPO-based dependency calibration. 
+
+• We formulate source-to-target adaptation as explicit BN edge control. The LLM expands the source-derived struc-tural search space, deterministic validation enforces graph validity, and PPO adjusts edge activation, magnitude, and polarity using complementary global table-level and local dependency-level feedback. 
+
+• We evaluate LAB-Tab on six source–target shifts derived from three 2018 American Community Survey (ACS) prediction tasks. At the 10% target-data budget, LAB-Tab achieves the lowest macro Overall score, leads four of the six scenarios, and obtains the best macro JSD, WAPE, and UtilityGap. The ablations indicate complementary contri-butions from candidate-edge augmentation, PPO control, and local dependency feedback within the evaluated de-sign. 
+
+2 Related Work 
+
+Tabular synthesis spans explicit probabilistic and high-capacity neural generators (Shi et al. 2025; Challagundla et al. 2025; Stoian, Giunchiglia, and Lukasiewicz 2025). Bayesian-network, SDV-style, and copula methods offer ef-ficient sampling with inspectable dependency assumptions (Zhang et al. 2014; Patki, Wedge, and Veeramachaneni 2016; Asghar et al. 2019), whereas GAN and diffusion models in-crease expressiveness (Xu et al. 2019; Kotelnikov et al. 2023; Zhang et al. 2024). Most remain target-table driven. With few target records, neural models may fit unstable patterns, while probabilistic models must estimate local conditionals from sparse counts. When a related source table is available, the problem becomes generative domain adaptation. Conven-tional transfer learning improves target prediction through representation transfer, reweighting, distribution matching, or fine-tuning, but does not explicitly determine which de-pendencies a target generator should retain, introduce, or recalibrate (Zhuang et al. 2021). LLM-based methods add schema semantics and in-context reasoning to tabular synthesis. GReaT, REaLTabFormer, and Tabula generate records from serialized rows or relations (Borisov et al. 2023; Solatorio and Dupriez 2023; Zhao, Birke, and Chen 2023), while subsequent methods improve example selection, efficiency, logical consistency, or depen-dency guidance (Xu et al. 2025; Fang et al. 2025; Nguyen et al. 2025; Long, Xu, and Brintrup 2025). In particular, SPADA uses an LLM-induced dependency graph to guide synthesis (Yang et al. 2025). Feedback-based learning and LLM-guided search further demonstrate the value of exter-nal evaluation for refining model outputs or proposed solu-tions (Christiano et al. 2017; Ouyang et al. 2022; Romera-Paredes et al. 2024; Ma et al. 2024). Taken together, prior work largely treats semantic structure induction, probabilis-tic generation, and feedback-driven adaptation as separate directions. Our proposed method bridges this gap by uni-fying these complementary capabilities in a framework for source-aware few-shot tabular generation. 
+
+3 Problem Formulation 
+
+Let X = {X1, . . . , X p} denote the features, Y the task label, and V = X ∪ { Y } = {V1, . . . , V p+1 } the shared source– target schema. A record is z = ( x, y ). We observe an abun-dant source table Ds = {zsi }ns 
+
+> i=1
+
+drawn i.i.d. from Ps and a few-shot target table Dfs  
+
+> t
+
+= {zti}Ki=1 drawn i.i.d. from Pt,where K ≪ ns. The two distributions may differ in both marginals and conditional dependencies. During adaptation, 
+
+Pt is unknown and held-out target records are used only for evaluation. Let B(V) denote the space of BN generators over 
+
+V. A source-aware adaptation rule produces 
+
+B⋆ = A  Ds, Dfs 
+
+> t
+
+ ∈ B (V),
+
+bDt = {bzi}Ni=1 , bzi
+
+> i.i.d.
+
+∼ PB⋆ . (1) A BN is B = ( G, Θ) , where G = ( V, E) is a directed acyclic graph and Θ = {θj }p+1  
+
+> j=1
+
+contains its local conditional distributions. For Vj ∈ V , let Pa G (Vj ) = {Vi : ( Vi, V j ) ∈E} and θj (vj | pa j ) = PB (Vj = vj | Pa G (Vj ) = pa j ).The induced joint distribution factorizes as 
+
+PB (z) = 
+
+> p+1
+
+Y
+
+> j=1
+
+θj (vj | pa j ). (2) The target-aligned generator should balance distributional fidelity, predictive utility, and feature–label preservation. Let 
+
+Ddist (PB , P t) ≥ 0 denote distributional discrepancy. For a fixed training size nu, let Unu (Q; Pt) denote the expected target performance of a fixed learner trained on samples from 
+
+Q, and let a(Q) be the coefficient vector of a fixed linear probe under Q. Define 
+
+∆U (B) = |Unu (PB ; Pt) − Unu (Pt; Pt)| ,
+
+∆A(B) = 1 − a(PB )⊤a(Pt)
+
+∥a(PB )∥2∥a(Pt)∥2
+
+. (3) The population objective and its ideal solution are 
+
+Lt(B) = λdDdist (PB , P t) + λu∆U (B) + λa∆A(B),B† ∈ arg min  
+
+> B∈B (V)
+
+Lt(B), (4) where the nonnegative weights are not all zero. Since Pt is unknown, the practical objective is to construct B⋆ from Ds
+
+and Dfs  
+
+> t
+
+whose induced distribution approximates Pt under these three criteria. 
+
+4 Methodology 
+
+Figure 2 summarizes LAB-Tab, which adapts a source-fitted BN using the few-shot target set Dfs  
+
+> t
+
+. The framework consists of source BN initialization, LLM-guided edge augmentation, and PPO-guided edge-control optimization. The adapted BN is then ancestrally sampled to generate the synthetic target table. The label variable is denoted by Y ∈ V throughout. 
+
+4.1 Source BN Initialization 
+
+We first learn a source BN Bs = ( Gs, Θs) from the source-domain table Ds. Each variable is represented by a finite state space, with continuous variables discretized before structure and parameter learning. 
+
+Structure learning. Let Gs = ( V, Es) denote the source DAG. Starting from an empty graph, we perform greedy hill climbing under the Bayesian Information Criterion (BIC). At each step, the search considers single-edge additions, dele-tions, and reversals, and applies the valid operation that yields the largest positive BIC improvement. A candidate operation is valid only if it preserves acyclicity and keeps the in-degree of every node below dmax . The search terminates when no valid operation improves the score. Since hill climbing is local, 
+
+Gs ≈ arg max   
+
+> G∈ DAG dmax (V)
+
+BIC( G; Ds), (5) where DAG dmax (V) contains DAGs over V with maximum in-degree dmax .
+
+Parameter estimation. For each variable Vj , let Psj =Pa Gs (Vj ) denote its parent set, rj the number of states of Vj ,and qj the number of joint configurations of Psj . For a state 
+
+v ∈ Val( Vj ) and a parent configuration pa j ∈ Val( Psj ), we estimate the source CPT using a symmetric Dirichlet prior: 
+
+bθ(s)
+
+> j,v |pa j
+
+= ns(v, pa j ) + α/ (rj qj )
+
+ns(pa j ) + α/q j
+
+, (6) where ns(v, pa j ) is the number of source records satisfying 
+
+Vj = v and Psj = pa j , and ns(pa j ) = P 
+
+> v
+
+ns(v, pa j ).The hyperparameter α denotes the equivalent sample size. Collecting the CPTs of all variables gives Θs and hence the source BN is derived as Bs = ( Gs, Θs).
+
+4.2 LLM-Guided BN Edge Augmentation 
+
+The source BN captures dependencies supported by Ds, but target-relevant dependencies may be absent from Gs under domain shift. Relearning the entire DAG from the few-shot target set Dfs  
+
+> t
+
+is unreliable because many candidate relations receive limited empirical support. LAB-Tab therefore retains the source graph as a structural anchor and uses an LLM to propose a small set of candidate edge additions. 
+
+LLM-guided edge proposal. The augmentation context 
+
+CLLM contains the source graph Gs, the shared schema and variable descriptions, source-domain summaries Ss, and few-shot target summaries Sfs  
+
+> t
+
+. The summaries include cat-egory support, marginal frequencies, pairwise associations, and label-conditional contrasts. Given this context, the LLM returns 
+
+ePLLM = Φ LLM (CLLM ) = pm =  eem, c LLM  
+
+> m
+
+, ℓ m
+
+ Lm=1 ,
+
+(7) where eem = ( Vum → Vvm ) is a proposed directed edge, 
+
+cLLM  
+
+> m
+
+∈ [0 , 1] is a self-assessed confidence score, and ℓm is a concise semantic and statistical rationale. The confidence score and rationale are retained as proposal metadata for subsequent calibration and auditability. 
+
+Graph validation. The proposed edges are processed by 
+
+E+ = ValidAdd  {eem}Lm=1 , Gs
+
+ . (8) The validator rejects edges with endpoints outside V, self-loops, duplicate or existing edges, and additions that would create a directed cycle or cause a node’s in-degree to exceed 
+
+dmax . Each candidate is checked against the graph containing all previously accepted additions. The resulting augmented graph is 
+
+Eaug = Es ∪ E +,
+
+Gaug = ( V, Eaug ). (9) Because the accepted additions alter the parent sets of their child variables, we re-estimate the conditional distributions from Ds under Gaug using the same Dirichlet estimator. Let 
+
+¯θ(s)
+
+> j,v |pa j
+
+denote the resulting source conditional probability. We then combine this source estimate with the few-shot target counts: 
+
+θaug 
+
+> j,v |pa j
+
+=
+
+nfs  
+
+> t
+
+(v, pa j ) + κ¯θ(s)
+
+> j,v |pa j
+
+nfs  
+
+> t
+
+(pa j ) + κ , (10) Source -domain 
+
+table 𝑫 ₛ (Full )
+
+Source BN Initialization LLM -Guided Edge Augmentation 
+
+PPO -based Edge Adaptation 
+
+Structure learning (BIC hill climbing) 
+
+Learned source structure 
+
+Augmentation context CLL M
+
+Source graph G
+
+ₛ
+
+Schema & descriptions 
+
+Source summaries S
+
+ₛ
+
+Few -shot summaries S
+
+ₛfs 
+
+Label Y statistics 
+
+Edge augmentation proposals 
+
+ℰLLM Graph validation 
+
+X outside 𝒱 
+
+X self -loop 
+
+X duplicate or in ℰₛ
+
+X creates cycle 
+
+Augmented BN Baug = (G aug , Θau g)
+
++ ℰ⁺   
+
+> Source edges ℰₛAdded edges ℰ⁺
+
+State s(k)  
+
+> V₁V₂
+> V₃
+> V₄
+> Y
+
+• Add / Delete / Reverse one edge 
+
+• Acyclic & in -degree ≤ d
+
+ₘₐₓ 
+
+• Stop when no BIC improvement 
+
+Collecting all CPT entries 
+
+> P(V ₃=0|pa) P(V ₃=1|pa) V₂V₁
+> 0.28 0.72 00
+> 0.69 0.31 10
+> 0.16 0.84 01
+> 0.37 0.63 11
+> …………
+
+Dirichlet -smoothed 
+
+estimator 
+
+Source BN B
+
+ₛ = (G 
+
+ₛ, Θ
+
+ₛ) 
+
+> V₁V₂
+> V₃
+> V₄
+> Y
+
+Structure G
+
+ₛ
+
+Parent set Counts 
+
+> P(V ₃=0|pa) P(V ₃=1|pa) V₂V₁
+> 0.28 0.72 00
+> 0.69 0.31 10
+> 0.16 0.84 01
+> 0.37 0.63 11
+> …………
+
+CPT Θ
+
+ₛ  
+
+> V₁V₂
+> V₃
+> V₄
+> Y
+> V₁V₂
+> V₃
+> V₄
+> Y
+
+Large Language 
+
+Model   
+
+> V₁Y
+> Edge
+> proposal
+> Rationale Confidence
+> “V ₁strongly associated
+> with Y in target; effect not
+> in source BN”
+
+Accepted 
+
+augmentation edges 
+
+> P(V ₃=0|pa) P(V ₃=1|pa) V₂V₁
+> 0.28 0.72 00
+> 0.69 0.31 10
+> 0.16 0.84 01
+> 0.37 0.63 11
+> …………
+
+CPT Θau g
+
+Structure G
+
+ₛ Augmented 
+
+Structure Gaug 
+
+Target -domain 
+
+table 𝑫 𝒇 ₛ (few -shot )
+
+Actor a(k) 
+
+Reward r(k) 
+
+Update 
+
+Graph encoder  
+
+> Control
+> ge,de…
+> Alignment
+> vs
+> Structure
+> Edge
+> descriptio n
+> History
+> Previous
+> operation
+
+GAE   
+
+> Global: Overall table
+> alignment quality
+> Local: single edge
+> improvement
+
+Critic  
+
+> V₁V₂
+> V₃
+> V₄
+> Y
+
+Update Baug Sample data 
+
+PPO parameter update Figure 2: Overview of LAB-Tab: source BN learning and Conditional Probability Table (CPT) estimation, LLM-guided edge augmentation with graph validation, and PPO-based edge control with global–local rewards. where κ > 0 is the source-informed prior concentration. Equivalently, ¯θ(s)
+
+j, ·| pa j
+
+specifies the prior mean and κ con-trols its strength relative to the few-shot target observations. Collecting these entries gives Θaug and the augmented BN 
+
+Baug = ( Gaug , Θaug ), (11) which is subsequently calibrated by the edge-control policy. 
+
+4.3 PPO-Guided Edge-Control Optimization 
+
+The augmented BN favors structural coverage over exact target calibration. We therefore formulate edge control as a finite-horizon Markov decision process and optimize it with PPO (Schulman et al. 2017). For each edge e ∈ E aug , let 
+
+me ∈ { 0, 1}, ge ∈ [gmin , g max ], and de ∈ {− 1, +1 } denote its activation, magnitude, and polarity, respectively, where 
+
+0 < g min < 1 ≤ gmax . Their combined control at step k is 
+
+γ(k)
+
+e = m(k)
+
+e d(k)
+
+e g(k)
+
+e . (12) Let Ij denote the incoming edges of Vj , and let xe be the state of the parent endpoint of e. The controls parameterize the CPT as 
+
+θ(k)
+
+j,v |pa j
+
+= softmax v
+
+bj (v) + X
+
+e∈I j
+
+γ(k)
+
+e ψe(v, x e)
+
+ , (13) where bj is a base potential and ψe is the contribution of edge e. Collecting the CPTs gives B(k) = ( Gaug , Θ(k)).For an accepted LLM edge, define 
+
+¯ge = gmin + (1 − gmin )cLLM 
+
+e . (14) The initial controls are 
+
+(m(0) 
+
+e , g (0) 
+
+e , d (0) 
+
+e ) = 
+
+(1 , 1, 1) , e ∈ E s,
+
+(1 , ¯ge, 1) , e ∈ E +. (15) We initialize the base and edge potentials in Eq. (13) to obtain the initial controlled BN B(0) by approximating Baug 
+
+under the controlled parameterization. Each episode starts from B(0) and runs for T steps, where the policy updates one edge control at each step and evaluates the resulting rollout; edge controls are reset between episodes, while the actor and critic parameters are retained. 
+
+State. Let M = |E aug | and index the edges as ei = ( Vui →
+
+Vvi ), i = 1 , . . . , M . At step k, the state representation asso-ciated with edge ei is 
+
+x(k)
+
+i =
+
+h
+
+h(k)
+
+i, ctrl ∥h(k)
+
+i, align ∥hi, struct ∥h(k)
+
+i, hist 
+
+i
+
+, (16) where the four blocks encode the current controls, generated– target discrepancies, structural information, and operation history, respectively. Let 
+
+X(k) =
+
+h
+
+x(k)1 , . . . , x(k)
+
+> M
+
+i⊤
+
+, s(k) =
+
+
+
+X(k), AE
+
+
+
+, (17) where AE connects two edge representations when their BN edges share a variable. A graph encoder aggregates informa-tion among connected edges; the actor scores valid edge– operation pairs, and the critic estimates the state value. 
+
+Action and transition. The policy samples 
+
+a(k) = ( e(k), o (k)) ∼ πϕ(· | s(k)), (18) where 
+
+O = {keep , weaken , strengthen , deactivate , flip }. (19) For 0 < η − < 1 < η +, define 
+
+g↓ 
+
+> e
+
+= max {gmin , η −ge}, g ↑ 
+
+> e
+
+= min {gmax , η +ge}. (20) For brevity, the quantities on the right-hand side below denote the controls at step k. The selected operation applies 
+
+(m(k+1)  
+
+> e
+
+, g (k+1)  
+
+> e
+
+, d (k+1)  
+
+> e
+
+) = 
+
+
+
+(me, g e, d e), keep ,
+
+(me, g ↓ 
+
+> e
+
+, d e), weaken ,
+
+(1 , g ↑ 
+
+> e
+
+, d e), strengthen ,
+
+(0 , g e, d e), deactivate ,
+
+(me, g e, −de), flip .
+
+(21) Deactivation preserves magnitude and polarity so that 
+
+strengthen can reactivate the edge. The flip operation reverses the polarity of the edge-specific log-potential but does not change the graph direction Vu → Vv . Operations that cannot alter the current controls are masked, while keep remains available. After each action, Eq. (13) yields B(k+1) ; we sam-ple Nroll records and recompute the dynamic state features. 
+
+Reward. The global rollout loss combines distributional fidelity, downstream utility, and feature–label preservation: 
+
+J (k) = λd bD(k)dist + λu b∆(k) 
+
+> U
+
++ λa b∆(k) 
+
+> A
+
+. (22) All terms compare bD(k) 
+
+> t
+
+with Dfs  
+
+> t
+
+. For an edge e = ( Vu →
+
+Vv ), its local conditional discrepancy is 
+
+ρ(k) 
+
+> e
+
+= 12
+
+X
+
+> x∈Val( Vu)
+
+bpt(x) X 
+
+> v∈Val( Vv)
+
+|bpk(v | x) − bpt(v | x)| ,
+
+(23) where bpk and bpt are smoothed estimates from the current rollout and few-shot target table. The step reward is 
+
+r(k) = wg
+
+
+
+J (k) − J (k+1) 
+
++ wl
+
+
+
+ρ(k) 
+
+> e(k)
+
+− ρ(k+1) 
+
+> e(k)
+
+
+
+,
+
+(24) where the global term evaluates the complete generated table and the local term attributes improvement to the selected edge. 
+
+PPO update and synthesis. PPO uses generalized advan-tage estimation and the clipped actor objective, while the critic is trained on the corresponding returns. Entropy regu-larization encourages exploration, and a target KL threshold limits policy drift. Across all rollouts, we retain the control configuration (m⋆, g⋆, d⋆) with the lowest global loss. It defines 
+
+E⋆ = {e ∈ E aug : m⋆e = 1 }, G⋆ = ( V, E⋆),
+
+Θ⋆ = Θ( m⋆, g⋆, d⋆). (25) The resulting BN B⋆ = ( G⋆, Θ⋆) is used to independently sample the N synthetic target records specified in the prob-lem formulation. 
+
+5 Experiments 
+
+5.1 Experimental Setup 
+
+Data and scenarios. We construct six source–target shifts from three 2018 ACS prediction tasks in Folktables (Ding et al. 2021). The regression scenarios are INC-PRSD (AC-SIncome, Puerto Rico → South Dakota) and INC-EDU 
+
+(ACSIncome, non-bachelor → bachelor-or-above in Cali-fornia). The binary-classification scenarios are COV-TXCA 
+
+(ACSPublicCoverage, Texas → California), COV-EDU (AC-SPublicCoverage, non-bachelor → bachelor-or-above in Cal-ifornia), MOB-PRCA (ACSMobility, Puerto Rico → Califor-nia), and MOB-SEC (ACSMobility, private-sector → gov-ernment workers in California). For each scenario, we reserve 20% of the target records for testing. The remaining records form the target training set used for the main experiment and the sensitivity analysis as provided in Appendix A. 
+
+Metrics. All metrics are computed against held-out real target data. JSD is the mean marginal Jensen–Shannon di-vergence, and define 
+
+WAPE =
+
+P 
+
+> i
+
+|yi − ˆyi|
+
+P 
+
+> i
+
+|yi| , (26) where yi is the held-out target label and ˆyi is the pre-dicted income for INC-PRSD and INC-EDU , or the predicted positive-class probability for the four classification scenarios. Let fr and fs denote identical predictors trained on the real few-shot and synthetic target data, respectively. We define 
+
+UtilityGap = |U (fr ; Dtest  
+
+> t
+
+) − U (fs; Dtest  
+
+> t
+
+)|, (27) where U is R2 for regression and ROC-AUC for classifi-cation. Because the predictor architecture and test set are fixed, UtilityGap measures how closely synthetic training data reproduce the predictive utility of real few-shot target data. After applying a shared one-hot encoding to categorical features and standardizing numerical features, we compute 
+
+Coef–Cos = β⊤ 
+
+> r
+
+βs
+
+∥βr ∥2 ∥βs∥2
+
+, (28) where βr and βs are the coefficient vectors of linear probes fitted to real and synthetic target data. JSD, WAPE, and Util-ityGap are lower-is-better, whereas Coef–Cos is higher-is-better. Let J, W , G, and C denote the four metrics for one scenario and seed. We define 
+
+Overall = 14
+
+ J
+
+ln 2 + W
+
+1 + W + G
+
+1 + G + 1 − C
+
+2
+
+
+
+. (29) (a) Overall by scenario (↓)Method inc-prsd inc-edu cov-txca cov-edu mob-prca mob-sec Avg. Gaussian Copula 0.3200 0.3364 0.0729 0.0858 0.1096 0.2584 0.1972 ± 0.0082                                                                                                                                                   
+
+> MTabGen 0.1483 0.1069 0.0608 0.0599 0.2619 0.2231 0.1435 ±0.0087
+> CTGAN 0.2200 0.1578 0.0767 0.0862 0.1318 0.1573 0.1383 ±0.0069
+> TVAE 0.1770 0.2750 0.1082 0.0809 0.1743 0.0882 0.1506 ±0.0073
+> CopulaGAN 0.2149 0.1311 0.0682 0.0693 0.3094 0.1189 0.1520 ±0.0079
+> SPADA 0.1673 0.1230 0.2131 0.2056 0.1143 0.2059 0.1715 ±0.0170
+> LAB-Tab 0.1367 0.1184 0.0243 0.0430 0.0837 0.1437 0.0916 ±0.0058
+> (b) Macro-averaged component metrics over 6 scenarios
+> Method JSD ↓WAPE ↓Utility Gap ↓Coef–Cos ↑
+> Gaussian Copula 0.0195 ±0.0003 0.3061 ±0.0024 0.3986 ±0.0120 0.3783 ±0.0065
+> MTabGen 0.0213 ±0.0006 0.2753 ±0.0039 0.0751 ±0.0045 0.4740 ±0.0069
+> CTGAN 0.0265 ±0.0007 0.3097 ±0.0075 0.1458 ±0.0074 0.6816 ±0.0053
+> TVAE 0.0492 ±0.0034 0.3568 ±0.0097 0.1556 ±0.0351 0.6919 ±0.0147
+> CopulaGAN 0.0332 ±0.0017 0.3259 ±0.0058 0.1185 ±0.0076 0.5620 ±0.0062
+> SPADA 0.0167 ±0.0006 0.2317 ±0.0040 0.1381 ±0.0074 0.2747 ±0.0154
+> LAB-Tab 0.0016 ±0.0003 0.1600 ±0.0024 0.0728 ±0.0037 0.6464 ±0.0458
+
+Table 1: Results at the 10% target-data budget. Panel (a) reports scenario-level Overall scores, and Panel (b) reports macro-averaged component metrics. Values are averaged over five seeds; macro results are mean ± standard deviation. Scenario-level standard deviations are provided in Appendix F. Best values are bold. Overall is bounded in [0 , 1] and is lower-is-better. 
+
+Baselines and implementation. We compare CopulaGAN (Patki, Wedge, and Veeramachaneni 2016), CTGAN (Xu et al. 2019), TVAE (Xu et al. 2019), Gaussian Copula (As-ghar et al. 2019), MTabGen (Villaizán-Vallelado et al. 2025), and SPADA (Yang et al. 2025). All methods receive the same source data and few-shot target subset and are evaluated on the same held-out target split. The BN is learned by BIC hill climbing with dmax = 4 , α = 10 , and κ = 1 . PPO runs for 150 episodes on regression scenarios and 250 episodes on classification scenarios, with 20 steps per episode, a clip ratio of 0.2, and a learning rate of 3 × 10 −4. Candidate edges are proposed using gpt-4o . The 10% main-table results are averaged over five random seeds, and uncertainty denotes the empirical standard deviation across seeds, more implemen-tation details are given in Appendix B and C. 
+
+5.2 Main Results 
+
+Comparison at the 10% few-shot budget. Table 1 shows that LAB-Tab achieves the lowest macro Overall score, 
+
+0.0916 ± 0.0058 , which is 33.8% lower than CTGAN, the strongest baseline at 0.1383 ± 0.0069 . LAB-Tab ranks first in four of the six scenarios, while MTabGen and TVAE obtain the lowest Overall scores on INC-EDU and MOB-SEC , respectively. This advantage is supported by the best macro JSD, WAPE, and UtilityGap, together with compet-itive Coef–Cos. The baselines exhibit sharper trade-offs: SPADA provides the strongest baseline distributional align-ment but preserves less downstream utility and feature–label association; MTabGen approaches LAB-Tab in UtilityGap but remains weaker in distributional fidelity and task-specific error; and TVAE and CTGAN obtain higher Coef–Cos but incur larger discrepancies on the other components. LAB-Tab’s leading Overall score therefore reflects consistent per-formance across different objectives.                                                   
+
+> Method JSD ↓WAPE ↓UGap ↓Coef. ↑Overall ↓
+> Source BN 0.0318 0.3137 0.1861 0.5280 0.1633 Target BN 0.0011 0.1815 0.1550 0.4137 0.1382 Source BN + MAP 0.0011 0.1641 0.0923 0.6082 0.1003 w/o LLM 0.0015 0.1659 0.0929 0.4478 0.1211 w/o PPO 0.0013 0.1626 0.0766 0.5803 0.0997 Greedy edits 0.0015 0.1707 0.0995 0.5536 0.1087 w/o local reward 0.0016 0.1584 0.0865 0.4892 0.1137
+> LAB-Tab 0.0016 0.1600 0.0728 0.6464 0.0916
+> UGap denotes Utility Gap and Coef. denotes Coef–Cos.
+
+Table 2: Ablation results averaged over five random seeds and six drift scenarios. 
+
+Sensitivity to the target-data fraction. Figure 3 shows that LAB-Tab has the lowest macro Overall at seven of the eleven target-data fractions and the lowest average score across the sweep. Its advantage is concentrated in the low-data regime: at 1%, LAB-Tab scores 0.1499 versus 0.3299 for CTGAN, a 54.6% reduction. The gap narrows as target evidence grows, and MTabGen leads at 40%, 60%, 90%, and 100%; even at the full-data endpoint, however, LAB-Tab remains close (0.1751 versus 0.1650). This crossover is consistent with source-informed structural adaptation being most valuable when target observations are scarce, whereas MTabGen benefits more from direct target evidence. LAB-Tab’s stable trajectory further shows that its few-shot advan-tage does not come with a sharp loss of competitiveness at larger budgets. 
+
+5.3 Ablation Study 
+
+Ablation settings. All variants use identical 10% target splits, seeds, and evaluation protocol. Source BN reuses the source-fitted graph and parameters, Target BN is fitted en-0.0                          
+
+> 0.1
+> 0.2
+> 0.3
+> 0.4 (a) INC-PRSD (b) INC-EDU (c) COV-TXCA
+> 120 40 60 80 100
+> 0.0
+> 0.1
+> 0.2
+> 0.3
+> 0.4 (d) COV-EDU
+> 120 40 60 80 100
+> (e) MOB-PRCA
+> 120 40 60 80 100
+> (f) MOB-SEC
+> Target-data budget (%)
+> Overall score
+> Gaussian Copula SPADA MTabGen CTGAN TVAE CopulaGAN LAB-Tab
+
+Figure 3: Macro Overall as the target-data fraction increases from 1% to 100%. Each method is retrained at every fraction, and lower values indicate better joint performance. Shading denotes variation across five random seeds. The structural adaptation cases and policy-ablation training dynamics are available in Appendices D and E. Source        
+
+> BN Target
+> BN Source+
+> MAP w/o
+> LLM w/o
+> PPO Greedy w/o
+> Local LAB-Tab
+> 0.00
+> 0.05
+> 0.10
+> 0.15
+> 0.20
+> 0.25
+> 0.30
+> 0.35
+> Overall
+
+Figure 4: Scenario-wise Overall distributions for the abla-tions. Each circle is the seed-averaged score for one scenario; boxes show the interquartile range and horizontal lines show the median. tirely on few-shot target data, and Source BN + MAP retains the source graph while updating its conditional probabilities with target counts. The w/o LLM, w/o PPO, and w/o local reward variants remove proposed edges, policy control, and edge-level feedback, respectively; Greedy edits replaces PPO with locally selected one-step actions. 
+
+Component contributions. Table 2 reveals distinct roles for the components of LAB-Tab. Direct source reuse per-forms poorly under target shift, while the target-only and MAP variants show that fitting sparse target data or they can match target marginals yet fail to preserve predictive and feature–label relationships. Removing LLM augmenta-tion leaves JSD nearly unchanged but substantially reduces Coef–Cos, indicating that the proposed edges mainly con-tribute target-specific conditional structure. PPO then coor-dinates these dependencies: disabling it or replacing it with greedy edits produces less stable performance across sce-narios, as reflected by the higher upper tails in Figure 4. Removing the local reward slightly improves WAPE because the policy can focus more directly on the global prediction objective, but this also weakens conditional and feature– label alignment. Similarly, the full model’s slightly higher JSD reflects a small marginal-fidelity trade-off for better de-pendency preservation and downstream utility. The results show that LLM augmentation expands the target dependency space, while PPO coordination prevents optimization of ag-gregate errors from distorting conditional relationships. 
+
+6 Conclusion 
+
+Few-shot target-domain synthesis must reuse transferable source dependencies without retaining relationships that shift across domains. LAB-Tab addresses this challenge by adapting an explicit BN, it learns a source structure, intro-duces target-specific candidate edges under graph-validity constraints, recalibrates the augmented BN with few-shot target counts, and applies PPO to control edge activation, magnitude, and polarity through global and local feedback. Across six ACS source–target shifts at the 10% target-data budget, LAB-Tab achieves the lowest Overall score in four scenarios and reduces macro Overall by 33.8% relative to the strongest baseline, while obtaining the best macro JSD, WAPE, and Utility Gap and remaining competitive in feature–label preservation. It also leads at seven of eleven target-data fractions, with its largest gains at 1% and 10%. Ablations show that LLM augmentation, PPO-based edge control, and local dependency feedback provide complemen-tary benefits beyond source reuse and MAP recalibration. Overall, LAB-Tab provides an effective and inspectable ap-proach to few-shot tabular generation by combining explicit structural hypotheses with feedback-driven source-to-target adaptation. References 
+
+Asghar, H. J.; Ding, M.; Rakotoarivelo, T.; Mrabet, S.; and Kaafar, M. A. 2019. Differentially Private Release of High-Dimensional Datasets Using the Gaussian Copula. arXiv preprint arXiv:1902.01499 .Borisov, V.; Sessler, K.; Leemann, T.; Pawelczyk, M.; and Kasneci, G. 2023. Language Models are Realistic Tabular Data Generators. In The Eleventh International Conference on Learning Representations .Challagundla, R.; Dorodchi, M.; Wang, P.; and Lee, M. 2025. Synthetic Tabular Data Generation: A Comparative Survey for Modern Techniques. arXiv preprint arXiv:2507.11590 .Chen, T.; Shen, Z.; Zhou, B.; Liu, Y.; Wang, S.; and Ke, J. 2026. Addressing the online incremental transport mode choice prediction problem with an LLM-augmented class-incremental learning approach. Transportation Research Part C: Emerging Technologies , 188: 105709. Christiano, P. F.; Leike, J.; Brown, T. B.; Martic, M.; Legg, S.; and Amodei, D. 2017. Deep Reinforcement Learning from Human Preferences. In Advances in Neural Information Processing Systems , volume 30. Ding, F.; Hardt, M.; Miller, J. P.; and Schmidt, L. 2021. Re-tiring Adult: New Datasets for Fair Machine Learning. In 
+
+Advances in Neural Information Processing Systems , vol-ume 34, 6478–6490. Dong, Y.; and Peng, C.-Y. J. 2013. Principled Missing Data Methods for Researchers. SpringerPlus , 2(1): 222. Emmanuel, T.; Maupong, T.; Mpoeleng, D.; Semong, T.; Mphago, B.; and Tabona, O. 2021. A Survey on Missing Data in Machine Learning. Journal of Big Data , 8(1): 140. Fang, L.; Liu, A.; Zhang, H.; Zou, H. P.; Zhang, W.; and Yu, P. S. 2025. TabGen-ICL: Residual-Aware In-Context Exam-ple Selection for Tabular Data Generation. arXiv preprint arXiv:2502.16414 .Koh, P. W.; Sagawa, S.; Marklund, H.; Xie, S. M.; Zhang, M.; Balsubramani, A.; Hu, W.; Yasunaga, M.; Phillips, R. L.; Gao, I.; et al. 2021. WILDS: A Benchmark of in-the-Wild Distribution Shifts. In Proceedings of the 38th International Conference on Machine Learning , volume 139 of Proceed-ings of Machine Learning Research , 5637–5664. Kotelnikov, A.; Baranchuk, D.; Rubachev, I.; and Babenko, A. 2023. TabDDPM: Modelling Tabular Data with Diffusion Models. In Proceedings of the 40th International Confer-ence on Machine Learning , volume 202 of Proceedings of Machine Learning Research , 17564–17579. PMLR. Long, Y.; Xu, L.; and Brintrup, A. 2025. LLM-TabLogic: Preserving Inter-Column Logical Relationships in Synthetic Tabular Data via Prompt-Guided Latent Diffusion. arXiv preprint arXiv:2503.02161 .Ma, Y. J.; Liang, W.; Wang, G.; Huang, D.-A.; Bastani, O.; Jayaraman, D.; Zhu, Y.; Fan, L.; and Anandkumar, A. 2024. Eureka: Human-Level Reward Design via Coding Large Lan-guage Models. In International Conference on Learning Representations .Nguyen, A.; Schafft, S.; Hale, N.; and Alfaro, J. 2025. FAST-GEN: Fast and Cost-Effective Synthetic Tabular Data Gen-eration with LLMs. arXiv preprint arXiv:2507.15839 .Ouyang, L.; Wu, J.; Jiang, X.; Almeida, D.; Wainwright, C. L.; Mishkin, P.; Zhang, C.; Agarwal, S.; Slama, K.; Ray, A.; Schulman, J.; Hilton, J.; Kelton, F.; Miller, L.; Simens, M.; Askell, A.; Welinder, P.; Christiano, P.; Leike, J.; and Lowe, R. 2022. Training Language Models to Follow In-structions with Human Feedback. In Advances in Neural Information Processing Systems , volume 35, 27730–27744. Patki, N.; Wedge, R.; and Veeramachaneni, K. 2016. The Synthetic Data Vault. In 2016 IEEE International Confer-ence on Data Science and Advanced Analytics , 399–410. IEEE. Quiñonero-Candela, J.; Sugiyama, M.; Schwaighofer, A.; and Lawrence, N. D., eds. 2009. Dataset Shift in Machine Learning . MIT Press. Romera-Paredes, B.; Barekatain, M.; Novikov, A.; Balog, M.; Kumar, M. P.; Dupont, E.; Ruiz, F. J. R.; Ellenberg, J. S.; Wang, P.; Fawzi, O.; Kohli, P.; and Fawzi, A. 2024. Mathematical Discoveries from Program Search with Large Language Models. Nature , 625(7995): 468–475. Schulman, J.; Wolski, F.; Dhariwal, P.; Radford, A.; and Klimov, O. 2017. Proximal Policy Optimization Algorithms. 
+
+arXiv preprint arXiv:1707.06347 .Shi, R.; Wang, Y.; Du, M.; Shen, X.; and Wang, X. 2025. A Comprehensive Survey of Synthetic Tabular Data Gener-ation. arXiv preprint arXiv:2504.16506 .Solatorio, A. V.; and Dupriez, O. 2023. REaLTabFormer: Generating Realistic Relational and Tabular Data Using Transformers. arXiv preprint arXiv:2302.02041 .Stoian, M. C.; Giunchiglia, E.; and Lukasiewicz, T. 2025. A Survey on Tabular Data Generation: Utility, Align-ment, Fidelity, Privacy, and Beyond. arXiv preprint arXiv:2503.05954 .Villaizán-Vallelado, M.; Salvatori, M.; Segura, C.; and Ara-pakis, I. 2025. Diffusion Models for Tabular Data Imputa-tion and Synthetic Data Generation. ACM Transactions on Knowledge Discovery from Data , 19(6): 1–32. Xu, L.; Skoularidou, M.; Cuesta-Infante, A.; and Veera-machaneni, K. 2019. Modeling Tabular Data Using Condi-tional GAN. In Advances in Neural Information Processing Systems , volume 32. Xu, S.; Lee, C.-T.; Sharma, M.; Yousuf, R. B.; Muralid-har, N.; and Ramakrishnan, N. 2025. Why LLMs Are Bad at Synthetic Table Generation (and what to do about it). arXiv:2406.14541. Yang, S.; Zhang, Z.; Prenkaj, B.; and Kasneci, G. 2025. Dou-bling Your Data in Minutes: Ultra-fast Tabular Data Gener-ation via LLM-Induced Dependency Graphs. arXiv preprint arXiv:2507.19334 .Zhang, H.; Zhang, J.; Srinivasan, B.; Shen, Z.; Qin, X.; Faloutsos, C.; Rangwala, H.; and Karypis, G. 2024. Mixed-Type Tabular Data Synthesis with Score-based Diffusion in Latent Space. arXiv preprint arXiv:2310.09656 .Zhang, J.; Cormode, G.; Procopiuc, C. M.; Srivastava, D.; and Xiao, X. 2014. PrivBayes: Private Data Release via Bayesian Networks. In Proceedings of the 2014 ACM SIG-MOD International Conference on Management of Data ,1423–1434. ACM. Zhao, Z.; Birke, R.; and Chen, L. Y. 2023. TabuLa: Har-nessing Language Models for Tabular Data Synthesis. arXiv preprint arXiv:2310.12746 .Zhuang, F.; Qi, Z.; Duan, K.; Xi, D.; Zhu, Y.; Zhu, H.; Xiong, H.; and He, Q. 2021. A Comprehensive Survey on Transfer Learning. Proceedings of the IEEE , 109(1): 43–76. A Dataset and Scenario Details 
+
+A.1 ACS Task Schemas 
+
+All experiments use person-level records from the 2018 ACS distributed through Folktables. Income retains working-age individuals with positive personal income and weekly work-ing hours. Coverage focuses on individuals younger than 65 with annual income no greater than $30,000, and Mobil-ity focuses on adults aged 19–34. The targets are personal income, public health insurance coverage, and residential mobility, respectively. 
+
+A.2 Source–Target Scenario Construction 
+
+For each task, we construct one spatial shift and one population-group shift. The spatial scenarios are Puerto Rico to South Dakota for Income, Texas to California for Coverage, and Puerto Rico to California for Mobility. The population-group scenarios are constructed within California: the ed-ucation shifts compare non-bachelor and bachelor-or-above groups, and the sector shift compares private-sector and gov-ernment workers. 
+
+A.3 Data Splits and Target-Data Budgets 
+
+For each reporting seed, a stratified split reserves 20% of the target domain for held-out testing. A scenario-specific adaptation set is then sampled from the remaining records, with the sizes reported in Table 4. All methods use the same test and adaptation records within a scenario and seed. A seeded permutation produces nested adaptation subsets containing {1, 10 , 20 , . . . , 100 }% of the adaptation set. The default experiment and the 10% sensitivity point use the same subset and run configuration. 
+
+A.4 Preprocessing and Discretization 
+
+The BN operates on finite state spaces. Each non-label nu-merical variable is discretized into at most eight source-domain quantile bins, and the same boundaries are applied to the target data. Repeated boundaries are merged, and miss-ing feature values form an explicit category. For Income, the label is transformed by log(1 + income) 
+
+and discretized into ten source-defined ordinal states for BN modeling. Each state is decoded through its source-bin me-dian when regression metrics are computed in dollars. Cov-erage and Mobility use binary labels. 
+
+B Evaluation Metrics and Aggregation 
+
+Let Dtest  
+
+> t
+
+denote the held-out real target table and bDt a syn-thetic target table. All headline metrics use the same pro-cessed variables and are evaluated against Dtest  
+
+> t
+
+.
+
+B.1 Distributional Fidelity and WAPE 
+
+Mean marginal JSD. For a variable Vj with state space 
+
+Aj , let pj (a) and bpj (a) denote the empirical probabilities of state a in Dtest  
+
+> t
+
+and bDt, respectively, and let mj = ( pj +
+
+bpj )/2. The marginal Jensen–Shannon divergence is 
+
+JSD j = 12 KL( pj ∥mj ) + 12 KL( bpj ∥mj ), (30) where natural logarithms are used and zero-probability terms contribute zero. We average this quantity over all modeled variables, including the label: 
+
+JSD = 1
+
+|V| 
+
+X 
+
+> Vj∈V
+
+JSD j . (31) All variables are evaluated in their discrete BN representa-tions; the Income label is not decoded for JSD. 
+
+WAPE. For each scenario, a task predictor is trained on the synthetic target table and evaluated on the held-out real target records. We compute 
+
+WAPE = 
+
+Pntest  
+
+> i=1
+
+|yi − byi|
+
+Pntest  
+
+> i=1
+
+|yi| , (32) where yi is the held-out target label. For inc-prsd and inc-edu , byi is the predicted income after decoding the ordinal in-come states to their source-bin medians. For cov-txca , cov-edu , mob-prca , and mob-sec , byi is the predicted positive-class probability. The same WAPE definition is used in all six scenarios. 
+
+B.2 Downstream Utility Gap 
+
+We evaluate downstream utility using Train on Synthetic, Test on Real (TSTR) and Train on Real, Test on Real (TRTR) under a matched target-test protocol. The TSTR predictor is trained on bDt, while the TRTR reference predictor is trained on the same few-shot target subset available to the generator. Both predictors use the same model family and are evaluated on the same fixed Dtest  
+
+> t
+
+. With UTSTR and UTRTR denoting the corresponding test utilities, we report 
+
+UtilityGap = |UTRTR − UTSTR |. (33) For Income, U is the coefficient of determination R2 after de-coding the ordinal income states. For Coverage and Mobility, 
+
+U is ROC-AUC computed from positive-class probabilities. A smaller UtilityGap indicates that training on synthetic data more closely reproduces the predictive utility of the real few-shot target reference. For each task, discrete feature states are ordinal-encoded. To keep feature codes aligned across real and synthetic eval-uation tables, the encoder vocabulary is formed from the observed training and held-out feature states without using held-out labels. Any state outside this vocabulary is mapped to −1. Hyperparameters are fixed across methods, all predic-tor fits use fixed seed 0, and no predictor is tuned separately for a generator. Table 5 summarizes the configurations. 
+
+B.3 Feature–Label Coefficient Similarity 
+
+Coef–Cos evaluates whether a synthetic table preserves feature–label associations captured by matched linear probes. We apply a shared one-hot encoding to categorical features and standardize numerical features using a common prepro-cessing map. Two probes with the same specification are then fitted separately on the real and synthetic target tables, yielding coefficient vectors βreal and βsyn . We report 
+
+Coef -Cos = β⊤
+
+> real
+
+βsyn 
+
+∥βreal ∥2 ∥βsyn ∥2
+
+. (34) Table 3: Modeled variables for the three ACS tasks. Cat. denotes categorical, Q-num. quantile-binned numeric, Q-code quantile-binned code, and Ord. source-defined ordinal bins. Bold variables are labels; all remaining variables are features. State counts can be smaller when quantile boundaries coincide.                                                                                                
+
+> Income Coverage Mobility Variable Type States Variable Type States Variable Type States Age Q-num. 8Age Q-num. 8Age Q-num. 8Class of worker Cat. 8Education Cat. 24 Education Cat. 24 Education Cat. 24 Marital status Cat. 5Marital status Cat. 5Marital status Cat. 5Sex Cat. 2Sex Cat. 2Occupation Q-code 8Disability Cat. 2Disability Cat. 2Household relationship Cat. 17–18 Citizenship Cat. 5Citizenship Cat. 5Weekly working hours Q-num. 5Prior-year mobility Cat. 3Class of worker Cat. 10 Sex Cat. 2Personal income Q-num. 7Weekly working hours Q-num. 6Race Cat. 8–9 Employment status Cat. 7Personal income Q-num. 6–8
+> Personal income Ord. 10 Race Cat. 9Race Cat. 9
+> Public coverage Binary 2Residential mobility Binary 2
+
+Table 4: Dataset sizes for the six source–target scenarios. 
+
+nadapt is the target set available for adaptation, and dx ex-cludes the label. 
+
+Scenario ns nadapt ntest dx
+
+inc-prsd 9,071 1,595 980 9
+
+inc-edu 120,016 6,083 15,128 9
+
+cov-txca 98,928 7,841 27,711 10 
+
+cov-edu 115,947 3,416 4,521 9
+
+mob-prca 4,730 1,707 16,066 10 
+
+mob-sec 56,723 2,064 1,678 9
+
+Higher values indicate closer agreement in coefficient direc-tion and stronger preservation of feature–label associations. 
+
+B.4 Overall Score 
+
+Overall combines JSD, WAPE, Utility Gap, and Coef–Cos on a fixed loss-oriented scale. For scenario s, method m,and seed r, let J(r)
+
+> s,m
+
+, W (r)
+
+> s,m
+
+, G(r)
+
+> s,m
+
+, and C(r) 
+
+> s,m
+
+denote the four component metrics. We define 
+
+O(r) 
+
+> s,m
+
+= 14
+
+ J(r)
+
+> s,m
+
+ln 2 + W (r)
+
+> s,m
+
+1 + W (r)
+
+> s,m
+
++ G(r)
+
+> s,m
+
+1 + G(r)
+
+> s,m
+
++ 1 − C(r)
+
+> s,m
+
+2
+
+
+
+.
+
+(35) Each term is bounded in [0 , 1] , and lower values indicate better performance. The JSD term uses its theoretical upper bound under natural logarithms; the WAPE and Utility Gap transformations preserve their ordering while bounding po-tentially unbounded values; and the Coef–Cos term converts similarity into a loss. For each seed, the six-scenario macro score is 
+
+O(r) 
+
+> m
+
+= 16
+
+> 6
+
+X
+
+> s=1
+
+O(r)
+
+> s,m
+
+. (36) Because the transformation is fixed, Overall is independent of the methods included in a table and is directly comparable across the headline, target-budget, and ablation experiments. 
+
+B.5 Aggregation and Uncertainty 
+
+All headline experiments are repeated with R = 5 indepen-dent reporting seeds. For a metric Q, the scenario-level mean and sample standard deviation are 
+
+Qs,m = 1
+
+R
+
+> R
+
+X
+
+> r=1
+
+Q(r)
+
+> s,m
+
+, R = 5 , (37) 
+
+Ss,m =
+
+vuut 1
+
+R − 1
+
+> R
+
+X
+
+> r=1
+
+
+
+Q(r) 
+
+> s,m
+
+− Qs,m 
+
+2
+
+. (38) For Overall, the fixed transformation is applied first within each seed and scenario. The six-scenario average is then computed within each seed, followed by the mean and em-pirical standard deviation across five seeds. Scenario entries without uncertainty are five-seed means. The 10% headline table, 10% sensitivity point, and 10% ablations follow this same order. Appendix E presents representative single-seed training traces, while cross-seed uncertainty comes from the five reporting seeds. 
+
+C Implementation and Reproducibility Details 
+
+C.1 Bayesian-Network Learning and Calibration 
+
+The source Bayesian network is learned independently for each scenario. Structure learning starts from an empty di-rected acyclic graph and applies greedy hill climbing with the Bayesian information criterion. To bound the cost of structure search, at most 10,000 source records are selected; parameter estimation still uses the complete source training table. The search evaluates single-edge addition, deletion, and reversal operations, rejects operations that introduce a cycle or violate the maximum in-degree, and terminates after 200 iterations or when no admissible operation improves the score. No random restart is used. A fixed column order and deterministic operator enumeration are retained throughout a run. After structure learning, every conditional probability ta-ble (CPT) is estimated on the complete source table with a Table 5: Downstream predictors used for TSTR and TRTR evaluation.           
+
+> Task Predictor and input Configuration Income Histogram gradient-boosting regressor; ordinal feature states; income states decoded to source-bin medians 150 iterations; fixed seed 0; utility: R2
+> Coverage Histogram gradient-boosting classifier; ordinal feature states; unseen states mapped to −1
+> 200 iterations; depth 6; learning rate 0.1; fixed seed 0; utility: ROC-AUC Mobility Histogram gradient-boosting classifier; ordinal feature states; unseen states mapped to −1
+> 200 iterations; depth 6; learning rate 0.1; fixed seed 0; utility: ROC-AUC
+
+Table 6: Bayesian-network and sampling settings.                
+
+> Component Setting Discretization At most 8 source-quantile states per numerical variable Structure score BIC greedy hill climbing from an empty DAG Structure rows min( |D s|,10 ,000) ; fixed seed 0 Search limit 200 operations; no random restart Maximum in-degree dmax = 4
+> Source CPT prior BDeu, α= 10
+> Target MAP prior Source-centered Dirichlet, κ= 1
+> PPO rollout size 800 rows for Income; 1,500 other-wise
+
+symmetric BDeu prior of equivalent sample size α = 10 .Following LLM augmentation, the source CPTs are re-estimated on the augmented parent sets and calibrated with the few-shot target counts using κ = 1 . Unobserved par-ent configurations retain the source conditional distribution; observed configurations combine the source prior with tar-get counts. Table 6 summarizes the settings used in all six scenarios. For each action comparison, the pre-action and post-action samplers use common random numbers. This holds the un-derlying draws fixed while changing the selected edge control and reduces Monte Carlo noise in the reward difference. The final synthetic table is generated with a separate fixed seed after selecting the best edge-control configuration. 
+
+C.2 Edge-Control Parameterization 
+
+The base potential bj and edge potentials ψe are initialized from Θaug to obtain the controlled BN B(0) used at the start of each episode. These potentials remain fixed during PPO, while the policy updates the activation me, magnitude ge,and polarity de of every edge in Eaug . Thus, each action changes the contribution of a validated dependency without altering its endpoints or parent–child orientation. During optimization, Gaug defines the editable edge set. Deactivation sets an edge contribution to zero and allows later reactivation through strengthen , while flip changes its polarity. The retained activation variables define G⋆, and the retained controls determine Θ⋆ for final sampling. 
+
+C.3 PPO Architecture, Reward, and Selection 
+
+Each augmented BN edge is represented by four feature blocks: current controls, target-alignment statistics, local graph context, and adjustment history. The alignment block contains edge-conditional and endpoint-level generated– target discrepancies. Two edge representations are adja-cent when their BN edges share an endpoint. A two-layer GraphSAGE encoder maps the normalized coordinates to 64-dimensional edge embeddings. The actor applies a 128-unit multilayer perceptron to each edge embedding; the critic applies a separate 128-unit multilayer perceptron to mean-and max-pooled graph embeddings. At each step, the actor samples one valid edge–operation pair. Keep, weaken, strengthen, and deactivate control the selected contribution, and strengthen can reactivate a deac-tivated edge. The flip action changes its polarity. All actions preserve the validated endpoints and parent–child orienta-tion. Ineffective operations are masked, and keep remains valid for every edge. Let bAk and Rk denote the generalized-advantage estimate and return for transition k. The actor and critic minimize 
+
+LPPO = − L clip + cV Ek
+
+(V (sk) − Rk)2
+
+− cH Ek[H(π(· | sk))] , (39) where cV is the value-loss coefficient and cH the episode-dependent entropy coefficient. Advantages are standardized within an episode. State coordinates are normalized online with Welford statistics and clipped to [−10 , 10] ; rewards are divided by their running standard deviation and clipped to the same interval. Gradient norms are clipped at 0.5. For each run, the state with the smallest global alignment loss over all episodes and steps is retained. The held-out target set is excluded from both policy optimization and configu-ration selection. Across the five reporting seeds, the target split and few-shot subset are sampled independently, so the reported variation reflects different target draws as well as model randomness. 
+
+C.4 Baseline Configurations 
+
+Every headline baseline receives the same source table and few-shot target subset as LAB-Tab. The two tables are con-catenated without a domain indicator, target oversampling, or scenario-specific reweighting. The Source BN, Target BN, and Source BN + MAP variants in Table 12 provide comple-mentary BN references. All methods use the same source-fitted discretization and are evaluated on the same target test set within each seed. MTabGen treats each discretized column as a categori-cal token with a column-specific vocabulary and optimizes masked-cell reconstruction using AdamW with weight de-cay 10 −4. Sampling starts from empirical marginal draws Table 7: PPO settings for the regression and classification scenarios.                                                  
+
+> Parameter Income Coverage/Mobility Episodes 150 250 Steps per episode 20 20 Rollout rows 800 1,500 Optimizer Adam Adam Learning rate 3×10 −43×10 −4
+> PPO epochs per episode 44Clip ratio ϵ0.20 0.20 Discount factor γ0.99 0.99 GAE parameter λ0.95 0.95 Value coefficient cV0.50 0.50 Entropy coefficient cH0.020 →0.003 0.020 →0.003
+> Target KL threshold 0.03 0.03 Weaken factor η−0.85 0.85 Strengthen factor η+1.20 1.20 Global reward weight 0.20 0.20 Local reward weight 1.00 1.00
+
+and iteratively denoises the table at temperature 0.9. Cop-ulaGAN maps quantile labels to ordinal numbers only for its internal copula transformation and maps generated values back to the nearest valid quantile state. SPADA constructs its LLM dependency graph separately for each scenario, target-data budget, and reporting seed, followed by graph validation before sampling. 
+
+C.5 Computational Environment 
+
+Experiments were executed on a Mac Studio with an Ap-ple M2 Ultra processor (24 CPU cores) and 192 GB of unified memory. The archived environment uses Python 3.10.11, NumPy 2.0.2, pandas 2.3.3, SciPy 1.15.3, scikit-learn 1.7.2, pgmpy 1.1.2, Folktables 0.0.12, SDV 1.37.1, NetworkX 3.4.2, PyTorch 2.12.0, and PyTorch Geometric 2.8.0. LAB-Tab and the SDV baselines run on CPU in this en-vironment. The scenario–seed LAB-Tab jobs were launched independently; measured wall-clock times from the training-event and result timestamps range from approximately 5.8 to 16.8 minutes per scenario. Python, NumPy, and PyTorch are initialized separately for each of the five reporting seeds. The target permutation, model initialization, policy sampling, and synthetic sampling are derived deterministically from the corresponding seed. LLM augmentation uses gpt-4o with temperature 0.2 and a maximum output length of 4,096 tokens. A proposal is generated for each scenario, target-data budget, and reporting seed; validated proposals are reused across ablations with the same split and budget. 
+
+D LLM Edge Proposals and Structural Adaptation 
+
+D.1 Prompt Construction 
+
+The LLM receives aggregate context containing semantic variable names, state domains, the source BN, source and tar-get marginal summaries, label-conditional summaries, and selected pairwise conditional contrasts. The context is con-structed from the source table and few-shot target subset. The prompt requests a short ranked list of missing directed edges. Each proposal contains a parent, child, confidence score, and concise rationale. The LLM stage proposes struc-ture; CPT estimation and row generation remain in the BN pipeline. 
+
+D.2 Proposal Validation 
+
+Proposals are sorted by confidence and processed sequen-tially against the updated graph. Proposals are validated to ensure valid variables, graph consistency, and DAG con-straints before being added to the source graph. Accepted proposals retain their confidence and rationale for initializa-tion and analysis. Malformed responses are retried, and the source BN is used when no valid addition is returned. 
+
+D.3 Proposal Statistics and Structural Cases 
+
+Table 9 reports the accepted additions shown in Figure 5 and representative PPO outcomes at the 10% target-data budget. For an accepted edge e, the LLM confidence initializes its magnitude as g(0)  
+
+> e
+
+= gmin + (1 − gmin )cLLM  
+
+> e
+
+.LLM-proposed additions receive different controls across scenarios. PPO strengthens, weakens, flips, or deactivates their contributions according to the generated–target feed-back. 
+
+D.4 Scenario-Level BN Adaptation Patterns 
+
+Figure 5 shows that the source BN provides the structural backbone in every scenario. LLM additions expand the ed-itable edge set, and PPO assigns the final controls to inher-ited and added dependencies. The selected edits concentrate around label-related paths and differ across the Income, Cov-erage, and Mobility shifts. 
+
+E PPO Optimization Dynamics 
+
+E.1 Evolution of Edge-Control Actions 
+
+For an episode e containing T = 20 edge-control steps, we summarize the policy behavior by the fraction of steps assigned to action o:
+
+pe(o) = 1
+
+T
+
+> T
+
+X
+
+> k=1
+
+1
+
+h
+
+o(e,k ) = o
+
+i
+
+. (40) The five logged actions are keep, weaken, strengthen, deacti-vate, and flip. Deactivate sets the selected edge contribution to zero while leaving the augmented DAG unchanged. Flip changes the sign of the selected dependency contribution while preserving the parent–child orientation. These names follow the terminology used in the main paper. Figure 6 shows a common transition from exploratory edge adjustment to a keep-dominated policy. Over the final fifth of training, the mean keep fraction is 0.92 or higher in five scenarios and reaches 1.00 in mob-sec . The exception is mob-prca , where the final-fifth keep fraction is 0.73 and weaken and strengthen remain active at 0.08 and 0.14, re-spectively. This longer adjustment phase is consistent with a more heterogeneous policy search in that scenario. The rising Table 8: Headline baseline configurations. All methods use the same source table and few-shot target subset. 
+
+Method Training data Configuration Gaussian Copula Source + few-shot target SDV Gaussian-copula synthesizer with all processed columns treated as categorical SPADA Source + few-shot target Categorical specialization of dependency-aware sampling; LLM dependency DAG; temperature 1.0 MTabGen Source + few-shot target 80 epochs; batch 1,024; 3 transformer layers; 4 heads; width 96; learning rate 10 −3;mask probability 0.35; 24 denoising steps CTGAN Source + few-shot target SDV implementation; 100 epochs; package-default architecture and batch size; CPU training TVAE Source + few-shot target SDV implementation; 100 epochs; package-default architecture and batch size; CPU training CopulaGAN Source + few-shot target SDV implementation; 300 epochs; quantile-bin variables encoded ordinally during fitting and decoded after sampling 
+
+Table 9: Structural adaptation statistics at the 10% target-data budget. Source edges denote dependencies in the source BN, LLM additions denote new edges proposed by the LLM, and active additions denote proposed edges retained after PPO calibration. 
+
+Scenario Source edges LLM additions Active additions LLM-proposed additions 
+
+inc-prsd 8 3 3 Age →Income; Education →Income; Marital status →Income 
+
+inc-edu 8 3 3 Class of worker →Income; Education →Income; Occupation →Income 
+
+cov-txca 11 3 3 Citizenship →Coverage; Coverage →Employment; Income →Sex 
+
+cov-edu 12 3 2 Coverage →Age; Coverage →Sex; Citizenship →Coverage 
+
+mob-prca 8 5 4 Age →Mobility; Education →Mobility; Marital status →Mobility; Race →Mobility; Citizenship →Mobility 
+
+mob-sec 9 3 2 Race →Mobility; Mobility →Disability; Sex →Mobility 
+
+(b) Representative structural cases 
+
+Scenario Accepted edge Rationale PPO outcome Multiplier 
+
+inc-prsd Age →Income Age adds direct target-domain information for the income distribution. Strengthened 1.20 
+
+inc-edu Class of worker →Income Class of worker captures income differences within the target education group. Weakened 0.85 
+
+cov-txca Coverage →Employment Coverage contributes to target-specific employment patterns in the tar-get domain. Flipped −1.00 
+
+cov-edu Citizenship →Coverage Citizenship provides a plausible coverage-related dependency in the target group. Deactivated 0.00 
+
+mob-prca Marital status →Mobility Marital status contributes to residential mobility under the geographic shift. Strengthened 1.44 
+
+mob-sec Race →Mobility Race captures a target-specific mobility association under the sector shift. Weakened 0.85 
+
+keep fraction shows that later episodes make progressively fewer changes to the retained controls, consistent with the stable configurations evaluated in Appendix F. 
+
+E.2 Episode-Return Dynamics 
+
+Let r(e,k ) denote the reward at step k of episode e. The episode return is 
+
+Re =
+
+> 20
+
+X
+
+> k=1
+
+r(e,k ). (41) Figure 7 reports this quantity for LAB-Tab, the variant with-out the local reward, and the variant without LLM edge pro-posals. The solid curves are 10-episode rolling means, and the shaded regions show pointwise 95% smoothing bands computed within the same rolling window. Cross-seed vari-ation is reported separately in the result tables. The magnitude of the return decreases over training in all six scenarios, showing that later edge operations produce progressively smaller changes under each variant’s objective. This behavior is most pronounced in inc-prsd , cov-txca ,and mob-sec , where the rolling means approach zero near the end of training. The mob-prca traces remain more vari-able, consistent with the longer weaken–strengthen phase in Figure 6. The variants use different reward definitions, and their final quality is summarized by UtilityGap, Coef–Cos, and Overall in the ablation results. Age Education Marital Sex Race Relation 
+
+Class Occupation Hours 
+
+Income 
+
+INC -PRSD 
+
+Resulting BN 𝐵 ⋆
+
+Source BN 𝐵 "
+
+Age Education Marital Sex Race Relation 
+
+Class Occupation Hours 
+
+Income 
+
+INC -EDU 
+
+Resulting BN 𝐵 ⋆
+
+Source BN 𝐵 "
+
+COV -TXCA 
+
+Resulting BN 𝐵 ⋆Source BN 𝐵 "
+
+COV -EDU 
+
+Resulting BN 𝐵 ⋆Source BN 𝐵 "
+
+MOB -PRCA 
+
+Resulting BN 𝐵 ⋆
+
+Source BN 𝐵 "
+
+MOB -SEC 
+
+Resulting BN 𝐵 ⋆
+
+Source BN 𝐵 "
+
+Age Education Marital Sex Race Relation 
+
+Class Occupation Hours 
+
+Income 
+
+Source BN LLM add RL strengthen RL weaken RL flip RL deactivate 
+
+Age Education Marital Sex 
+
+Race Citizen Disability Mobility 
+
+Employment Income 
+
+Coverage 
+
+Age Marital Sex Race 
+
+Citizen Disability Mobility 
+
+Employment Income 
+
+Coverage 
+
+Age Education Marital Sex 
+
+Race Citizen Disability 
+
+Class Hours Income 
+
+Mobility 
+
+Age Education Marital Sex 
+
+Race Disability 
+
+Hours Income 
+
+Mobility 
+
+Citizen 
+
+Age Education Marital Sex 
+
+Race Citizen Disability Mobility 
+
+Employment Income 
+
+Coverage 
+
+RL keep 
+
+Age Education Marital Sex 
+
+Race Citizen Disability 
+
+Class Hours Income 
+
+Mobility 
+
+Age Education Marital Sex 
+
+Disability 
+
+Hours Income 
+
+Mobility 
+
+Citizen Race 
+
+Age Education Marital Sex Race Relation 
+
+Class Occupation Hours 
+
+Income 
+
+Age Marital Sex Race 
+
+Mobility 
+
+Income 
+
+Coverage 
+
+Employment 
+
+Citizen Disability Figure 5: Source and selected target-domain BN configurations for the six shifts. Gray solid and dashed arrows denote source and LLM-added edges. Black, blue, orange, purple, and red denote keep, strengthen, weaken, flip, and deactivate outcomes. Deactivated edges are omitted from the final active graph. 0 20 40 60 80 100 120 140 
+
+episode 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> fraction of actions / episode
+
+INC-PRSD 
+
+0 20 40 60 80 100 120 140 
+
+episode 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> fraction of actions / episode
+
+INC-EDU 
+
+0 50 100 150 200 250 
+
+episode 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> fraction of actions / episode
+
+COV-TXCA 
+
+0 50 100 150 200 250 
+
+episode 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> fraction of actions / episode
+
+COV-EDU 
+
+0 50 100 150 200 250 
+
+episode 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> fraction of actions / episode
+
+MOB-PRCA 
+
+0 50 100 150 200 250 
+
+episode 
+
+0.0 
+
+0.2 
+
+0.4 
+
+0.6 
+
+0.8 
+
+1.0 
+
+> fraction of actions / episode
+
+MOB-SEC 
+
+keep weaken strengthen deactivate flip 
+
+Figure 6: Episode-wise edge-control action fractions for the six scenarios. Light traces show episode values, and dark traces show 10-episode moving averages. Each episode contains 20 actions. 0 20 40 60 80 100 120 140                               
+
+> episode
+> 3.0
+> 2.5
+> 2.0
+> 1.5
+> 1.0
+> 0.5
+> 0.0
+> episode return
+> INC-PRSD
+> 020 40 60 80 100 120 140
+> episode
+> 4
+> 3
+> 2
+> 1
+> 0
+> episode return
+> INC-EDU
+> 050 100 150 200 250
+> episode
+> 6
+> 5
+> 4
+> 3
+> 2
+> 1
+> 0
+> episode return
+> COV-TXCA
+> 050 100 150 200 250
+> episode
+> 5
+> 4
+> 3
+> 2
+> 1
+> 0
+> episode return
+> COV-EDU
+> 050 100 150 200 250
+> episode
+> 2.5
+> 2.0
+> 1.5
+> 1.0
+> 0.5
+> 0.0
+> episode return
+> MOB-PRCA
+> 050 100 150 200 250
+> episode
+> 4
+> 3
+> 2
+> 1
+> 0
+> 1
+> episode return
+> MOB-SEC
+> LAB-Tab w/o local reward w/o LLM Zero reward
+
+Figure 7: Episode-return dynamics for LAB-Tab and two policy ablations. Solid curves are 10-episode rolling means, shaded regions are within-window 95% smoothing bands, and the dotted line marks zero return. 
+
+F Complete Experimental Results 
+
+All results use the six scenarios in Table 4, five reporting seeds, and the fixed Overall definition in Appendix B. The 10% headline and sensitivity entries use the same runs. 
+
+F.1 Scenario-Level Main Results F.2 Results across Target-Data Budgets 
+
+Table 11 summarizes the main target-budget anchors. LAB-Tab leads seven of eleven budgets, with its largest gains in the low-data regime. At 1%, it reduces Overall by 54.6% relative to CTGAN. MTabGen leads at 40%, 60%, 90%, and 100%, and the two methods remain close at the full-data endpoint. This crossover is consistent with source-informed adaptation being most useful when target evidence is scarce. Table 11: Selected anchors from the target-data sensitivity analysis. 
+
+Setting LAB-Tab Reference 1% Overall 0.1499 CTGAN: 0.3299 10% Overall 0.0916 CTGAN: 0.1383 100% Overall 0.1751 MTabGen: 0.1650 
+
+Budget wins 7/11 MTabGen: 4/11 
+
+F.3 Ablation Summary 
+
+Table 12 reports the fixed-scale ablation averages. The results show complementary roles across the components. LLM augmentation mainly improves conditional and feature–label structure, PPO coordinates inherited and added edges, and local feedback improves the balance of utility and association preservation. Table 12: Ablation results averaged over five seeds and six scenarios. 
+
+Method JSD ↓ WAPE ↓ UGap ↓ Coef. ↑ Overall ↓
+
+Source BN 0.0318 0.3137 0.1861 0.5280 0.1633 Target BN 0.0011 0.1815 0.1550 0.4137 0.1382 Source BN + MAP 0.0011 0.1641 0.0923 0.6082 0.1003 w/o LLM 0.0015 0.1659 0.0929 0.4478 0.1211 w/o PPO 0.0013 0.1626 0.0766 0.5803 0.0997 Greedy edits 0.0015 0.1707 0.0995 0.5536 0.1087 w/o local reward 0.0016 0.1584 0.0865 0.4892 0.1137 
+
+LAB-Tab 0.0016 0.1600 0.0728 0.6464 0.0916 Table 10: Complete five-seed results for all six scenarios at the 10% target-data budget. Component entries are mean ± empirical standard deviation; Overall entries are fixed-score means. Best means within each scenario are bold. 
+
+Method JSD ↓ WAPE ↓ UGap ↓ Coef–Cos ↑ Overall ↓
+
+inc-prsd 
+
+Gaussian Copula 0.0318 ± 0.0005 0.5878 ± 0.0091 0.7089 ± 0.0385 0.1016 ± 0.0084 0.3200 
+
+MTabGen 0.0402 ± 0.0027 0.4268 ± 0.0055 0.1567 ± 0.0211 0.7990 ± 0.0032 0.1483 
+
+CTGAN 0.0424 ± 0.0057 0.4642 ± 0.0128 0.2670 ± 0.0408 0.4177 ± 0.0059 0.2200 
+
+TVAE 0.0456 ± 0.0118 0.4525 ± 0.0134 0.2383 ± 0.0630 0.7235 ± 0.0072 0.1770 
+
+CopulaGAN 0.0451 ± 0.0043 0.4788 ± 0.0074 0.3409 ± 0.0300 0.5674 ± 0.0066 0.2149 
+
+SPADA 0.0328 ± 0.0001 0.4374 ± 0.0069 0.1524 ± 0.0256 0.6296 ± 0.0027 0.1673 
+
+LAB-Tab 0.0055 ± 0.0002 0.4258 ± 0.0067 0.1093 ± 0.0171 0.7166 ± 0.0024 0.1367 
+
+inc-edu 
+
+Gaussian Copula 0.0379 ± 0.0003 0.6026 ± 0.0094 1.1755 ± 0.0505 0.2508 ± 0.0047 0.3364 
+
+MTabGen 0.0220 ± 0.0029 0.3622 ± 0.0054 0.1014 ± 0.0083 0.9244 ± 0.0012 0.1069 
+
+CTGAN 0.0421 ± 0.0025 0.4076 ± 0.0122 0.2450 ± 0.0346 0.8317 ± 0.0035 0.1578 
+
+TVAE 0.0921 ± 0.0086 0.4724 ± 0.0622 0.5107 ± 0.0512 0.3832 ± 0.0081 0.2750 
+
+CopulaGAN 0.0448 ± 0.0030 0.3701 ± 0.0119 0.1428 ± 0.0361 0.8710 ± 0.0043 0.1311 
+
+SPADA 0.0264 ± 0.0002 0.3842 ± 0.0047 0.1704 ± 0.0089 0.9386 ± 0.0007 0.1230 
+
+LAB-Tab 0.0008 ± 0.0004 0.3639 ± 0.0065 0.1425 ± 0.0199 0.8385 ± 0.0008 0.1184 
+
+cov-txca 
+
+Gaussian Copula 0.0054 ± 0.0002 0.1286 ± 0.0031 0.1877 ± 0.0179 0.9761 ± 0.0019 0.0729 
+
+MTabGen 0.0100 ± 0.0009 0.1831 ± 0.0116 0.0705 ± 0.0040 0.9833 ± 0.0002 0.0608 
+
+CTGAN 0.0090 ± 0.0012 0.2002 ± 0.0136 0.1021 ± 0.0149 0.9315 ± 0.0014 0.0767 
+
+TVAE 0.0538 ± 0.0059 0.3618 ± 0.0268 0.0948 ± 0.0257 0.9944 ± 0.0007 0.1082 
+
+CopulaGAN 0.0105 ± 0.0012 0.1948 ± 0.0127 0.0927 ± 0.0110 0.9807 ± 0.0016 0.0682 
+
+SPADA 0.0026 ± <0.0001 0.0858 ± 0.0013 0.1863 ± 0.0070 −0.2254 ± 0.0231 0.2131 
+
+LAB-Tab 0.0002 ± 0.0001 0.0198 ± 0.0020 0.0792 ± 0.0171 0.9918 ± 0.0011 0.0243 
+
+cov-edu 
+
+Gaussian Copula 0.0207 ± 0.0003 0.2297 ± 0.0027 0.1202 ± 0.0132 0.9618 ± 0.0026 0.0858 
+
+MTabGen 0.0220 ± 0.0036 0.2343 ± 0.0369 0.0046 ± 0.0115 0.9733 ± 0.0006 0.0599 
+
+CTGAN 0.0253 ± 0.0025 0.2869 ± 0.0210 0.0708 ± 0.0108 0.9618 ± 0.0024 0.0862 
+
+TVAE 0.0426 ± 0.0038 0.3052 ± 0.0050 0.0211 ± 0.0332 0.9845 ± 0.0007 0.0809 
+
+CopulaGAN 0.0285 ± 0.0022 0.2946 ± 0.0310 0.0012 ± 0.0127 0.9853 ± 0.0013 0.0693 
+
+SPADA 0.0179 ± 0.0001 0.2079 ± 0.0014 0.1336 ± 0.0186 −0.0132 ± 0.0264 0.2056 
+
+LAB-Tab 0.0006 ± 0.0002 0.0479 ± 0.0086 0.0048 ± 0.0083 0.7590 ± 0.0078 0.0430 
+
+mob-prca 
+
+Gaussian Copula 0.0161 ± 0.0004 0.1720 ± 0.0036 0.1043 ± 0.0124 0.6518 ± 0.0472 0.1096 
+
+MTabGen 0.0241 ± 0.0013 0.2587 ± 0.0127 0.0507 ± 0.0072 −0.5180 ± 0.0246 0.2619 
+
+CTGAN 0.0288 ± 0.0014 0.2915 ± 0.0194 0.1046 ± 0.0098 0.6697 ± 0.0431 0.1318 
+
+TVAE 0.0349 ± 0.0077 0.2950 ± 0.0203 0.0655 ± 0.0145 0.2847 ± 0.0442 0.1743 
+
+CopulaGAN 0.0362 ± 0.0017 0.3187 ± 0.0244 0.0755 ± 0.0110 −0.7473 ± 0.0338 0.3094 
+
+SPADA 0.0158 ± 0.0003 0.1624 ± 0.0020 0.0946 ± 0.0107 0.5833 ± 0.0390 0.1143 
+
+LAB-Tab 0.0004 ± 0.0001 0.0319 ± 0.0048 0.0643 ± 0.0049 0.5140 ± 0.0092 0.0837 
+
+mob-sec 
+
+Gaussian Copula 0.0049 ± 0.0002 0.1157 ± 0.0019 0.0948 ± 0.0278 −0.6725 ± 0.0418 0.2584 
+
+MTabGen 0.0093 ± 0.0009 0.1870 ± 0.0131 0.0668 ± 0.0157 −0.3176 ± 0.0243 0.2231 
+
+CTGAN 0.0117 ± 0.0030 0.2081 ± 0.0328 0.0852 ± 0.0240 0.2771 ± 0.0302 0.1573 
+
+TVAE 0.0263 ± 0.0096 0.2540 ± 0.0438 0.0029 ± 0.0258 0.7809 ± 0.0191 0.0882 
+
+CopulaGAN 0.0339 ± 0.0041 0.2982 ± 0.0318 0.0579 ± 0.0254 0.7151 ± 0.0399 0.1189 
+
+SPADA 0.0047 ± 0.0001 0.1123 ± 0.0009 0.0912 ± 0.0226 −0.2649 ± 0.0186 0.2059 
+
+LAB-Tab 0.0018 ± 0.0002 0.0707 ± 0.0082 0.0367 ± 0.0159 0.0587 ± 0.0046 0.1437
