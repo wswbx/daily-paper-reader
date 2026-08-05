@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-04</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-05</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 6 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-04 21:54:37 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-05 20:24:37 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读3篇、速读3篇，共6篇论文，聚焦磁芯损耗方程发现与土壤光谱表格基础模型。最值得关注的是满分论文《Discovering Explicit Magnetic Core Loss Equations》及9分高分的土壤光谱大尺度库研究，两者均体现可学习符号回归与表格基础模型的前沿应用。建议普通读者优先浏览这两篇精读论文，并留意大语言模型在科学发现与表格生成中的延伸方向。</p>
+<p>今日精读论文1篇，聚焦表格学习与语义嵌入方法。</p>
+<p>该研究提出上下文感知语义嵌入以增强表格模型，8.0/10分值得关注。</p>
+<p>后续可留意该技术在实际表格任务中的落地与对比实验。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Discovering Explicit Magnetic Core Loss Equations via Learnable Symbolic Sparse Identification">Discovering Explicit Magnetic Core Loss Equations via Learnable Symbolic Sparse Identification</span></li><li><span class="dpr-home-dashboard-paper-title" title="From field-scale to large-scale spectral libraries: Tabular foundation models in soil spectroscopy">From field-scale to large-scale spectral libraries: Tabular foundation models in soil spectroscopy</span></li><li><span class="dpr-home-dashboard-paper-title" title="TabDPT-Turbo: Efficient In-Context Learning for Tabular Prediction">TabDPT-Turbo: Efficient In-Context Learning for Tabular Prediction</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Enhancing Tabular Learners with Context-Aware Semantic Embeddings">Enhancing Tabular Learners with Context-Aware Semantic Embeddings</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Scientific Knowledge Discovery in the Age of Large Language Models">Scientific Knowledge Discovery in the Age of Large Language Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="FunL2O: LLM-Guided Feature Function Design for Learning to Optimize">FunL2O: LLM-Guided Feature Function Design for Learning to Optimize</span></li><li><span class="dpr-home-dashboard-paper-title" title="LAB-Tab: LLM-Augmented Bayesian Network Adaptation for Few-Shot Tabular Generation">LAB-Tab: LLM-Augmented Bayesian Network Adaptation for Few-Shot Tabular Generation</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+
 </section>
 </div>
 
