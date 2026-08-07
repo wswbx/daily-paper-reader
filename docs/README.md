@@ -44,14 +44,14 @@
       <span class="dpr-home-dashboard-kicker">2026-08-07</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 8 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-07 00:58:04 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-07 20:48:03 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读5篇、速读3篇，重点聚焦符号回归与表格数据基础模型。最值得关注：自进化Agent符号回归框架A-SR（10分）与表格基础模型TS2TabPFN（9分），均代表表格任务新范式。建议普通读者优先复现这两篇的思路，再结合速读中的边缘表格理解与少样本生成作为补充。</p>
+<p>今日处理10篇论文（精读7篇、速读3篇），聚焦符号回归与表格理解。</p>
+<p>最值得精读：10分《A-SR》用层级协调实现自进化符号回归，9分《SJEPA》以符号-神经混合预测器学习潜在动力学。</p>
+<p>建议优先深入这两篇高分工作，后续再按兴趣扩展扫描速读列表。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A-SR: Self-Evolving Agentic LLMs for Symbolic Regression via Hierarchical Coordination">A-SR: Self-Evolving Agentic LLMs for Symbolic Regression via Hierarchical Coordination</span></li><li><span class="dpr-home-dashboard-paper-title" title="TS2TabPFN: Time Series Classification and Extrinsic Regression through Feature Extraction and a Tabular Foundation Model">TS2TabPFN: Time Series Classification and Extrinsic Regression through Feature Extraction and a Tabular Foundation Model</span></li><li><span class="dpr-home-dashboard-paper-title" title="DASyR-LLM: Domain-Aware Symbolic Regression with LLMs for Kinetic Model Discovery">DASyR-LLM: Domain-Aware Symbolic Regression with LLMs for Kinetic Model Discovery</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A-SR: Self-Evolving Agentic LLMs for Symbolic Regression via Hierarchical Coordination">A-SR: Self-Evolving Agentic LLMs for Symbolic Regression via Hierarchical Coordination</span></li><li><span class="dpr-home-dashboard-paper-title" title="SJEPA: Learning Elegant Latent Dynamics with Hybrid Symbolic-Neural Predictors">SJEPA: Learning Elegant Latent Dynamics with Hybrid Symbolic-Neural Predictors</span></li><li><span class="dpr-home-dashboard-paper-title" title="TS2TabPFN: Time Series Classification and Extrinsic Regression through Feature Extraction and a Tabular Foundation Model">TS2TabPFN: Time Series Classification and Extrinsic Regression through Feature Extraction and a Tabular Foundation Model</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>3</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>3</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>3</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +89,7 @@
     <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="EdgeLM: Edge Demonstrations for Language Models&#x27; Table Understanding">EdgeLM: Edge Demonstrations for Language Models&#x27; Table Understanding</span></li><li><span class="dpr-home-dashboard-paper-title" title="FunL2O: LLM-Guided Feature Function Design for Learning to Optimize">FunL2O: LLM-Guided Feature Function Design for Learning to Optimize</span></li><li><span class="dpr-home-dashboard-paper-title" title="LAB-Tab: LLM-Augmented Bayesian Network Adaptation for Few-Shot Tabular Generation">LAB-Tab: LLM-Augmented Bayesian Network Adaptation for Few-Shot Tabular Generation</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="EdgeLM: Edge Demonstrations for Language Models&#x27; Table Understanding">EdgeLM: Edge Demonstrations for Language Models&#x27; Table Understanding</span></li><li><span class="dpr-home-dashboard-paper-title" title="LAB-Tab: LLM-Augmented Bayesian Network Adaptation for Few-Shot Tabular Generation">LAB-Tab: LLM-Augmented Bayesian Network Adaptation for Few-Shot Tabular Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="FunL2O: LLM-Guided Feature Function Design for Learning to Optimize">FunL2O: LLM-Guided Feature Function Design for Learning to Optimize</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
