@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-10</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-11</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-10 21:08:59 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-11 20:07:45 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读两篇高分论文，聚焦代理监督的方程重建诊断与优化研究自动化。最值得关注《When Proxy Prediction Becomes Equation Reconstruction》和《A Domain-Specific Harness》两篇9.0分工作，分别解决代理监督失效与端到端自动化问题。建议优先精读这两篇，速读内容可作为非线性ODE和复杂系统优化的补充。</p>
+<p>今日精选5篇论文，聚焦符号回归与优化自动化前沿。</p>
+<p>最值得看：熵强化学习贝叶斯符号回归获满分，端到端优化研究自动化工具紧随其后。</p>
+<p>建议优先精读高分两篇，速读混合表格流匹配与语义聚类作为拓展。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="When Proxy Prediction Becomes Equation Reconstruction: Diagnostics and Residual Learning for Factor-Derived Proxy Supervision">When Proxy Prediction Becomes Equation Reconstruction: Diagnostics and Residual Learning for Factor-Derived Proxy Supervision</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Domain-Specific Harness for End-to-End Automation of Optimization Research">A Domain-Specific Harness for End-to-End Automation of Optimization Research</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Symbolic Regression with Entropic Reinforcement Learning">Bayesian Symbolic Regression with Entropic Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Domain-Specific Harness for End-to-End Automation of Optimization Research">A Domain-Specific Harness for End-to-End Automation of Optimization Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="SymbolicPhasor: Power System Phasor Estimation via Deep Symbolic Regression">SymbolicPhasor: Power System Phasor Estimation via Deep Symbolic Regression</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>2</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Nonparametric Estimation under General Nonlinear ODE Constraints: A Comparison with Parametric ODE-Fitting Methods">Nonparametric Estimation under General Nonlinear ODE Constraints: A Comparison with Parametric ODE-Fitting Methods</span></li><li><span class="dpr-home-dashboard-paper-title" title="CEDAR: Agent-Orchestrated Tree Search for Goal-Directed Optimization of Complex Systems">CEDAR: Agent-Orchestrated Tree Search for Goal-Directed Optimization of Complex Systems</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FUSE: Feature-Wise Unified Specialization with Cross-Column Exchange for Mixed-Type Tabular Flow Matching">FUSE: Feature-Wise Unified Specialization with Cross-Column Exchange for Mixed-Type Tabular Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="GRACE: LLM-Grounded Semantic Metric Spaces for Scalable Mixed-Data Clustering">GRACE: LLM-Grounded Semantic Metric Spaces for Scalable Mixed-Data Clustering</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span></div>
 </section>
 </div>
 
