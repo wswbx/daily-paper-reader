@@ -1,0 +1,750 @@
+Title: TACTICL: Task-Aware Compression of Tabular ICL Models
+
+URL Source: https://arxiv.org/pdf/2608.10837v1
+
+Published Time: Wed, 12 Aug 2026 01:02:02 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# TACTICL: Task-Aware Compression of Tabular ICL Models 
+
+Mykhailo Koshil 1,2 Matthias Feurer 1,2 Katharina Eggensperger 1,2 1TU Dortmund University, Germany 
+
+2Lamarr Institute for Machine Learning and Artificial Intelligence, Germany 
+
+Abstract The strong performance of foundation models for tabular tasks comes at substantial inference costs. Distilling models into task-specific architectures reduces model size and computa-tional demands but also sacrifices in-context adaptability. Here we introduce TACTICL, an automated task-aware compression framework for tabular in-context learning models that jointly prunes transformer layers and replaces them with lightweight adapters trained on downstream tasks, thus blending in-context with in-weight learning. We study TACTICL on 47 benchmark datasets and show that we can substitute up to 85% of layers without substantial performance drop on a given downstream task. We further show that TACTICL maintains robustness to data shifts, leaving its in-context ability intact. Overall, TACTICL provides a robust framework for exploiting the depth-wise redundancy of tabular foundation models by combining task-specific adaptation and structured compression. We provide the code at: https://github.com/Hebog/tfm_compression .
+
+1 Introduction 
+
+Tabular foundation models (TFMs) have advanced rapidly, with successive generations achieving state-of-the-art performance while also growing in size and inference cost. TabPFNv1 (Hollmann et al., 2023) comprises ∼12M parameters and was limited to tables with 1,000 samples and 100 features. TabPFNv2.5 (Grinsztajn et al., 2025) consists of 10M weights and "was built for datasets with up to 50,000 data points and 2,000 features", and TabICL2 (Qu et al., 2026) consists of 27M weights and "generalizes effectively to million-scale datasets". While applicability increases, inference costs are still half an order of magnitude larger than lightweight tree-based baselines (Qu et al., 2026). 1
+
+To reduce inference costs, distillation into task-specific models has emerged as a resource-efficient deployment strategy for ICL-based tabular models.                        
+
+> ℓ=1. . . 𝐿
+> 1. Hidden states extraction Train data
+> Dtrain 2/Dval /Dsearch
+> Full model
+> Embedding Layer 1
+> ...
+> Layer 𝐿 −1Layer 𝐿
+> Hidden states
+> ℎ0. . . ℎ 𝐿
+> split
+> 2. Adapter pre-training P
+> ℎℓ
+> ℎℓ−1
+> ∥ˆℎℓ−ℎℓ∥2ˆℎℓ
+> Adapter
+> 𝑓 𝜃 ℓ:ℎℓ−1→ℎℓ
+> AdamW to update 𝜃 ℓ
+> 3. Layer(s) selection S Hybrid model
+> Embedding Layer 1
+> ...
+> Adapter Layer 𝐿
+> Greedy search
+> eval obj. on search split
+> Full model
+> replace  𝑛 eval
+> 4. Finetuning (opt.) FTrain data Pre-train data Hybrid model
+> Embedding
+> Layer 1
+> ...
+> \Adapter
+> Layer 𝐿
+> Finetuning
+> AdamW, lr=1e-5
+
+Figure 1: Overview of TACTICL, which jointly com-presses and adapts TabPFN models. 
+
+All TabPFNv2 (Hollmann et al., 2025), TabPFNv2.5 (Grinsztajn et al., 2025), and TabPFNv3 (Grinsztajn et al., 2026) introduce dedicated distillation engines that produce, e.g., a compact multi-layer perceptron (MLP) for a given dataset with orders-of-magnitude lower latency. While effective, this approach explicitly converts the model to the in-weight-learning (IWL) regime, encoding the training distribution directly into weights. This means the model must be re-distilled from scratch whenever the context changes, forfeiting an attractive property of in-context learning (ICL): the ability to adapt to new data at inference time without retraining. Beyond zero-shot  
+
+> 1
+
+Gangwani and Bansal (2025) reported inference costs of TabPFNv2 to be > 2 000 × slower than XGBoost (and up to 11 000 × for TabICL), while requiring up to 9 GB of GPU VRAM compared to < 150 MB of RAM for tuned tree ensembles. 
+
+AutoML 2026 © 2026 the authors, released under CC BY 4.0 arXiv:2608.10837v1 [cs.LG] 11 Aug 2026 usage, when predictive performance is a primary objective, adapting TFMs to downstream tasks has become a common strategy, as demonstrated by RealTabPFN (Garg et al., 2025) and others (Rubachev et al., 2025; Kolberg et al., 2026), in which continued pre-training on in-domain data yields consistent accuracy gains. At the same time, researchers started studying the layer impact of TFMs and found that not all layers contribute equally to task performance (Balef et al., 2025, 2026), which is in line with findings for language ICL models (Lad et al., 2025; Men et al., 2025; Gromov et al., 2025). Concretely, they found that performance is not substantially affected by removing, repeating, or swapping a single layer. This hints at depth-wise redundancy, and pruning layers offers an opportunity to substantially lower inference costs without sacrificing accuracy. Based on this motivation, we study: Can we compress TFMs without collapsing them into pure in-weight learners? Specifically, we study whether we can simultaneously prune and adapt a TFM for a downstream task, achieving the benefits of both compression and fine-tuning within a single framework and without sacrificing ICL capability. This is non-trivial for several reasons: Firstly, prior work shows that the transition from in-context to in-weights learning is sharp and often irreversible (Singh et al., 2023), and fine-tuning a model on a fixed dataset can actively suppress its ICL ability due to low data diversity (Nguyen and Nallamala, 2025; Béthune et al., 2025). Secondly, we found that model manipulation is highly task-specific; thus, the optimal pruning strategy depends on the dataset at hand and requires automation to be applied robustly. We propose TACTICL for task-aware compression of tabular in-context models , which identifies layers to prune and replaces them with lightweight adapter modules, trained on the downstream task (see overview in Figure 1). In contrast to distillation, our method retains the full flexibility of the original model: it preserves in-context learning capabilities, remains robust to perturbations, and can be applied to unseen tasks without retraining from scratch. TACTICL automatically optimizes a compression configuration, even for large models where an exhaustive search would be intractable. Our contributions are as follows: • A unified framework for simultaneous structured pruning and domain adaptation for state-of-the-art tabular ICL models. • The first automated pipeline for explicitly combining in-context learning and dataset-specific memorization to decrease computational complexity while maintaining or even improving predictive performance. • A quantitative evaluation on a subset of 47 TabArena datasets (Erickson et al., 2026), demonstrating that TACTICL can retain the performance of TabPFNv2.5 while reducing the compute cost almost linearly with the number of dropped layers. 
+
+2 Problem Setup: Task-aware Model Compression 
+
+We start by formally defining our problem setup. Given a pretrained model M with 𝐿 layers, e.g., transformer blocks, and a supervised learning downstream task, represented by labelled training 
+
+D𝑡𝑟𝑎𝑖𝑛 , hold-out (search) D𝑠𝑒𝑎𝑟𝑐ℎ and unlabelled test data D𝑡𝑒𝑠𝑡 sets. For M with 𝐿 layers, we define a compression configuration 𝑐 ∈ { 0, 1}𝐿 as a binary vector indicating which layers are retained (𝑐 𝑖 = 1) or removed ( 𝑐 𝑖 = 0). Given a target compression ratio 𝑛 /𝐿 when dropping 𝑛 out of 𝐿 layers, the set of all valid configurations: 
+
+𝐶 𝑛 =
+
+(
+
+𝑐 ∈ { 0, 1}𝐿 
+
+> 𝐿
+
+∑︁ 
+
+> 𝑖 =1
+
+𝑐 𝑖 = 𝐿 − 𝑛 
+
+)
+
+. (1) We refer to M𝑐 as a compressed model using configuration 𝑐 and measure generalization perfor-mance as 𝑓 (𝑐 ) = L (𝑦 search , (M𝑐 (𝑥 search |𝐷 train )) with L being a metric suitable for the task type, e.g., AUC for classification and RMSE for regression. The goal is then to identify 𝑐 ∗ which maximizes 
+
+> 2
+
+this score (or minimizes in case of a loss) for a fixed compression ratio 𝑛 /𝐿 for a given Dtrain :
+
+𝑐 ∗ ∈ argmax   
+
+> 𝑐 ∈𝐶 𝑛
+
+𝑓 (𝑐 ). (2) Alternatively, instead of removing layers, we may substitute a layer with a lightweight adapter, e.g., a shallow MLP, trained on a subset of D𝑡𝑟𝑎𝑖𝑛 to approximate the original layer’s input-output hidden-state mapping to heal the damage introduced by removing a layer (leaving the problem formalization (1) equivalent for substitution). We refer to this automated compression process as 
+
+adaptation , as it tailors the model M to a task by optimizing the compression configuration per task and replacing task-agnostic layers with adapter modules, trained on downstream data. 
+
+2.1 Background and Related Work 
+
+Our approach sits at the intersection of three lines of work: parameter-efficient adaptation, struc-tured model compression, fine-tuning dynamics, and prior work in the tabular domain, which we will briefly discuss in the following. 
+
+Parameter-efficient adaptation. Houlsby et al. (2019) introduced adapter modules as a parameter-efficient alternative to full fine-tuning, inserting small bottleneck networks between the frozen layers of a pretrained NLP transformer. This creates a single shared backbone specialized to new tasks by training only a few additional parameters per task. Our use of lightweight substitute modules to replace dropped layers is conceptually related, but differs in purpose: rather than adapting a frozen model to new tasks, we use adapters to restore the computation lost by layer removal while simultaneously enabling domain adaptation. Complementary to this, Guo et al. (2021) proposed diff pruning, which frames fine-tuning as learning a sparse task-specific diff vector 
+
+on top of the frozen model. The diff vector is pruned via a differentiable 𝐿 0-norm approximation, yielding models that match full fine-tuning performance while modifying fewer than 0 .5% of the frozen weights per task. Diff pruning shares our interest in minimizing the parameter cost of adaptation, but it operates by selectively updating weights rather than by replacing layers. 
+
+Layer redundancy and structured compression. A growing body of work demonstrates that transformer layers are substantially more redundant than one might expect, motivating layer-level pruning as a principled compression strategy. This redundancy is frequently explained by the circuit hypothesis (Elhage et al., 2021), which holds that task-specific behaviour is implemented by sparse, localized subnetworks of attention heads and MLPs rather than the full depth of the model, so layers outside these task-relevant circuits can be pruned with little effect on performance. Muralidharan et al. (2024) proposed a complementary multi-axis compression strategy that jointly prunes model components (depth, width, attention heads, and MLP units) and then retrains the pruned model via knowledge distillation on less than 3% of the original pretraining data. This yields models that are 2-4 × smaller while remaining competitive. Li et al. (2026) introduced a compression method that reduces inference cost by selectively distilling softmax attention layers into linear attention. They showed that per-layer KL divergence between the teacher and a linear-attention student provides an effective score for determining which layers can be replaced, enabling significant compression while recovering teacher-level performance through distillation-based fine-tuning. Both approaches share a common structure with our method: identify less important components via a principled score, remove or replace them, and recover performance through lightweight fine-tuning. Gromov et al. (2025) showed that for popular open-weight LLMs, one can remove up to half of the deepest layers, identified by computing the angular distance between adjacent layer representations, with minimal degradation on question-answering benchmarks, provided the damage is subsequently “healed” via a small amount of parameter-efficient fine-tuning. This work directly motivates our analysis of proxy metrics for layer sensitivity and our usage of adapters. Similarly, Men et al. (2025) introduced Block Influence (BI), a training-free importance metric that requires only a single forward pass over a small calibration set: it measures how much each layer transforms its input 
+
+> 3
+
+hidden state, meaning layers with low BI scores are close to identity transformation; layers with low BI scores are dropped, yielding competitive compression without gradient computation or model retraining. Chen et al. (2025) extended this direction by replacing entire redundant blocks from LLMs with a lightweight adapter, further demonstrating that structured, coarse-grained pruning at the layer level is a practical and effective compression strategy. In a similar fashion, Shopkhoev et al. (2025); Cannistraci et al. (2026) maintain model performance with substantial compression by utilizing linear adapters. In contrast to these works, which mostly target general-purpose LLMs and recover performance via healing, our setting introduces two additional challenges: First, tabular foundation models perform in-context learning over tabular data, and the sensitivity of layers to removal differs substantially from autoregressive LLMs (Balef et al., 2026). Second, we aim for simultaneous compression and domain adaptation, rather than recovery to the original distribution. 
+
+Fine-tuning dynamics. When a pretrained model is fine-tuned on a target domain, it risks two failure modes: overfitting to scarce target data and forgetting generic capabilities acquired during pretraining. Béthune et al. (2025) derived scaling laws that jointly quantify these two phenomena as a function of model scale, available fine-tuning data, and the fraction of pretraining data re-injected into the fine-tuning mixture. A key finding is that injecting as little as 1% of pretraining data is sufficient to prevent catastrophic forgetting. This result is directly relevant to our setting: when fine-tuning the pruned and adapter-augmented model for domain adaptation, we risk degrading the ICL capabilities of the retained transformer layers. We use this insight to design our fine-tuning protocol and motivate our out-of-distribution (OOD) evaluation, which explicitly tests whether the compressed model retains the original model’s ability to perform ICL. 
+
+Tabular domain. Küken et al. (2025) make use of an early-exit mechanism for TFMs, attaching lightweight decoders to each transformer layer that allow inference to terminate early based on prediction entropy, with no task-specific fine-tuning. This yields inference speed-ups of up to 1.3 to 2.2 times with small accuracy loss. Similarly, Liu and Ye (2026) make use of an early exit. However, such an approach is a dynamic inference technique rather than model compression: the full backbone is retained, and no parameters are pruned, quantized, or distilled. 
+
+3 Methodology for TACTICL 
+
+To simultaneously prune and adapt, we design a framework consisting of three components: P training lightweight adapters, S searching for the optimal pruning configuration, and F fine-tuning the whole model. If adapters are not used, only the second and third components are needed. In this section, we will describe the challenges and our approach for each component and begin with the core algorithm of our work, S . 
+
+S Layer Selection. Prior research found that transformer layers in tabular models contribute unequally to in-context prediction, with some being close to redundant for some tasks (Balef et al., 2026). Thus, such layers may be removed or approximated by a simpler function. Since we aim to find an optimal compression configuration, we need to efficiently search over 2 𝐿 pruning configurations for each task. As a solution, we propose a greedy search over possible layer-replacement configurations, guided by AUC/RMSE and prediction stability evaluated on a held-out search set. This means we iteratively drop the layer with the least negative impact on empirical generalization performance. We run a proof-of-concept experiment on TabPFNv2 to study the effectiveness of our selection method. We find that the pruning scheme is dataset-dependent (see Section 4.1), and show that our greedy strategy recovers a near-oracle configuration (see Section 4.2). 
+
+P Adapter Pre-Training. Instead of dropping, we consider replacing layers with adapter models: For each dropped layer, we train a small, lightweight model to approximate the functionality of the layer it replaces via supervised learning on the original in- and output embeddings. In addition 
+
+> 4
+
+to the task-aware layer configuration, this further introduces another task-dependent component that further adapts the model to the downstream task. Using adapters introduces two challenges. First, we must consider its architecture, hyperparam-eters, and training protocol. Secondly, the optimal layers to drop need not be the optimal layers to replace with adapters (as we show in Section 4.2). 2 As replacing self-attention by 1 × 1 convolution reduces expressivity by eliminating inter-token interactions, in-context learning can be negatively impacted. Therefore, this loss has to be offset by dataset-specific knowledge learned during adapter training, underscoring the need for task-aware compression. As a practical solution, we use a lightweight adapter architecture: a two-layer MLP with GELU activations and a skip connection, selected as a result of a small architecture search; more details in Appendix E. We pretrain all adapters once, independently and in parallel, before the search begins, rather than retraining an adapter at every search step (Figure 1); although sequential per-step training would in principle let each adapter correct for errors introduced by previously substituted layers, upfront pretraining substantially cuts search cost by incurring the expensive adapter training once per layer rather than repeatedly at each iteration. This choice follows from a locality assumption underlying our greedy search, i.e., that the decision to keep or delete/substitute a given layer does not depend on the decision for other layers. 
+
+F Fine-Tuning. As a final step, we optionally fine-tune the compressed model to align layers and adapters and recover residual performance lost during compression. This is straightforward and similar to prior work to prevent overfitting (Béthune et al., 2025): we run a few epochs of AdamW to update the weights of the adapter models (with all other weights frozen), using a mixture of pretraining data and data from the downstream task. Freezing the transformer layers is a deliberate design choice that confines learning to the in-weights pathway, leaving the in-context inference circuitry of the retained layers intact, thereby preserving the ICL capabilities. This is consistent with the theoretical view that the ICL and IWL sub-circuits are largely independent (Nguyen and Nallamala, 2025), such that updating only adapter weights steers the in-weights pathway without disrupting in-context processing, as we show in Section 4.3 and Section 4.4. 
+
+4 Experiments 
+
+We now turn to the empirical evaluation of our TACTICL. We start with a straightforward proof-of-concept experiment to validate and study our method under controlled conditions in a feasible setup, and then assess performance on state-of-the-art models. Specifically, we organize this section around five research questions: (Section 4.1) Can less be more? explores whether layer removal/substitution can exploit redundancy to preserve performance; (Section 4.2) Is greedy good enough? studies whether our local search heuristic can recover near-oracle compression configurations efficiently; (Section 4.3) Can it still learn in-context? assesses whether the resulting model is robust against reasonable domain shifts and perturbations; (Section 4.4) Do we need fine-tuning? evaluates whether end-to-end fine-tuning recovers performance loss due to compression; and, finally, (Section 4.5) Does TACTICL speed up predictions? quantifies inference speed-ups. TACTICL can be applied to any supervised learning task; in this section, we focus on discussing classification results and report regression results in the Appendix. 
+
+Datasets and Evaluation Protocol. We measure in-distribution performance using 34 classification and 13 regression datasets from the TabArena benchmark (Erickson et al., 2026). We chose a consistent subset of tasks for all experiments, which consists of all tasks natively supported by TabPFNv2.5 after splitting into train and test subsets. We use a single fold for TabPFNv2, three folds for TabPFNv2.5, and report metrics aggregated across datasets. We assess out-of-distribution generalization in Section 4.3 by applying three controlled perturbations to the in-distribution test     
+
+> 2For example, a layer that implements a simple yet crucial function can be replaced by an adapter, whereas removing it would severely degrade performance.
+> 5246810
+> Layers
+> 0.6 0.8 1.0 1.2
+> AUC/AUC full
+> Deletion Substitution
+
+(a) Classification 2 4 6 8 10 Layers  
+
+> 5
+> 4
+> 3
+> 2
+> 1
+> 0
+> 12-RMSE/RMSE full
+> Deletion Substitution
+
+(b) Regression Figure 2: Minimal, maximal, and Median of maximal relative performance change over 34 classifi-cation and 13 regression datasets from TabArena as a function of the number of layers dropped/substituted with adapters compared to the full model (black dotted line). This plot can be interpreted as worst/best/median performance of an oracle search algorithm. 
+
+sets: permuting the feature order, injecting uninformative features, and flipping the labels. To assess speed-ups, we average inference time across 6 repeated inferences preceded by one not-measured warm-up inference. We provide additional details in Appendix C. 
+
+Hardware and Resource Consumption. We ran all experiments on an NVIDIA B300 in approxi-mately 6 days of GPU time. Additionally, inference time measurements and development was done on NVIDIA DGX Spark with 3 days of GPU time in total. 
+
+4.1 Can Less Be More? Proof-of-Concept on Adapter Substitution 
+
+We build on prior work showing that layers contribute unequally to in-context prediction (Balef et al., 2026) and, here, establish how much the model can be compressed while preserving performance, using TabPFNv2 as a small, yet capable model. For this, we exhaustively evaluate all possible compression configurations, sweeping the number of dropped or substituted layers from 0 to 𝐿 = 12. We train 𝐿 = 12 adapters offline beforehand and exhaustively evaluate all 4096 configurations. Specifically, for each configuration size 𝑛 (i.e., 𝑛 pruned or substituted layers), we enumerate all  12 
+
+> 𝑛
+
+
+
+configurations, measure the maximum change in AUC/RMSE relative to the full model, and report the median, maximum, and minimum of this metric across all datasets. This allows capturing the best-case to worst-case improvement achievable at each level of compression. Figure 2 reports results for dropping/substituting layers for classification and regression tasks. Most notably, dropping up to 3 layers consistently yields a non-negative performance change for half of the datasets, confirming redundancy. The substitution results are even more positive, showing that we can substitute up to 9 layers with non-negative performance changes in some settings. Unsurprisingly, as more layers are pruned, performance decreases. Overall, this shows that optimally dropping and substituting layers bears great potential to reduce model size and inference cost with minimal or no impact on final performance. Furthermore, to motivate the need for the search for the optimal compression configuration, we calculate Shapley values per layer and show them in Figure 9 in Appendix B to study layer importance. We observe that while some layers seem safe to remove or substitute across datasets, results vary greatly between removing and substituting layers as well as across datasets, serving as a strong motivation for task-aware compression. 
+
+4.2 Is Greedy Good Enough? Efficient Compression Configuration Search 
+
+Next, we study how to find a dataset-specific pruning configuration in practice. Specifically, we propose a greedy search guided by a performance proxy. We demonstrate that it finds near-optimal configurations in our small-scale setting as well as on state-of-the-art models. 
+
+Setup. We split the training data Dtrain into three disjoint sets with an 8:1:1 ratio: Dtrain =
+
+Dtrain 2 ∪ Dval ∪ Dsearch (see Figure 1). Dtrain 2 and Dval are used as context and query data to extract 
+
+61.00 0.75 0.50 0.25 0.00 0.25 0.50 0.75 1.00      
+
+> Pearson r
+> 0246810
+> Density Predictor
+> Avg. cosine similarity Avg. CKA similarity Sum of MLP final losses Sum of residual contributions
+> rel AUC deletion (val.)
+> rel AUC substitution (val.)
+
+(a) Deletion 1.00 0.75 0.50 0.25 0.00 0.25 0.50 0.75 1.00 Pearson r    
+
+> 0
+> 2
+> 4
+> 6
+> 8Density
+> n layers
+> n= 0
+> n= 6
+> n= 12
+
+(b) Substitution Figure 3: Correlation between proxy scores and AUC for deleting (left) and substituting (right) 𝑛 
+
+layers of TabPFNv2 (across all configurations in 𝐶 𝑛 ; see Eq.(1)), calculated from exhaustive evaluation in Section 4.1. None of the proxies reliably predict the performance impact, consistent with findings in Sajjad et al. (2023). Note that the best layers for dropping are not indicative of the best layers for substitution and vice versa. For regression results, see Figure 13 in Appendix I. 
+
+hidden states for adapter training, while D𝑠𝑒𝑎𝑟𝑐ℎ is used to evaluate candidate configurations. At each step, configurations are scored using either lightweight structural proxies that require only a forward pass on Dval , or the AUC/stability metric computed directly on Dsearch . At test time, all three splits are merged into a single context for inference. 
+
+Performance Proxies. We report the correlation between several proxy metrics evaluated on 
+
+Dsearch (as described in Appendix G) and test performance in Figure 3. We observe that none of the structural proxies reliably predict the performance impact of layer removal or substitution. The failure is most pronounced for deletion: analysis of the data showed that layer 0, which is among the most critical layers (as established by a Shapley analysis in Figure 9 ), is consistently assigned high proxy scores, indicating low sensitivity—precisely the opposite of the ground truth. The only exception is AUC as measured on the search set, which retains meaningful predictive performance and motivates its use as the guiding criterion in the greedy search. In search of a better proxy, we adapt and evaluate the stability metric by Chen et al. (2025), but find that it does not perform well for deletion and provide details in Appendix G. 
+
+Greedy Search Results. To evaluate whether greedy search ends up in substantially worse local minima, we compare its performance to the optimal configuration identified in our proof-of-concept in Section 4.1. In Figure 4, we compare the median relative drop in AUC with respect to the oracle performance, i.e., the optimal configuration with 𝑛 layers pruned, across all 34 datasets. (see Figure 14 in Appendix I for regression results). Additionally, we report the ratio of the performance metrics between the full model and the oracle pruning performance. For layer deletion (left), performance degrades beyond six dropped layers, with a sharp drop and a substantial widening of 2 4 6 8 10 12 
+
+> Layers
+> 0.5 0.6 0.7 0.8 0.9 1.0
+> AUC found /AUC best
+> Median 0.95 quantile 0.05 quantile Median (AUC best /AUC full )
+
+(a) Deletion 2 4 6 8 10 12  
+
+> Layers
+> 0.6 0.7 0.8 0.9 1.0
+> AUC best /AUC full
+
+(b) Substitution Figure 4: Greedy compression configuration search on TabPFNv2. We report the ratio of AUC 𝑓 𝑜𝑢𝑛𝑑 to the best possible AUC on the test set as well as overall performance degradation (blue). For regression results, see Figure 14 in Appendix I. 70 5 10 15 20 25 
+
+> Layers
+> 0.4 0.6 0.8 1.0 1.2
+> AUC / AUC full
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(a) Sub-from-Last 0 5 10 15 20 25  
+
+> Layers
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(b) AUC-guided 0 5 10 15 20 25  
+
+> Layers
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(c) Stability-guided Figure 5: TACTICL substitution applied to TabPFNv2.5. We report the ratio of performances in AUC aggregated across 34 datasets for substituting layers across 3 strategies. Appendix I provides results for deletion (Figure 16) as well as regression (Figures 17, 18). 
+
+variance across datasets. However, for layer substitution (right), greedy search recovers > 90% of the oracle AUC for configurations of up to 8 substituted layers and maintains this threshold for more than half of the datasets. This asymmetry further supports the use of adapter substitution over pure deletion: adapters not only restore local performance but also extend the range over which greedy search remains reliable. Similarly for regression, RMSE increases by less than 10% for substituting up to 7 layers (and by less than 30% for deleting up to 4 layers, respectively). Therefore, we conclude that the locality assumption holds for compressing substantial parts of the model and suffices for our algorithm. 
+
+Scaling to TabPFNv2.5. Next, we evaluate a state-of-the-art model, TabPFNv2.5, at scale. We focus on substituting layers for classification tasks using validation performance as a guiding metric. We report additional results on layer deletion and regression tasks in Appendix I. Additionally, we study two simple baselines. First, substitution or dropping layers starting from the last to first; and second, we distill the full model into a shallow MLP (see Appendix F for further details). In Figure 5, we compare full-model performance against the best configuration found by TACTICL and against the distillation baseline. The results are consistent with our small-scale experiments: our combined pruning and adaptation allow us to replace up to 15 layers with negligible performance degradation, and our method continues to outperform distillation up to 17 layers, all while potentially preserving the model’s in-context-learning capabilities. The drop/substitute-from-last baseline, by contrast, underperforms substantially compared to both TACTICL and distillation, confirming that the strong performance of the last-layer heuristic on some architectures does not hold for TabPFNv2.5 and that a searched or learned selection of which layers to remove is necessary. 
+
+4.3 Can It Still Learn In-context? Retaining ICL Capabilities under Distribution Shift 
+
+By substituting a layer with a shallow adapter network, we explicitly introduce in-weight learning (IWL) components and thus memorization. Since we keep several transformer layers identified as critical for context-reading and preserve their weights, the model’s ICL ability should stay intact. Ideally, the model has been adapted to a downstream task but remains robust to mild distribution shifts that may occur in real-world tasks. To study this, we run two experiments. First, we evaluate the compressed model under three perturbations that alter the context without changing the underlying task. If the model can still learn in-context, then performance should stay the same. Second, we evaluate the model on datasets different from the one used for compression. If compression specializes a model for a task, we should observe a performance drop on other, unrelated tasks. 
+
+Generalization under Perturbations. We inject uninformative features, randomly permute the feature order, and flip labels. These perturbations would require a full re-distillation or training from 
+
+80 5 10 15 20 25  
+
+> Layers
+> 0.25 0.50 0.75 1.00 1.25 1.50
+> AUC perturbed /AUC unperturbed
+> Feature order permutation Label fl ip Random features (20%) Shaded area = 0.05-0.95 quantile
+
+(a) Perturbations evaluation 0 3 6 9 12 15 18 21  
+
+> Layers
+> 0.2 0.4 0.6 0.8 1.0 1.2
+> AUC source /AUC target
+> Color = dataset median Median (all datasets) 0.05-0.95 quantile (all datasets)
+
+(b) Cross-dataset Evaluation Figure 6: Evaluations on perturbed datasets (OOD) (6a) and cross-dataset generalization (evaluated on 3, 11, and 20 layers substituted) (6b) confirm that the compressed model retains its ICL capabilities beyond the training distribution. We show results for regression in Figure 19 
+
+scratch for an IWL approach, whereas any ICL model should handle them gracefully. We report the absolute difference to unperturbed performance in Figure 6a (Figure 19a for regression), showing that performance remains stable under perturbations. The smaller gap at higher compression can be attributed to overall worse performance, as seen already in Figure 5b (Figure 17b for regression). 
+
+Generalization across Datasets. We apply the configuration found by TACTICL on one dataset and evaluate it on a different dataset, comparing it to the performance of a compression configuration searched directly on that target dataset. Negative transfer in this cross-dataset setting confirms that TACTICL specializes the model for the source task. We observe negative cross-dataset transfer in Figure 6b (Figure 19b for regression) for most compressed models, indicating that TACTICL indeed adapts the model to a task by pruning away layers not needed for inference on the target task and by mitigating the resulting performance drop via the learned adapter. 
+
+4.4 Do We Need Fine-tuning? Aligning Layers For Full Recovery 
+
+To recover performance lost during pruning, we evaluate the effect of fine-tuning the compressed model end-to-end. Crucially, we freeze all weights except the adapter parameters. This is a deliberate design choice: we are interested in encoding task-specific information into the adapters rather than modifying the model’s in-context inference circuitry. To prevent overfitting and maintain generalization, we fine-tune on a mixture of pretraining and in-domain data (Béthune et al., 2025) (see Appendix H for more details and an ablation on the data mixture). We plot performance at different compression levels in Figure 7 and 10 and observe a general trend: fine-tuning improves performance and can potentially recover full model performance. This effect is more pronounced at lower compression rates, where we even observe improved performance for some datasets. 
+
+4.5 Does TACTICL Speed Up Prediction? 
+
+Finally, we verify that layer substitution speeds up inference, timing predictions directly on the held-out test set using the models selected by our greedy search at three compression budgets Substituted Fine-tuned & Substituted 0.90 0.92 0.94 0.96 0.98 1.00 1.02   
+
+> AUC/AUC full ↑
+> Compression depth: 0.25
+> Substituted Fine-tuned & Substituted 0.95 1.00 1.05 1.10
+> Compression depth: 0.5
+> Substituted Fine-tuned & Substituted 0.7 0.8 0.9 1.0 1.1
+> Compression depth: 0.85
+
+Figure 7: Change compared to the full model in AUC after fine-tuning the adapter weights at three compression levels. 91.0 1.5 2.0 2.5 3.0 3.5 4.0 4.5  
+
+> tfull /t
+> 0.7 0.8 0.9 1.0
+> AUC / AUC full
+> Full model Compression depth: 0.25 Compression depth: 0.50 Compression depth: 0.85
+
+(a) Classification 1.0 1.5 2.0 2.5 3.0 3.5 4.0   
+
+> tfull /t
+> 12 × 10 0
+> 3 × 10 0
+> 4 × 10 0
+> 6 × 10 0
+> RMSE / RMSE full
+> Full model Compression depth: 0.25 Compression depth: 0.50 Compression depth: 0.85
+
+(b) Regression Figure 8: Ratios of TACTICL speed-up vs task performance across three compression ratios on all evaluated datasets. 
+
+(25%, 50%, 85% of transformer blocks substituted with a lightweight MLP). Figure 8 shows that speed-ups are substantial but sub-linear: for classification, inference is 1 .25 ×, 1 .63 ×, and 2 .83 ×
+
+faster at the three budgets, with essentially no AUC cost at 25–50% (median ratio ≥ 0.995) and only a 4% drop at 85%. Regression shows similar speed-ups (1 .25 ×, 1 .61 ×, 2 .66 ×) but degrades more sharply, with RMSE increasing by roughly 3%, 16%, and 61%—indicating that classification tolerates substituted representations far better than regression, so compression budgets should be applied more conservatively for regression tasks. We report inference costs for larger synthetic datasets in (Figure 15), showing that speed-ups may reach 1 .4×, 2 .0×, and 5 .4× at the three budgets. 
+
+5 Conclusion 
+
+We present TACTICL, a framework for simultaneously pruning and adapting tabular foundation models to downstream tasks. TACTICL efficiently searches over layer configurations to identify which layers to retain or drop. Applied to TabPFNv2.5, our method achieves up to 5 .4× inference speedup, with an average of 2 .78 ×, while maintaining competitive performance on our benchmark tasks. This opens a broader discussion on the trade-off between in-context and in-weights learning in tabular foundation models. Notably, we find that layer-importance metrics commonly used in the literature fail to identify good compression configurations. Furthermore, we found that no single pruning configuration is universally optimal, as the layers that matter most vary considerably from dataset to dataset. We further show that fine-tuning at low compression rates not only recovers performance lost to compression but can surpass that of the original, unpruned model. This suggests that TACTICL not only reduces inference costs, but also serves as an efficient mechanism for domain adaptation. We consider several directions promising for future work: (1) hyperparameter optimization for the fine-tuning stage, (2) identifying additional suitable performance proxies beyond the cheap metrics that fall short here, and (3) natively building dataset-aware layer-dropping support into the model itself. 
+
+Limitations. The current framework does not yet provide a principled criterion for determining the tradeoff between compression level and performance. Instead, a user is provided with a substitution path and can decide which compressed model to finetune. Moreover, our empirical evaluation is limited to tasks within the pre-training constraints of TabPFNv2.5. Here, we focus on establishing the feasibility and necessity of task-aware compression, and defer a larger-scale evaluation across additional tabular foundation models, larger input regimes, and the full TabArena benchmark and leaderboard to future work. 
+
+Acknowledgements. This research has been funded by the Federal Ministry of Research, Technology and Space of Germany and the state of North Rhine-Westphalia as part of the Lamarr Institute for Machine Learning and Artificial Intelligence. 
+
+10 References 
+
+Balef, A. R., Koshil, M., and Eggensperger, K. (2025). Towards understanding layer contributions in tabular in-context learning models. In EurIPS 2025 Workshop: AI for Tabular Data .Balef, A. R., Koshil, M., and Eggensperger, K. (2026). Is one layer enough? understanding inference dynamics in tabular foundation models. In ICML 2026 .Béthune, L., Grangier, D., Busbridge, D., Gualdoni, E., Cuturi, M., and Ablin, P. (2025). Scaling laws for forgetting during finetuning with pretraining data injection. In ICML 2025 .Cannistraci, I., Antonelli, S., Palumbo, E., Sutter, T. M., Rodolà, E., Rieck, B., and Vogt, J. E. (2026). TOAST: Transformer optimization using adaptive and simple transformations. Transactions on Machine Learning Research .Chen, X., Hu, Y., Zhang, J., Wang, Y., Li, C., and Chen, H. (2025). Streamlining redundant layers to compress large language models. In ICLR 2025 .Elhage, N., Nanda, N., Olsson, C., Henighan, T., Joseph, N., Mann, B., Askell, A., Bai, Y., Chen, A., Conerly, T., DasSarma, N., Drain, D., Ganguli, D., Hatfield-Dodds, Z., Hernandez, D., Jones, A., Kernion, J., Lovitt, L., Ndousse, K., Amodei, D., Brown, T., Clark, J., Kaplan, J., McCandlish, S., and Olah, C. (2021). A mathematical framework for transformer circuits. Transformer Circuits Thread .Erickson, N., Purucker, L., Tschalzev, A., Holzmüller, D., Desai, P. M., Salinas, D., and Hutter, F. (2026). Tabarena: A living benchmark for machine learning on tabular data. In NeurIPS 2025 Datasets and Benchmarks Track .Gangwani, I. and Bansal, A. (2025). Light-weight benchmarks reveal the hidden hardware cost of zero-shot tabular foundation models. arXiv preprint arXiv:2512.00888 .Garg, A., Ali, M., Hollmann, N., Purucker, L., Müller, S., and Hutter, F. (2025). Real-tabpfn: Improving tabular foundation models via continued pre-training with real-world data. In 1st ICML Workshop on Foundation Models for Structured Data .Grinsztajn, L., Flöge, K., Key, O., Birkel, F., Jund, P., Roof, B., Manium, M., Hoo, S. B., Bühler, M., Garg, A., et al. (2026). Tabpfn-3: Technical report. arXiv preprint arXiv:2605.13986 .Grinsztajn, L., Flöge, K., Key, O., Birkel, F., Jund, P., Roof, B., Jäger, B., Safaric, D., Alessi, S., Hayler, A., Manium, M., Yu, R., Jablonski, F., Hoo, S. B., Garg, A., Robertson, J., Bühler, M., Moroshan, V., Purucker, L., Cornu, C., Wehrhahn, L. C., Bonetto, A., Schölkopf, B., Gambhir, S., Hollmann, N., and Hutter, F. (2025). Tabpfn-2.5: Advancing the state of the art in tabular foundation models. 
+
+arXiv preprint arXiv:2511.08667 .Gromov, A., Tirumala, K., Shapourian, H., Glorioso, P., and Roberts, D. (2025). The unreasonable ineffectiveness of the deeper layers. In ICLR 2025 .Guo, D., Rush, A., and Kim, Y. (2021). Parameter-efficient transfer learning with diff pruning. In 
+
+ACL-IJCNLP 2021 .Hollmann, N., Müller, S., Eggensperger, K., and Hutter, F. (2023). Tabpfn: A transformer that solves small tabular classification problems in a second. In ICLR 2023 .Hollmann, N., Müller, S., Purucker, L., Krishnakumar, A., Körfer, M., Hoo, S. B., Schirrmeister, R. T., and Hutter, F. (2025). Accurate predictions on small data with a tabular foundation model. Nature ,637(8045):319–326. 
+
+> 11
+
+Houlsby, N., Giurgiu, A., Jastrzebski, S., Morrone, B., De Laroussilhe, Q., Gesmundo, A., Attariyan, M., and Gelly, S. (2019). Parameter-efficient transfer learning for NLP. In ICML 2019 .Kolberg, C., Kreuer, J., Huurdeman, J., Ouaari, S., Eggensperger, K., and Pfeifer, N. (2026). Tabpfn-wide: Continued pre-training for extreme feature counts. arXiv preprint arXiv:2510.06162v2 .Küken, J., Purucker, L., and Hutter, F. (2025). Early stopping tabular in-context learning. In 1st ICML Workshop on Foundation Models for Structured Data .Lad, V., Lee, J. H., Gurnee, W., and Tegmark, M. (2025). Remarkable robustness of LLMs: Stages of inference? In NeurIPS 2025 .Li, Y., Yang, S., Tan, S., Mishra, M., Panda, R., Zhou, J., and Kim, Y. (2026). Distilling to hybrid attention models via KL-guided layer selection. In ICLR 2026 .Liu, S.-Y., Cai, H.-R., Zhou, Q.-L., Yin, H.-H., Zhou, T., Jiang, J.-P., and Ye, H.-J. (2025). Talent: A tabular analytics and learning toolbox. Journal of Machine Learning Research , 26(226). Liu, S.-Y. and Ye, H.-J. (2026). Tabswift: An efficient tabular foundation model with row-wise attention. In ICML 2026 .Men, X., Xu, M., Zhang, Q., Yuan, Q., Wang, B., Lin, H., Lu, Y., Han, X., and Chen, W. (2025). ShortGPT: Layers in large language models are more redundant than you expect. In ACL 2025 .Muralidharan, S., Turuvekere Sreenivas, S., Joshi, R., Chochowski, M., Patwary, M., Shoeybi, M., Catanzaro, B., Kautz, J., and Molchanov, P. (2024). Compact language models via pruning and knowledge distillation. In NeurIPS 2024 .Nguyen, A. and Nallamala, G. R. (2025). Differential learning kinetics govern the transition from memorization to generalization during in-context learning. In ICLR 2025 .Qu, J., Holzmüller, D., Varoquaux, G., and Le Morvan, M. (2026). TabICLv2: A better, faster, scalable, and open tabular foundation model. In ICML 2026 .Rubachev, I., Kotelnikov, A., Kartashev, N., and Babenko, A. (2025). On finetuning tabular foundation models. arXiv preprint arXiv:2506.08982 .Sajjad, H., Dalvi, F., Durrani, N., and Nakov, P. (2023). On the effect of dropping layers of pre-trained transformer models. Computer Speech & Language , 77. Shopkhoev, D., Ali, A., Zhussip, M., Malykh, V., Lefkimmiatis, S., Komodakis, N., and Zagoruyko, S. (2025). Replaceme: Network simplification via depth pruning and transformer block linearization. In NeurIPS 2025 .Singh, A., Chan, S., Moskovitz, T., Grant, E., Saxe, A., and Hill, F. (2023). The transient nature of emergent in-context learning in transformers. In NeurIPS 2023 .Tanna, A., Seth, P., Bouadi, M., and Sankarapu, V. K. (2026). Exploring fine-tuning for tabular foundation models. In ACM Web Conference 2026 .
+
+> 12
+
+Submission Checklist 
+
+1. For all authors. . . (a) Do the main claims made in the abstract and introduction accurately reflect the paper’s contributions and scope? [Yes] (b) Did you describe the limitations of your work? [Yes] They are described in Section 5. (c) Did you discuss any potential negative societal impacts of your work? [No] Our work presents foundational research on compressing neural networks and we do not expect any negative societal impact that goes beyond a standard machine learning research paper and requires a dedicated discussion. (d) Did you read the ethics review guidelines and ensure that your paper conforms to them? (see https://2022.automl.cc/ethics-accessibility/ ) [Yes] 2. If you ran experiments. . . (a) Did you use the same evaluation protocol for all methods being compared (e.g., same benchmarks, data (sub)sets, available resources, etc.)? [Yes] (b) Did you specify all the necessary details of your evaluation (e.g., data splits, pre-processing, search spaces, hyperparameter tuning details and results, etc.)? [Yes] (c) Did you repeat your experiments (e.g., across multiple random seeds or splits) to account for the impact of randomness in your methods or data? [Yes] We used 1 fold for Experiment 4.1 and 3 folds for other experiments on 47 different datasets. (d) Did you report the uncertainty of your results (e.g., the standard error across random seeds or splits)? [Yes] Over datasets and folds. (e) Did you report the statistical significance of your results? [No] We perform exploratory research and not confirmatory research. (f) Did you use enough repetitions, datasets, and/or benchmarks to support your claims? [Yes] (g) Did you compare performance over time and describe how you selected the maximum runtime? [Yes] We ran our method until convergence (i.e., removing/replacing all layers) and analyzed intermediate and final results. (h) Did you include the total amount of compute and the type of resources used (e.g., type of gpus, internal cluster, or cloud provider)? [Yes] See Section 4. (i) Did you run ablation studies to assess the impact of different components of your approach? [Yes] 3. With respect to the code used to obtain your results. . . (a) Did you include the code, data, and instructions needed to reproduce the main experimental results, including all dependencies (e.g., requirements.txt with explicit versions), random seeds, an instructive README with installation instructions, and execution commands (either in the supplemental material or as a url)? [Yes] We provide code at https://github.com/ Hebog/tfm_compression .(b) Did you include a minimal example to replicate results on a small subset of the experiments or on toy data? [Yes] (c) Did you ensure sufficient code quality and documentation so that someone else can execute and understand your code? [Yes] (d) Did you include the raw results of running your experiments with the given code, data, and instructions? [No] 
+
+> 13
+
+(e) Did you include the code, additional data, and instructions needed to generate the figures and tables in your paper based on the raw results? [No] We did not upload the pretraining data for finetuning (Section 4.4 and expect that running the script will lead to slightly different results. We will provide the data when the code is released. 4. If you used existing assets (e.g., code, data, models). . . (a) Did you cite the creators of used assets? [Yes] (b) Did you discuss whether and how consent was obtained from people whose data you’re using/curating if the license requires it? [N/A] (c) Did you discuss whether the data you are using/curating contains personally identifiable information or offensive content? [N/A] 5. If you created/released new assets (e.g., code, data, models). . . (a) Did you mention the license of the new assets (e.g., as part of your code submission)? [No] We will release the code under an OSI-approved license upon acceptance. (b) Did you include the new assets either in the supplemental material or as a url (to, e.g., GitHub or Hugging Face)? [Yes] We provide new assets at https://github.com/Hebog/ tfm_compression .6. If you used crowdsourcing or conducted research with human subjects. . . (a) Did you include the full text of instructions given to participants and screenshots, if appli-cable? [N/A] (b) Did you describe any potential participant risks, with links to institutional review board (irb) approvals, if applicable? [N/A] (c) Did you include the estimated hourly wage paid to participants and the total amount spent on participant compensation? [N/A] 7. If you included theoretical results. . . (a) Did you state the full set of assumptions of all theoretical results? [N/A] (b) Did you include complete proofs of all theoretical results? [N/A] 
+
+> 14
+
+A Metrics 
+
+AUC. For classification tasks we report the area under the receiver operating characteristic curve (AUC). For a binary task with predicted scores ˆ 𝑝 𝑖 and true labels 𝑦 𝑖 ∈ { 0, 1}, the ROC curve traces the true positive rate TPR (𝜏 ) = |{ 𝑖 : 𝑦 𝑖 = 1, ˆ𝑝 𝑖 ≥ 𝜏 }| |{ 𝑖 : 𝑦 𝑖 = 1}| 
+
+against the false positive rate FPR (𝜏 ) = |{ 𝑖 : 𝑦 𝑖 = 0, ˆ𝑝 𝑖 ≥ 𝜏 }| |{ 𝑖 : 𝑦 𝑖 = 0}| 
+
+as the decision threshold 𝜏 is swept over [0, 1], and AUC is the area under this curve: AUC =
+
+∫ 10
+
+TPR  FPR −1 (𝑢 ) 𝑑𝑢. 
+
+Equivalently, AUC is the probability that a randomly chosen positive example is ranked above a randomly chosen negative example: AUC = Pr   ˆ𝑝 𝑖 + > ˆ𝑝 𝑖 −
+
+, 𝑦 𝑖 + = 1, 𝑦 𝑖 − = 0,
+
+with ties counted as one-half. For multiclass tasks, we compute the one-vs-one (OvO) pairwise average of this quantity over all class pairs. 
+
+RMSE. For regression tasks we report the root mean squared error between predictions ˆ 𝑦 𝑖 and targets 𝑦 𝑖 over 𝑛 evaluation examples: RMSE =
+
+vt 1
+
+𝑛 
+
+𝑛 ∑︁ 
+
+𝑖 =1
+
+  ˆ𝑦 𝑖 − 𝑦 𝑖 
+
+2.
+
+B Shapley Values of Layers 
+
+For each task type, we treat the 𝑁 transformer layers as players in a cooperative game, where a coalition is any subset of layers dropped from the compressed/pruned model, and the characteristic function 𝑣 (𝑆 ) is the mean value of the task’s native metric (AUC for classification, negative RMSE for regression) for the configurations whose layer-drop mask matches 𝑆 . Since the underlying 0 1 2 3 4 5 6 7 8 9 10 11            
+
+> Transformer layer index
+> 0.20
+> 0.15
+> 0.10
+> 0.05
+> 0.00
+> Shapley value
+> Deletion
+> 012345678910 11
+> Transformer layer index
+> 0.25
+> 0.20
+> 0.15
+> 0.10
+> 0.05
+> 0.00 0.05
+> Shapley value
+> Substitution
+
+(a) Classification 0 1 2 3 4 5 6 7 8 9 10 11             
+
+> Transformer layer index
+> 3.0
+> 2.5
+> 2.0
+> 1.5
+> 1.0
+> 0.5
+> 0.0 0.5
+> Shapley value
+> Deletion
+> 012345678910 11
+> Transformer layer index
+> 3.0
+> 2.5
+> 2.0
+> 1.5
+> 1.0
+> 0.5
+> 0.0
+> Shapley value
+> Substitution
+
+(b) Regression Figure 9: Shapley across layer deletions/substitution based on the exhaustive evaluation of the TabPFNv2 over the 47 TabArena datasets. The lower the value, the more harmful the change applied to the layer. Individual point – dataset; bar – mean over all datasets. As can be seen from the individual points, the variance over datasets is high, meaning no universal order exists for deleting/substituting the layers. 15 sweep exhaustively evaluates all 2 𝑁 possible layer-inclusion masks with one configuration per mask, this value function can be read off directly by indexing runs by their binary layer mask. The exact Shapley value for layer 𝑖 is then obtained via the standard closed-form expression, 
+
+𝜙 𝑖 = Í𝑆 ⊆𝑁 \𝑖 |𝑆 |!(𝑁 − | 𝑆 | − 1)! 
+
+> 𝑁 !
+
+ 𝑣 (𝑆 ∪ 𝑖 ) − 𝑣 (𝑆 ), summing the layer’s marginal contribution over every possible coalition of the other layers, weighted by the combinatorial term that averages uniformly over all orderings in which the layer could be added. This is computed per dataset-fold and then averaged across datasets to obtain the per-layer Shapley attribution reported for each metric, giving a fair, order-independent measure of each layer’s contribution to overall model quality. Shapley values of TabPFNv2 obtained on the results of exhaustive evaluation from Section 4.1 are presented in Figure 9. These values could serve as a compression roadmap if they aligned across datasets: less-negative values identify layers that are safe or even beneficial to remove. Under substitution, layers 0-2 (0-3 for the regression) seem to be safe to compress, while layer 11 should be avoided. Under deletion, layer 0 carries a strongly negative Shapley value and is the dominant constraint—excluding it is the single most important rule for staying within the positive-performance region, which is consistent with the findings of Balef et al. (2025). 
+
+C Datasets 
+
+C.1 Evaluation Datasets 
+
+For the exhaustive and online search evaluations, we use datasets drawn from the TabArena benchmark suite (OpenML study/suite 457), a curated collection of tabular classification and regression tasks. From TabArena’s datasets, we retain only those that fit within TabPFN v2.5’s native pretraining limits (at most 50,000 training samples and 2,000 features, checked against the actual per-fold training-split size) without requiring the ignore_pretraining_limits override, yielding a fixed suite of 47 datasets — 34 classification and 13 regression — used consistently across both search procedures. The evaluations with TabPFNv2 done on all 47 datasets on a single fold (fold 0) due to time constraints (larger dataset taking more than a day to evaluate). The evaluations with TabPFNv2.5 use the same 47 datasets across 3 folds (folds 0–2) to assess robustness of the discovered layer-drop paths to the train/test split. Both use the full available train and test splits (no subsampling), a fixed data seed and model seed, and no random feature perturbation, for direct comparability between the two search procedures and with the downstream cross-dataset, perturbation, and inference-timing evaluations that build on their outputs. 
+
+C.2 Perturbations 
+
+To test whether the compressed models discovered by the greedy online search remain robust under distribution shift, we re-evaluate the previously selected layer-drop paths (one per dataset/fold ) on perturbed versions of the test data. Three perturbations are applied, deterministically seeded for reproducibility: • Feature order permutation : the columns of 𝑋 are randomly permuted (a single random permu-tation drawn per experiment and applied consistently to both the train and test splits), testing sensitivity to feature ordering. • Random features (+20%) : uninformative features drawn i.i.d. from Uniform (0, 1) are appended to 𝑋 , in a number equal to 20% of the original feature count, testing robustness to the presence of irrelevant/noisy features. • Label flip (classification only): class labels are remapped through a fixed-point-free permutation (a derangement) of the label set — for binary tasks this simply swaps the two classes — applied identically to train and test labels, testing whether the model’s behavior is tied to the specific label semantics rather than to structure in 𝑋 .
+
+> 16
+
+Each selected path is evaluated once under each applicable perturbation (all three for classifica-tion tasks, the two feature-based perturbations for regression tasks), and the resulting test metric is compared against the same path’s performance on the original, unperturbed data to quantify robustness of the discovered compressed configurations. 
+
+C.3 Synthetic Prior Data Injection 
+
+To prevent the fine-tuned adapters from drifting away from the general-purpose behavior learned during TabPFN’s original pretraining, we periodically interleave ordinary downstream fine-tuning epochs with epochs trained on synthetic data sampled from TabPFN’s own pretraining prior, rather than the target dataset. Every 𝑁 epochs (a configurable cadence), the training batch is replaced with one or more precomputed synthetic "prior" batches instead of real data. Synthetic data is generated offline using TabICL’s (Qu et al., 2026) open-source structural-causal-model-based prior generator ( graph_scm ), the same class of generative process used to pretrain TabPFN models. Each precomputed batch contains 256 synthetic datasets with randomly varying properties: number of features (2–100), sequence length (up to 1024 rows), number of classes for classification (up to 10), and train/test split fraction (drawn between 10% and 90% of the sequence length). At injection time, each synthetic sample is passed through the compressed model’s preprocessing pipeline used for real data, preserving its own generator-assigned train/test split boundary, so that it is represented with the expected preprocessing. 
+
+D Additional Details on Adapter Training 
+
+To compensate for a dropped transformer layer, we train a small MLP adapter to reconstruct the frozen teacher’s hidden state after that layer from its hidden state before the layer, using the same input/output dimensionality as the model’s hidden size — one adapter is trained per dropped layer. Each adapter is a lightweight two-layer MLP (hidden width 128) with GELU activations and a skip connection, trained independently and from scratch. Training minimizes mean squared error between the adapter’s output and the dropped layer’s true output, using AdamW (lr = 4e-3, weight decay 1 .5×10 −5) with a linear warmup followed by a cosine-annealing-with-warm-restarts schedule, for up to 2000 epochs with early stopping (patience of 150 epochs) on a held-out validation split of the cached hidden states. All adapters are pretrained and cached offline prior to the configuration search, and the training data is described in Figure 1, decoupling adapter training from the pruning search and subsequent end-to-end fine-tuning stages. 
+
+E Adapter Architecture Search 
+
+We evaluated a set of 10 adapter architectures varying in model size and activation function on a held-out set of five TALENT (Liu et al., 2025) classification datasets ( golf_play_dataset_extended , Bas-ketball_c , Customer_Personality_Analysis , steel_plates_faults , and dry_bean_dataset ) disjoint from both the main OpenML evaluation benchmark and the datasets used elsewhere in the pipeline. We report average AUC in Table 1 and use the best-performing architecture 𝐶 3_ 𝑤𝑖𝑑𝑒 (128 ) throughout the experiments in the main paper. 
+
+F Distillation baseline 
+
+As an additional point of comparison to our depth-pruning approach, we include a knowledge-distillation baseline that compresses TabPFN v2.5 by training a compact MLP student to reproduce the predictions of the full teacher model, rather than by removing internal layers. The distillation implementation is adapted from the open-source TabTune 3 library (Tanna et al., 2026), simplified and consolidated for our teacher-student evaluation pipeline. 
+
+> 3https://github.com/Lexsi-Labs/TabTune
+> 17 Table 1: Adapter design grid used in the architecture ablation, ranked by mean downstream AUC across the 5-dataset evaluation panel.
+
+Config Hidden width Depth Activation Skip Mean AUC 
+
+C3_wide128 (deployed) 128 2 GELU Yes 0.865 
+
+E0_MLP 256 4 ReLU No 0.822 D1_deep3 64 3 GELU Yes 0.813 C2_wide64 64 2 GELU Yes 0.810 C1_pure_linear 0 1 Identity Yes 0.786 B3_relu 32 2 ReLU Yes 0.738 A1_no_skip 32 2 SiLU No 0.714 D2_narrow_deep 32 3 GELU Yes 0.693 B2_identity 32 2 Identity Yes 0.663 B1_gelu 32 2 GELU Yes 0.629 baseline 32 2 SiLU Yes 0.575 For each dataset and fold, we first fit the full TabPFN v2.5 model (the teacher) on the training split and record its predictions on that data as soft targets. We follow the original protocol of Tanna et al. (2026). To account for varying teacher confidence across examples, we scale the distillation temperature per sample based on the entropy of the teacher’s prediction, softening targets more for uncertain examples, and reweight the training loss with a bell-shaped confidence weighting that emphasizes examples of intermediate confidence. Table 2 lists the hyperparameters used. 
+
+> Table 2: Hyperparameters used for the distillation baseline.
+
+Hyperparameter Value Base distillation temperature 𝑇 3.0 Adaptive temperature range [0.5𝑇 , 2𝑇 ]
+
+Adaptive temperature enabled Confidence weighting enabled KD/hard-label blend 𝛼 0.7 (KD term), 1 − 𝛼 (hard-label term) Student architecture residual MLP (hidden width 128, depth 2, GELU) Optimizer AdamW Learning rate 5 × 10 −4
+
+Weight decay 1 × 10 −4
+
+Batch size 256 Dropout 0.1 Max epochs 2000 Early stopping patience 30 epochs Teacher ensemble size ( 𝑛 estimators ) 1The student is trained with a combined objective that blends a distillation loss against the teacher’s soft targets with a standard supervised loss against the ground-truth labels ( 𝛼 = 0.7weight on the distillation term, 1 − 𝛼 on the hard-label term), allowing the student to benefit from the teacher’s learned decision boundary while remaining anchored to the true labels. After training, we evaluate both the teacher and the distilled student on held-out test splits, reporting AUC for classification tasks and RMSE for regression tasks, along with the resulting 
+
+> 18
+
+performance gap. This gap serves as the reference point against which we measure how well our layer-pruned models preserve teacher performance at comparable compression levels. 
+
+G Proxy metrics 
+
+Since the number of configurations is  𝐿 𝑛 
+
+, exhaustive search is generally intractable for large 𝐿 ,motivating the need for efficient proxies that estimate the performance of the healed model without explicit retraining. We consider several such proxies. The first is embedding similarity (Sajjad et al., 2023), in our case cosine similarity, between the input and output hidden states of a layer. High similarity suggests that the layer induces only a minor transformation and is therefore easier to approximate with a lightweight substitute. The second is direct performance of other TACTICL variants: the task performance of the model obtained by either removing or substituting a candidate set of layers 𝑐 , evaluated directly (AUC for classification, RMSE for regression). We use each variant as a proxy for the other: if direct deletion performance predicts substitution performance, or vice versa, a single search would suffice for both deletion and substitution decisions, rather than requiring a separate search for each. A third candidate metric is the approximation error of a fixed-capacity model, such as an MLP, trained to replicate the layer’s input–output mapping, using MSE loss. Layers that are harder to approximate accurately are likely more critical to preserve, making this error a natural indicator of which layers are most beneficial to retain. Additionally, following Balef et al. (2025) we calculate the sum of residual contributions as a proxy. For a candidate set of layers to drop D = {𝑖 1, . . . , 𝑖 𝑛 }, we measure how much each dropped layer perturbs the residual stream relative to the running hidden-state magnitude, 
+
+𝜌 𝑖 = ∥ℎ𝑖 − ℎ𝑖 −1 ∥∥ℎ𝑖 ∥ , (3) computed once from the original, unpruned model’s cached hidden states ℎ0, . . . , ℎ 𝐿 , and aggregate as R(D) = Í𝑖 ∈D 𝜌 𝑖 . Layers that leave the residual stream nearly unchanged ( 𝜌 𝑖 ≈ 0) contribute little new information at that depth, in line with prior observations that deeper transformer layers apply near-redundant transformations to the residual stream (Gromov et al., 2025; Men et al., 2025). A low R(D) therefore serves as a cheap proxy for "safe to remove". Finally, we explore the stability metric, introduced by Chen et al. (2025). Unlike other metrics, it is not cheap because it requires inference with the pruned model. Originally, it was introduced for generative multiple-choice QA, where the model yields only a perplexity score per answer choice rather than a full probability distribution. There, a sample is deemed stable if the model’s correctness relative to ground truth (right/wrong) is unchanged after pruning, weighted by the original model’s confidence. This discards substantial information: correctness-consistency alone cannot register how the underlying distribution moved even when the correct choice is preserved, meaning a pruned model that keeps the correct top choice while collapsing toward a near-uniform distribution over the remaining options registers as perfectly stable, despite being brittle to minor input perturbations, since only the original model’s confidence enters the weighting. We adapt the metric to our setting, where we have access to the model’s full predictive dis-tribution rather than a per-choice perplexity score, allowing us to measure how much the entire distribution shifts, not just whether correctness is preserved. Concretely, for each sample 𝑥 we compute 
+
+𝑠 (𝑥 ) = exp  −𝐷 KL (𝑝 orig ∥ 𝑝 pruned ) · 𝑚 orig , (4) where 𝑚 orig = 𝑝 (1) 
+
+> orig
+
+− 𝑝 (2) 
+
+> orig
+
+is the original model’s top-2 confidence margin, and aggregate as 
+
+SKL =
+
+Í𝑥 𝑠 (𝑥 )
+
+Í𝑥 𝑚 orig (𝑥 ) . (5) 
+
+> 19
+
+For classification, 𝑝 orig and 𝑝 pruned are the models’ predicted class-probability vectors. For the regression PFN, we exploit the fact that TabPFN represents a continuous target not as a point estimate but as a categorical distribution over a fixed set of discretized bins covering the target range (with two unbounded tail bins for out-of-range support). We extract this per-bucket distribution from the model’s logits and apply Equation (1)–(2) unchanged, treating the bins as classes: 𝑝 orig 
+
+and 𝑝 pruned are the softmax-normalized bin probabilities, and 𝑚 orig is the margin between the top two bins. This lets us apply the same distributional stability measure to regression without any change to the underlying formula — only the semantics of what constitutes a "class" changes, from label to target-range bucket. 
+
+H Additional Details on Fine-Tuning 
+
+After adapters are pretrained offline to reconstruct the dropped layers’ outputs (Section 3), we further refine them end-to-end on the actual downstream task, for each of the depth fractions 
+
+{0.25 , 0.5, 0.85 } along the selected compression path. All backbone TabPFN parameters remain frozen; only the layer-substitution adapter MLPs are updated. Fine-tuning optimizes the model’s real downstream objective rather than the reconstruction proxy: cross-entropy on TabPFN’s output logits for classification, or the negative log-likelihood under TabPFN’s own bar-distribution (histogram) output head for regression. We use TabPFN’s native meta-learning-style batched training interface: at each epoch, the train-ing data is freshly re-split into an in-context "training" and "query" portion (a new random split each epoch, with a fixed 10% validation holdout reserved separately), preprocessed through the model’s standard pipeline, and used for a single differentiable forward/backward pass through the frozen backbone into the adapters, with the model restricted to a single estimator ( 𝑛 estimators = 1) during training (a requirement for gradient-based adapter injection). Table 3 lists the hyperparameters used. 
+
+> Table 3: Hyperparameters used for adapter fine-tuning.
+
+Hyperparameter Value Optimizer AdamW Learning rate 1 × 10 −5
+
+Weight decay 1 × 10 −2
+
+LR schedule linear warmup → cosine annealing Warmup epochs min (50 , epochs /20 )
+
+Max epochs 300 Early stopping patience 150 epochs Validation split ratio 0.1 Checkpoint/early-stop metric AUC (classification) / RMSE (regression) Prior injection cadence every 10 epochs Injected batches per prior epoch 2Optimization uses AdamW with a linear warmup followed by a cosine-annealing learning-rate schedule, and early stopping on the held-out validation split (patience-based, tracking AUC for classification or RMSE for regression), restoring the best adapter checkpoint at the end of training. Every 10 epochs, the training batch is replaced with 2 precomputed synthetic prior batches instead of real data (Section C.3), interleaving downstream fine-tuning with periodic re-exposure to TabPFN’s pretraining-like distribution; we also run a matched no-injection control (identical hyperparameters, prior injection disabled) as an ablation (Fig. 11, Fig. 12), but results are not conclusive. We have 
+
+> 20
+
+realized that an experiment that assesses the ICL performance of the fine-tuned model might shine more light on the benefits of the prior injection, and leave this to the future work. Substituted Fine-tuned & Substituted 1.000 1.025 1.050 1.075 1.100 1.125 1.150 
+
+> RMSE/RMSE full ↓
+
+Compression depth: 0.25 
+
+Substituted Fine-tuned & Substituted 1.0 1.2 1.4 1.6 
+
+Compression depth: 0.5 
+
+Substituted Fine-tuned & Substituted 1.0 1.5 2.0 2.5 3.0 3.5 
+
+Compression depth: 0.85 
+
+Figure 10: Change compared to the full model in AUC after fine-tuning the adapter weights at three compression levels (25%, 50%, 85% of layers replaced). No Prior Injection With Prior Injection 0.90 0.92 0.94 0.96 0.98 1.00 1.02 
+
+> AUC/AUC full ↑
+
+Compression depth: 0.25 
+
+No Prior Injection With Prior Injection 0.900 0.925 0.950 0.975 1.000 1.025 
+
+Compression depth: 0.5 
+
+No Prior Injection With Prior Injection 0.8 0.9 1.0 1.1 
+
+Compression depth: 0.85 
+
+Figure 11: Change compared to the full model in AUC after fine-tuning the adapter weights at three compression levels (25%, 50%, 85% of layers replaced). No Prior Injection With Prior Injection 1.000 1.025 1.050 1.075 1.100 1.125 
+
+> RMSE/RMSE full ↓
+
+Compression depth: 0.25  
+
+> No Prior Injection With Prior Injection 1.0 1.1 1.2 1.3 1.4
+
+Compression depth: 0.5  
+
+> No Prior Injection With Prior Injection 1.0 1.2 1.4 1.6 1.8
+
+Compression depth: 0.85 
+
+Figure 12: Change compared to the full model in AUC after fine-tuning the adapter weights at three compression levels (25%, 50%, 85% of layers replaced). 21 I Additional plots 1.00 0.75 0.50 0.25 0.00 0.25 0.50 0.75 1.00 
+
+Pearson r
+
+0510 15 20 25 
+
+> Density
+
+Predictor 
+
+Avg. cosine similarity Avg. CKA similarity Sum of MLP final losses Sum of residual contributions  
+
+> rel
+
+RMSE deletion (val.)  
+
+> rel
+
+RMSE substitution (val.) 
+
+(a) Deletion 1.00 0.75 0.50 0.25 0.00 0.25 0.50 0.75 1.00 Pearson r
+
+0
+
+5
+
+10 
+
+15 
+
+20 
+
+25 
+
+30 Density 
+
+n layers 
+
+n = 0 
+
+n = 6 
+
+n = 12 (b) Substitution Figure 13: Correlation between proxy scores and performance change for deleting (left) and substi-tuting (right) 𝑛 layers for regression. None of the proxies reliably predict the performance impact. 2 4 6 8 10 12 
+
+Layers 
+
+1.0 1.1 1.2 1.3 1.4 
+
+> RMSE found /RMSE best
+
+Median 0.95 quantile 0.05 quantile Median (RMSE best /RMSE full )
+
+(a) Deletion 2 4 6 8 10 12 
+
+Layers 
+
+1.0 1.5 2.0 2.5  
+
+> RMSE best /RMSE full
+
+(b) Substitution Figure 14: Greedy search on TabPFN v2: ratio of RMSE found by the greedy configuration over the oracle RMSE on the test set and overall performance (blue). 22 0 2000 4000 6000 8000 10000 
+
+samples 
+
+12345
+
+> tfull /tdeleted
+
+0 2000 4000 6000 8000 10000 
+
+samples 
+
+12345 
+
+> tfull /tsubstituted
+> ratio=0.25 feat=4 ratio=0.50 feat=36 ratio=0.85 feat=68 feat=100
+
+(a) Per sample size 0 20 40 60 80 100 
+
+features 
+
+12345
+
+> tfull /tdeleted
+
+0 20 40 60 80 100 
+
+features 
+
+12345  
+
+> tfull /tsubstituted
+> ratio=0.25 sampl=128 ratio=0.50 sampl=3418 ratio=0.85 sampl=6709 sampl=10000
+
+(b) Per feature size Figure 15: Speedup of TACTICL for 0 .25, 0 .5 and 0 .85 compression ratios measured on the random synthetic datasets (classification task) of varying sample and feature sizes. The top row displays compression with deletion, bottom – substitution. As evident from the plots, the overhead for substitution is minimal compared to deletion. The larger the dataset, the bigger the speedup – up to 5 .6× for deletion and 5 .4× for substitution. 0 5 10 15 20 25 
+
+Layers 
+
+> 0.4 0.6 0.8 1.0 1.2
+> AUC / AUC full
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(a) Drop-from-Last 0 5 10 15 20 25 
+
+Layers  
+
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(b) AUC-guided 0 5 10 15 20 25 
+
+Layers  
+
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(c) Stability-guided Figure 16: TACTICL deletion applied to TabPFNv2.5. We report the ratio in performance drop in AUC aggregated across 34 datasets for dropping layers across 3 strategies. 0 3 6 9 12 15 18 
+
+Layers 
+
+> 11.2 1.5 234567810 12
+> RMSE / RMSE full
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(a) Sub-from-Last 0 3 6 9 12 15 18 
+
+Layers  
+
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(b) RMSE-guided 0 3 6 9 12 15 18 
+
+Layers  
+
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(c) Stability-guided Figure 17: TACTICL substitution applied to TabPFNv2.5. We report the ratio in performance drop in RMSE aggregated across 13 datasets for substituting layers across 3 strategies. 23 0 3 6 9 12 15 18 
+
+Layers 
+
+11.2 1.5 234567810 12 
+
+> RMSE / RMSE full
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(a) Drop-from-Last 0 3 6 9 12 15 18 
+
+Layers  
+
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(b) RMSE-guided 0 3 6 9 12 15 18 
+
+Layers  
+
+> TACTICL q05-q95 TACTICL q50 Distilled q50 Distilled q05/q95
+
+(c) Stability-guided Figure 18: TACTICL deletion applied to TabPFNv2.5. We report the relative difference in RMSE aggregated across 13 datasets for dropping layers across 3 strategies. 2.5 5.0 7.5 10.0 12.5 15.0 17.5 
+
+Layers 
+
+0.50 0.75 1.00 1.25 1.50 1.75 2.00 
+
+> RMSE perturbed /RMSE unperturbed
+
+Feature order permutation Random features (20%) Shaded area = 0.05-0.95 quantile 
+
+(a) Perturbations evaluation 0 2 4 6 8 10 12 14 
+
+Layers 
+
+1234
+
+> RMSE source /RMSE target
+
+Color = dataset median Median (all datasets) 0.05-0.95 quantile (all datasets) (b) Cross-dataset Evaluation Figure 19: Evaluations on perturbed datasets (OOD) (19a) and cross-dataset generalization (19b) con-firm that the compressed model retains its ICL capabilities beyond the training distribution. 24

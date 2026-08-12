@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-11</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-12</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-11 20:07:45 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-12 20:36:01 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精选5篇论文，聚焦符号回归与优化自动化前沿。</p>
-<p>最值得看：熵强化学习贝叶斯符号回归获满分，端到端优化研究自动化工具紧随其后。</p>
-<p>建议优先精读高分两篇，速读混合表格流匹配与语义聚类作为拓展。</p>
+<p>今日精读4篇论文，聚焦优化研究自动化与天文数据估算两大方向，速读覆盖逻辑归纳新方法。</p>
+<p>最值得关注的是9.0分两篇：领域专属优化研究自动化框架，以及用表格基础模型为S-PLUS类星体估算光度红移。</p>
+<p>建议普通读者优先了解自动化优化工具如何提升科研效率，并留意表格模型在天文观测中的落地潜力。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,9 +76,9 @@
     <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Bayesian Symbolic Regression with Entropic Reinforcement Learning">Bayesian Symbolic Regression with Entropic Reinforcement Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Domain-Specific Harness for End-to-End Automation of Optimization Research">A Domain-Specific Harness for End-to-End Automation of Optimization Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="SymbolicPhasor: Power System Phasor Estimation via Deep Symbolic Regression">SymbolicPhasor: Power System Phasor Estimation via Deep Symbolic Regression</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Domain-Specific Harness for End-to-End Automation of Optimization Research">A Domain-Specific Harness for End-to-End Automation of Optimization Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="Tabular foundation models for the estimation of probabilistic quasar photometric redshifts in S-PLUS">Tabular foundation models for the estimation of probabilistic quasar photometric redshifts in S-PLUS</span></li><li><span class="dpr-home-dashboard-paper-title" title="TACTICL: Task-Aware Compression of Tabular ICL Models">TACTICL: Task-Aware Compression of Tabular ICL Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>2</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="FUSE: Feature-Wise Unified Specialization with Cross-Column Exchange for Mixed-Type Tabular Flow Matching">FUSE: Feature-Wise Unified Specialization with Cross-Column Exchange for Mixed-Type Tabular Flow Matching</span></li><li><span class="dpr-home-dashboard-paper-title" title="GRACE: LLM-Grounded Semantic Metric Spaces for Scalable Mixed-Data Clustering">GRACE: LLM-Grounded Semantic Metric Spaces for Scalable Mixed-Data Clustering</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Hypothesis Frontier: Verifier Guided LLM and Symbolic Search for First-Order Induction">Hypothesis Frontier: Verifier Guided LLM and Symbolic Search for First-Order Induction</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
 </div>
 
