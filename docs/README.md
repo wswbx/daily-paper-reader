@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-12</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-13</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-12 20:36:01 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-13 21:22:32 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读4篇论文，聚焦优化研究自动化与天文数据估算两大方向，速读覆盖逻辑归纳新方法。</p>
-<p>最值得关注的是9.0分两篇：领域专属优化研究自动化框架，以及用表格基础模型为S-PLUS类星体估算光度红移。</p>
-<p>建议普通读者优先了解自动化优化工具如何提升科研效率，并留意表格模型在天文观测中的落地潜力。</p>
+<p>今日精选4篇论文，聚焦自动化优化与符号机器学习两大方向；最值得关注的是9分的领域专用自动化优化框架，以及8分的汽液平衡预测模型；建议优先精读这两篇，速读可快速了解表格数据预测与一阶归纳推理。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Domain-Specific Harness for End-to-End Automation of Optimization Research">A Domain-Specific Harness for End-to-End Automation of Optimization Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="Tabular foundation models for the estimation of probabilistic quasar photometric redshifts in S-PLUS">Tabular foundation models for the estimation of probabilistic quasar photometric redshifts in S-PLUS</span></li><li><span class="dpr-home-dashboard-paper-title" title="TACTICL: Task-Aware Compression of Tabular ICL Models">TACTICL: Task-Aware Compression of Tabular ICL Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Domain-Specific Harness for End-to-End Automation of Optimization Research">A Domain-Specific Harness for End-to-End Automation of Optimization Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="Symbolic Machine Learning for Vapor-Liquid Equilibrium Prediction in Cx-N2 Binary Mixtures">Symbolic Machine Learning for Vapor-Liquid Equilibrium Prediction in Cx-N2 Binary Mixtures</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Hypothesis Frontier: Verifier Guided LLM and Symbolic Search for First-Order Induction">Hypothesis Frontier: Verifier Guided LLM and Symbolic Search for First-Order Induction</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PATH: Next-Interval Prediction via Autoregressive Tree Hierarchy on Tabular Data">PATH: Next-Interval Prediction via Autoregressive Tree Hierarchy on Tabular Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="Hypothesis Frontier: Verifier Guided LLM and Symbolic Search for First-Order Induction">Hypothesis Frontier: Verifier Guided LLM and Symbolic Search for First-Order Induction</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 </div>
 
