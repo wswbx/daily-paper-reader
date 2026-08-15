@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-14</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-15</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 3 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-14 19:35:37 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-15 19:20:47 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读聚焦大规模表格推理与优化自动化，另速读KAN动态架构。最值得关注：TabPFN自适应原型选择在可扩展推理上达满分，优化研究自动化框架紧随其后。下一步可优先深入TabPFN的实际部署效果，兼顾KAN架构的潜力验证。</p>
+<p>今日精读两篇9分论文：优化研究自动化工具与ML理论智能体系统，另有1篇数值变换速读；核心看点是Agentic系统如何加速理论推导和实验全流程。建议优先关注前两篇的自动化方法论，对做研究效率提升很有参考价值。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Balanced Adaptive Prototype Selection for Scalable TabPFN Inference on Large-Scale Tabular Data">Balanced Adaptive Prototype Selection for Scalable TabPFN Inference on Large-Scale Tabular Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="A Domain-Specific Harness for End-to-End Automation of Optimization Research">A Domain-Specific Harness for End-to-End Automation of Optimization Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="VALG: An Agentic System for ML Theory Research">VALG: An Agentic System for ML Theory Research</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Domain-Specific Harness for End-to-End Automation of Optimization Research">A Domain-Specific Harness for End-to-End Automation of Optimization Research</span></li><li><span class="dpr-home-dashboard-paper-title" title="VALG: An Agentic System for ML Theory Research">VALG: An Agentic System for ML Theory Research</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>2</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +87,9 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="HYDRA: Hyperbolic Dynamic Representation Architecture for Kolmogorov-Arnold Networks">HYDRA: Hyperbolic Dynamic Representation Architecture for Kolmogorov-Arnold Networks</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Tabular Numeric Stretch Transformation">Tabular Numeric Stretch Transformation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 </div>
 
