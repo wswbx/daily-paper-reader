@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-16</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-17</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-16 20:16:11 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-17 20:44:22 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读两篇9分论文，覆盖多模态大模型工业异常检测与智能体驱动的ML理论科研。</p>
-<p>最值得关注ADOPD的参考特权式策略蒸馏，为工业质检提供新思路；VALG则印证智能体在理论推导中的可行性。</p>
-<p>建议优先跟进视觉语言模型落地工业检测的实效，再浅探自动化科研工具的发展趋势。</p>
+<p>今日精读4篇、速读1篇，聚焦多模态异常检测与符号回归特征构造两大方向。最值得关注的是《ADOPD》提出的参考特权蒸馏方法（9.0分）与《Adaptive Protection》在信用分类中的自适应保护机制（9.0分），均具实用价值。建议普通读者优先跟进ADOPD在工业质检场景的落地思路，其余可速览。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ADOPD: Reference-Privileged On-Policy Distillation for MLLM-Based Industrial Anomaly Detection">ADOPD: Reference-Privileged On-Policy Distillation for MLLM-Based Industrial Anomaly Detection</span></li><li><span class="dpr-home-dashboard-paper-title" title="VALG: An Agentic System for ML Theory Research">VALG: An Agentic System for ML Theory Research</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ADOPD: Reference-Privileged On-Policy Distillation for MLLM-Based Industrial Anomaly Detection">ADOPD: Reference-Privileged On-Policy Distillation for MLLM-Based Industrial Anomaly Detection</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adaptive Protection for Evolutionary Feature Construction in Symbolic Regression with Application to Credit Classification">Adaptive Protection for Evolutionary Feature Construction in Symbolic Regression with Application to Credit Classification</span></li><li><span class="dpr-home-dashboard-paper-title" title="Training Fair Tabular Foundation Models">Training Fair Tabular Foundation Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">opd <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">opd <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Generating Benchmark Health Data Using a Tabular Diffusion Transformer">Generating Benchmark Health Data Using a Tabular Diffusion Transformer</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 </div>
 

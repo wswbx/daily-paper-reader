@@ -1,0 +1,1032 @@
+Title: Training Fair Tabular Foundation Models
+
+URL Source: https://arxiv.org/pdf/2608.14211v1
+
+Published Time: Mon, 17 Aug 2026 00:44:01 GMT
+
+Number of Pages: 27
+
+Markdown Content:
+# Training Fair Tabular Foundation Models 
+
+Patrik Kenfack 
+
+ÉTS Montréal Mila - Quebec AI Institute 
+
+patrik-joslin.kenfack.1@ens.etsmtl.ca 
+
+Jesse C. Cresswell 
+
+Layer 6 AI Toronto, Canada 
+
+jesse@layer6.ai 
+
+Anthony L. Caterini 
+
+Layer 6 AI Toronto, Canada 
+
+anthony@layer6.ai 
+
+Samira Ebrahimi Kahou 
+
+University of Calgary Mila - Quebec AI Institute, CIFAR 
+
+samira.ebrahimikahou@ucalgary.ca 
+
+Ulrich Aïvodji 
+
+ÉTS Montréal Mila - Quebec AI Institute 
+
+ulrich.aivodji@etsmtl.ca 
+
+Abstract 
+
+Tabular Foundation Models (TFMs) have emerged as leading methods for tabular predictive tasks, leveraging in-context learning to predict on new data without task-specific training. Despite the increased use of TFMs in high-stakes decision-making, their fairness properties remain largely unexplored. In this work, we incorporate fairness constraints directly into TFM training, enabling fair predictions in a single forward pass. Our approach addresses two key challenges: limited access to sensitive attributes in training data, and the incompatibility of existing fairness techniques with the in-context learning paradigm. We propose FairTFM , a scalable training strategy based on synthetic fairness tasks and a fairness-aware architecture using a gradient reversal layer, which encourages the model to learn representations invariant to sensitive attributes. Experiments on 132 fairness tasks show consistent improvements in fairness while maintaining competitive accuracy. 
+
+1 Introduction 
+
+Tabular data, organized in rows and columns, is the dominant modality for decision-making tasks in domains such as healthcare and finance. While tree-based models, such as XGBoost [8], have long dominated tabular learning, tabular foundation models (TFMs) have emerged as strong alterna-tives [21]. These models are typically pretrained on large collections of tabular data and can adapt to new tasks via in-context learning (ICL) [7], using only a few labeled examples. Unlike traditional approaches, TFMs do not require task-specific training or hyperparameter tuning. Notably, models such as TabDPT [29], TabPFNv2 [22], and TabICLv2 [35] can match or outperform heavily tuned tree-based models across a wide range of datasets [14]. Even as TFMs are deployed in high-stakes decision-making, their fairness properties remain largely unexplored. Recent work shows that, despite strong predictive performance, TFMs can exhibit biased outcomes similar to traditional models [24]. While fairness-aware training has been extensively studied in classical machine learning [31], these approaches do not readily extend to the ICL paradigm, where predictions must be produced in a single forward pass without task-specific optimization. This gap calls for fairness-aware training methods specifically designed for TFMs. Hence, in this work, we propose a training framework that incorporates fairness as a first-class objective in TFMs alongside predictive performance. We train TFMs under explicit fairness constraints, enabling fair predictions directly through ICL without requiring post-hoc correction or task-specific retraining. To our knowledge, the resulting model is the first TFM that accounts for statistical group fairness notions, such as demographic parity and equalized odds, during pretraining. 
+
+> Preprint. arXiv:2608.14211v1 [cs.LG] 14 Aug 2026
+
+As a running example, consider a bank that uses a TFM to predict whether a client’s income will exceed $50,000. Anti-discrimination regulations forbid disadvantaging clients based on gender, which could occur downstream if the income predictions are biased. Since an off-the-shelf TFM makes predictions without modification to its weights, there is no opportunity to apply fairness constraints specific to this task. With our approach, the bank simply marks gender as the sensitive attribute in the context set, and the pretrained model produces fairer predictions in a single forward pass. Our method for fair pretraining relies on two key components. (i) Synthetic fairness task generation: 
+
+given a dataset, we randomly designate an input feature as a sensitive attribute, treat it as categorical, and optimize for fairness with respect to it. Repeating this process for every dataset sampled during pretraining enables scalable fairness-aware training across diverse tasks. (ii) Fairness-aware architecture and training: we extend transformer-based TFMs with a dedicated encoder for sensitive attributes and introduce a dual-head prediction mechanism. In addition to the label prediction head, we include a sensitive attribute predictor connected through a gradient reversal layer [16], encouraging the model to learn representations invariant to sensitive attributes. We evaluate our approach on 120 fairness tasks derived from the ACS PUMS datasets [12] with vary-ing sensitive attributes, and on 12 additional tasks built from six widely used fairness benchmarks to test generalization. We measure fairness using demographic parity, equal opportunity, and equalized odds, comparing against strong baselines. Our results show that the proposed FairTFM frame-work consistently improves fairness metrics while maintaining competitive predictive performance, improving fairness by 32–75% relative to the strongest TFM baseline at accuracy costs of 2–11%. Our contributions are as follows: • We propose a scalable strategy for creating fairness tasks with a wide variety of sensitive attribute relationships, based on a stick-breaking group construction that requires no labelled sensitive attributes. • We design a fairness-aware transformer architecture using adversarial learning that enables fair predictions in a single forward pass, handling a sensitive attribute that changes identity across tasks and is masked at inference. • We provide an extensive empirical evaluation on a diverse set of tasks, demonstrating improved fairness metrics while preserving accuracy, including comparisons with fairness-aware baselines and probing analyses of the learned representations. 
+
+2 Related work 
+
+Fairness Prior work on fair machine learning typically intervenes at one of three stages: pre-processing the data, incorporating fairness constraints during training, or post-processing model outputs [23, 42, 20, 43]. These approaches have been studied extensively for conventional supervised models, but they often assume access to the training pipeline or to calibrated model outputs. This assumption is less compatible with ICL, where a pretrained model is used as a frozen predictor at inference time. Our setting is therefore closer to learning fairness-aware representations during pretraining so that fair behaviour can be obtained in a single forward pass. While adversarial fairness objectives based on gradient reversal have previously been studied in unsupervised domain adaptation [15], integrating such objectives into TFM pretraining introduces fundamentally different challenges, including heterogeneous tasks, dynamically changing sensitive attributes across sampled tasks, and the requirement of single-pass in-context inference without task-specific optimization. Our contribution is therefore not merely the use of adversarial learning for fairness, but the introduction of a scalable fairness-aware pretraining framework for TFMs that enables fairer predictions across unseen downstream tasks while preserving the inference properties of in-context learning. 
+
+Tabular foundation models Recent tabular foundation models such as TabPFN, TabDPT, and TabICL demonstrate that pretrained transformers can be highly competitive on tabular prediction tasks [21, 22, 29, 19, 34, 35]. However, this literature emphasizes predictive accuracy, and does not directly address the potential for biased outcomes. FairPFN [36] does incorporate fairness into TFM pretraining under a causal notion of fairness, which contrasts with our work which targets statistical group fairness notions such as demographic parity, equal opportunity, and equalized odds. Statistical fairness is data-driven and focuses on distributional fairness (outcome-based), while causal fairness is more interventional and does not necessarily ensure outcome parity across groups. Our work focuses directly on optimizing statistical fairness notions commonly used in tabular classification 2Dataset Prior 
+
+> Create a fairness task with SSL
+> Sample a dataset
+> Randomly select a feature as sensitive
+> Transform the selected feature to categorical
+> stick-breaking
+
+(a) Fairness task sampling from a prior. Transformer (b) Overview of the FairTFM architecture. 
+
+Figure 1: (a) We construct fairness tasks from a prior data generator by first sampling a dataset 
+
+(X′, y ), then randomly removing one feature to serve as the sensitive attribute s and converting it to a categorical variable, yielding the triplet (X, y, s ). The resulting data are split into context 
+
+(Xctx , y ctx , s ctx ) and query (Xqy , y qy , s qy ) sets for ICL. (b) FairTFM jointly processes context and query inputs with a transformer. In addition to the main prediction head for the target label ˆyqy , a second head predicts the sensitive attribute ˆsqy . A gradient reversal layer on the sensitive branch (red arrow) encourages the model to learn representations that are invariant to s, thereby reducing reliance on sensitive-correlated features while preserving predictive performance. benchmarks [27]. We include FairPFN as a baseline in our experiments and find that its causal objective does yield partial group-fairness benefits, but at a predictive cost that leaves it Pareto-dominated by FairTFM , and without any mechanism for controlling the fairness–utility trade-off. We provide a more detailed discussion of these connections in Appendix A. 
+
+3 Training fair tabular foundation models 
+
+In this section, we present our fairness-aware tabular foundation model for statistical fairness. We describe how fairness tasks are synthesized from generic data priors, introduce the model architecture, and specify the pretraining objective. 
+
+3.1 Fairness task sampling from a dataset prior 
+
+Most TFMs are pretrained on tasks sampled from a dataset prior, whether synthetic or representing real datasets, in order to expose the model to a broad distribution of supervised learning problems. We follow the same principle, but augment it to generate fairness tasks in a self-supervised manner [9, 4] that captures diverse forms of group-dependent bias. A similar process was employed in TabDPT [29] for crafting diverse predictive tasks from real-world datasets, and in CausalPFN [3, 37] for generating synthetic causal inference tasks. Concretely, starting from a sampled dataset, we randomly designate one input feature as the sensitive attribute and remove it from the feature set, as illustrated in Figure 1a. When the selected feature is continuous, we convert it into a categorical attribute using a “stick-breaking” discretization scheme. We first sample a sequence of proportions from Beta distributions and use them to construct mixture weights via a Dirichlet process [25], where each component represents a fraction of the remaining mass. These weights are then mapped to empirical quantiles of the normalized feature, producing data-dependent cut points that partition the feature into discrete groups. This procedure yields flexible, non-uniform bins that adapt to the underlying feature distribution while retaining a probabilistic interpretation. In the running example, the bank’s dataset corresponds to one predictive task requiring fairness considerations, where gender plays the role of the designated sensitive attribute. During pretraining, any feature in a dataset can play the role of sensitive attribute in some sampled tasks, and an ordinary predictive feature in others. 
+
+3.2 Network architecture 
+
+We build on TabPFN’s transformer encoder for tabular data [40], using the nanoTabPFN archi-tecture [33] as a lightweight backbone that also has less input pre-processing so that we mitigate confounding effects in our controlled experiments. In this architecture, each input pair (Xi, y i) is represented as a sequence of d-dimensional tokens and is processed by alternating self-attention over rows and columns, enabling ICL along both axes. 3During pretraining, available input data is divided into context (Xctx , y ctx ) and query (Xqy , y qy )
+
+sets. As in TabPFN, the query labels yqy are masked and the corresponding output token is mapped to class logits through a multi-layer perceptron (MLP). For inference, available labelled data (what would be training data for a non-foundational predictive model) is provided as context, and the TFM predicts yqy on unlabelled query data. Our fairness-aware extension, which we call Fair Tabular Foundation Model ( FairTFM ), is shown in Figure 1b. Rather than operating only on pairs (xi, y i), FairTFM processes triplets (xi, y i, s i),where si denotes the d-dimensional token of the sensitive attribute. FairTFM incorporates a shared transformer backbone that learns representations, and two predictive MLP heads for the target label 
+
+ˆyqy and sensitive attribute ˆsqy . Because the chosen attention mechanism uses no column positional encodings, predictions are invariant to the ordering of input columns [33]. Hence, when a feature is randomly designated as the sensitive attribute during pretraining, its index in the table does not have an impact on predictions. To discourage the learned representation from encoding sensitive information, the secondary pre-diction head that predicts ˆsqy is preceded by a gradient reversal layer (GRL) [15]. The head itself is trained to minimize prediction error of sqy , and would naturally exploit any information about 
+
+s encoded in the transformer’s representation. However, the GRL multiplies the gradient signal passing to the transformer by −1, such that the representation is adversarially trained to contain no information about s, making the prediction head’s task harder. Intuitively, the GRL forces the transformer to reduce reliance on rows and features that are informative for s, including proxies for s,leading to fairer predictions when the same representation is used by the y head. A key advantage of the GRL formulation in our setting is that it does not require training a separately optimized adversary for each sampled fairness task, even though the designated sensitive attribute changes across tasks during pretraining. In contrast, an adversarial setup with separately trained classifier adversaries would require fitting or re-optimizing a new adversary for each sampled fairness task during pretraining. Such per-task adversarial training would substantially increase pretraining complexity and make large-scale task sampling less practical. Since the fairness tasks used for pretraining sample the sensitive attribute at random from the available features (Section 3.1), one may worry that the GRL degrades the embedding broadly rather than removing only sensitive information. The key design point is that the sensitive attribute is removed from X′ and provided through a dedicated encoder as an explicit token for every context row (Algorithm 1, lines 3 and 8–9). The s-head only predicts s, so the reversed gradient only penalizes information about the attribute signalled by the in-context s tokens; the learned invariance to s is conditional and in-context. Moreover, since each feature of X′ is treated as sensitive in some sampled tasks and not in others, the overall objective is not optimized by degrading any fixed feature. In the running example, the query representations suppress gender and its proxies because the bank designates gender as the sensitive attribute in the context examples. At inference time, we do not assume access to the sensitive attribute sqy . Since the transformer is trained to create representations that do not contain information about sqy , providing it would not be particularly fruitful. Hence, we replace sqy values with a fixed learnable parameter during both pretraining and inference. This allows the transformer encoder to operate on d-dimensional tokens representing (xi, y i, s i) and produce query sample embeddings, while ensuring that sqy is never directly exposed to the model. Beyond obviating the need for direct access to sensitive information at inference, this design discourages the model from exploiting sqy as a predictive shortcut, which would undermine the objective of the GRL. 
+
+3.3 Training objective 
+
+FairTFM is trained from scratch on purely synthetic fairness tasks derived from TabICL’s prior [34] (Appendix D). The transformer, shown in Figure 1b, produces an embedding that captures row- and feature-wise interactions among the context instances, and the two MLP heads output logits for the query label ( ˆyqy ) and corresponding sensitive attribute ( ˆsqy ). We optimize the model using the following joint cross-entropy objective: 
+
+L = CE (ˆ yqy , y qy ) + λ · CE (ˆ sqy , s qy ). (1) Minimizing L encourages accurate prediction of both the target label y and the sensitive attribute 
+
+s, while the GRL before the s head ensures the encoder learns features that are not predictive of s.4Algorithm 1 FairTFM pretraining 
+
+Require: Data prior p(D), FairTFM parameters θ, fairness weight λ 
+
+> 1:
+
+while not converged do  
+
+> 2:
+
+Sample a dataset (X′, y ) ∼ p(D) 
+
+> 3:
+
+Produce X by randomly removing one feature from X′ as the sensitive attribute s 
+
+> 4:
+
+if s is continuous then  
+
+> 5:
+
+Discretize s into categorical groups via “stick-breaking” quantile bins  
+
+> 6:
+
+end if  
+
+> 7:
+
+Split (X, y, s ) into context (Xctx , y ctx , s ctx ) and query (Xqy , y qy , s qy ) 
+
+> 8:
+
+Mask yqy and replace sqy with the learnable sensitive attribute parameter  
+
+> 9:
+
+Encode Xi, yi, and si into d-dimensional vectors using their respective MLP encoders  
+
+> 10:
+
+Encode the d-dimensional triplets (Xi, y i, s i) with the shared transformer encoder  
+
+> 11:
+
+Predict query labels ˆyqy with the main head  
+
+> 12:
+
+Predict query sensitive attributes ˆsqy with the adversarial head through a GRL  
+
+> 13:
+
+Compute L = CE(ˆ yqy , y qy ) + λ CE(ˆ sqy , s qy ) 
+
+> 14:
+
+Update θ by backpropagation; the GRL reverses gradients from the sensitive-attribute head into the encoder  
+
+> 15:
+
+end while 
+
+This objective naturally induces a fairness-accuracy trade-off, especially when the target label y and sensitive attribute s are correlated. The parameter λ in Eq. 1 controls the strength of this trade-off. As summarized in Algorithm 1, each pretraining step instantiates a new fairness task, forms context and query sets for ICL, masks the query label and sensitive attribute to preserve the intended inference setting, and then updates the shared transformer encoder and other components through the coupled label-prediction and sensitive-attribute losses. 
+
+4 Results 
+
+In this section, we describe the experimental setup, including the evaluation tasks, baseline mod-els, and metrics, before discussing the main empirical results. To facilitate reproducibility, we provide the inference code, pretrained checkpoints, and scripts for reproducing the main results at 
+
+github.com/patrikken/FairTFM-inference .
+
+4.1 Experimental setup Datasets We evaluate our model on 120 fairness tasks derived from the 2018 1-Year American Community Surveys [12], accessed through the folktables library, which is released under the MIT License. 1 We generate these tasks by varying three factors: (i) the prediction problem (ACSIn-come, ACSPublicCoverage, ACSMobility, ACSEmployment, and ACSTravelTime), (ii) the sensitive attribute (Gender, Age, and Race), and (iii) the state from which the data is sampled (eight US states). This yields a total of 5 × 3 × 8 = 120 real-world fairness tasks not used during training. Additional details are provided in Appendix B. To test generalization beyond a single data source, we further evaluate on 12 fairness tasks built from six widely used non-ACS benchmarks (Appendix E.6). 
+
+Base models We compare our method against standard machine learning baselines, including logistic regression (LR), random forest (RF), XGBoost (XGB), and k-nearest neighbours (KNN) in their default scikit-learn configuration [32]. We also include recent TFMs, namely TabPFNv2.5 and TabICLv2. Because these models do not incorporate any fairness intervention, they provide strong baselines for assessing the fairness limitations of existing approaches on our benchmark. These models do not receive sqy at inference, similar to FairTFM . We additionally compare against FairPFN [36], the only prior TFM that incorporates fairness during pretraining. FairPFN targets counterfactual fairness rather than the statistical notions we optimize, so it is not designed to minimize DP, EOD, or EOP; we include it as the closest existing approach to ours, to test whether pretraining for a causal fairness notion also yields group-fairness benefits. We use the publicly released FairPFN checkpoint, so its backbone size and pretraining prior differ from ours; this comparison should 
+
+> 1https://github.com/socialfoundations/folktables
+
+50.68 0.70 0.72 0.74 0.76         
+
+> Accuracy
+> 0.04 0.06 0.08 0.10 0.12
+> Unfairness
+> DP Difference
+> 0.68 0.70 0.72 0.74 0.76
+> Accuracy
+> 0.04 0.06 0.08 0.10 0.12 0.14
+> Unfairness
+> EOD Difference
+> 0.68 0.70 0.72 0.74 0.76
+> Accuracy
+> 0.02 0.04 0.06 0.08 0.10
+> Unfairness
+> EOP Difference FairTFM-0.1 FairTFM-0.7 FairTFM-10 FairTFM-25 FairPFN KNN LR RF TabICLv2 TabPFNv2.5 XGB
+
+Figure 2: Pareto front between accuracy and fairness for various models. ↑ indicates higher is better (accuracy) and ↓ indicates smaller is better (unfairness). therefore be read as a comparison between published methods rather than as a controlled ablation of the fairness objective. 
+
+Metrics In addition to accuracy and AUCROC, we report three fairness metrics: demographic parity difference (DP), equalized odds difference (EOD), and equal opportunity difference (EOP). Definitions and implementation details are provided in Appendix C. Unless otherwise noted, we report metric values averaged across all 120 tasks to summarize overall fairness–accuracy trends. 
+
+4.2 Experimental Results 
+
+In this section, we present a comprehensive empirical evaluation of FairTFM across three comple-mentary settings. First, we benchmark its performance in terms of both accuracy and fairness against classical methods and recent tabular foundation models. Second, we compare against fairness-aware variants of classical approaches to assess trade-offs under explicit fairness constraints. Third, we evaluate FairTFM as a fairness-enhancing representation learner, examining its ability to produce embeddings that support fairer downstream predictions. 
+
+Fairness-accuracy trade-off across tasks Figure 2 shows our main results: the Pareto front between accuracy and fairness for various models. For FairTFM , we pretrain variants with λ ∈{0.1, 0.7, 10 , 25 } to control the fairness–accuracy trade-off, and display that trade-off for several pretraining checkpoints to more fully trace out the frontier. TabICLv2 and TabPFNv2.5 achieve the highest average accuracy across tasks, but they also occupy the most unfair region of the Pareto frontier, suggesting that their predictive gains come with a substantial fairness cost. In contrast, the classical machine learning baselines are generally less accurate, yet they remain similarly unfair. 
+
+FairTFM consistently improves fairness metrics, and for a range of λ parameters maintains competitive—and often stronger—accuracy compared to classical baselines such as LR and KNN. Table 2 in Appendix E.1 complements Figure 2 by reporting the corresponding aggregated metrics over all 120 tasks, including standard deviations across three random seeds. Whereas Figure 2 emphasizes the Pareto frontier traced out by different checkpoints and fairness weights, Table 2 makes the overall pattern explicit at the level of final checkpoints: the strongest unconstrained TFMs achieve the highest accuracy but are also the least fair, while FairTFM variants deliver substantial reductions in DP, EOD, and EOP with only a moderate loss in predictive performance. Table 3 in Appendix E.2 reports the relative changes against the strongest TFM (TabPFNv2.5), the strongest classical model (XGB), and LR: FairTFM improves fairness by 32–75% for accuracy costs of 2–11%, and even dominates LR on all metrics at λ = 0 .7. Tables 2 and 3 report the last pretraining checkpoint of each FairTFM variant, while the Pareto-dominant checkpoints visible in Figures 2 and 3 yield better trade-offs, but would require model selection on a validation set. The results also highlight the role of λ in shaping the accuracy-fairness trade-off. Larger values of 
+
+λ (e.g., λ = 25 ) move the model toward the fairer region of the Pareto frontier at the expense of predictive accuracy. Smaller values of λ, by contrast, prioritize accuracy and therefore place the model in less fair regions of the frontier. The Pareto front ends up tracing a nearly linear path through accuracy-unfairness space, with FairTFM filling out a large segment. These trends indicate that our training objective provides a simple and effective mechanism for navigating different operating points depending on the fairness requirements of the application. We observe the same trend when measuring predictive performance using AUCROC, as shown in Figure 7 of Appendix E. 60.70 0.72 0.74 0.76 0.78 0.80           
+
+> Accuracy
+> 0.00 0.02 0.04 0.06 0.08 0.10
+> Unfairness
+> DP Difference
+> 0.70 0.72 0.74 0.76 0.78 0.80
+> Accuracy
+> 0.02 0.04 0.06 0.08 0.10
+> Unfairness
+> EOD Difference
+> 0.70 0.72 0.74 0.76 0.78 0.80
+> Accuracy
+> 0.00 0.02 0.04 0.06 0.08
+> Unfairness
+> EOP Difference FairTFM-0.1 FairTFM-0.7 FairTFM-10 FairTFM-25 FairPFN KNN LR RF TabICLv2 TabPFNv2.5 XGB
+
+Figure 3: Pareto front between accuracy and fairness for various models on the 12 fairness tasks beyond ACS PUMS (Appendix E.6). ↑ indicates higher is better (accuracy) and ↓ indicates smaller is better (unfairness). 0 20 40 60 80 100             
+
+> Training Progress (%)
+> 0.640 0.660 0.680 0.700
+> Accuracy
+> Accuracy
+> 020 40 60 80 100
+> Training Progress (%)
+> 0.000 0.010 0.020 0.030
+> Unfairness
+> Demographic Parity
+> 020 40 60 80 100
+> Training Progress (%)
+> 0.000 0.020 0.040 0.060
+> Unfairness
+> Equalized Odds
+> NanoTabPFN FairTFM-0.7 FairTFM-25
+
+Figure 4: Training dynamics comparison between nanoTabPFN (without fairness constraint) and 
+
+FairTFM with λ ∈ { 0.7, 25 }.FairPFN behaves differently from the unconstrained baselines: it is fairer than all of them on all three metrics, and in Table 2 attains the lowest DP of any final checkpoint (0.043). Pretraining for a causal fairness notion therefore does transfer part of its benefit to statistical group fairness, supporting our broader claim that fairness can be acquired during pretraining and translate to ICL predictions. However, for FairPFN this comes at a large predictive cost; FairPFN has the lowest AUCROC of all models we evaluate here (0.695). In every panel of Figures 2 and 7 FairTFM provides operating points that Pareto-dominate it, being simultaneously fairer and more predictive. Just as important, FairPFN exposes no mechanism for navigating the fairness–utility trade-off: it yields a single operating point, whereas λ lets a practitioner choose one that matches the application. Part of the predictive gap is expected, since FairPFN optimizes fair outcomes under interventions on structural causal models rather than accuracy on real labels; the comparison is thus evidence that the two fairness notions are not interchangeable, not that FairPFN fails at its own objective. 
+
+Generalization beyond ACS PUMS tasks Figure 3 shows the Pareto front on the 12 non-ACS tasks. The conclusions match those from Figure 2: TabICLv2 and TabPFNv2.5 are the most accurate but occupy the most unfair region, while FairTFM variants trace the low-unfairness end of the front, with λ controlling the trade-off. The AUCROC view (Figure 13 in Appendix E.6) further shows that 
+
+FairTFM improves fairness without a commensurate loss in ranking performance. FairPFN behaves as on the ACS benchmark: it is fairer than every unconstrained baseline on all three metrics, but at a predictive cost that again leaves it Pareto-dominated by FairTFM , under both accuracy and AUCROC. Table 4 in Appendix E.6 reports the corresponding aggregated metrics and demonstrates the gap directly. At essentially the same accuracy (0.734 vs. 0.737), FairTFM -10 is fairer than FairPFN on all three metrics and 7.5 points higher in AUCROC. 
+
+Performance dynamics during training Figure 4 provides a finer-grained view of how fairness emerges over the course of pretraining, tracking accuracy and fairness (DP and EOD) for FairTFM 
+
+with λ ∈ { 0.7, 25 } and for nanoTabPFN across checkpoints. Both FairTFM variants achieve a fairness advantage over nanoTabPFN very early in training and retain this advantage throughout optimization. Since both models share the same data prior, backbone, and training budget, differing only in the fairness-specific components, this comparison isolates the effect of our intervention (full discussion in Appendix E.3). 70.70 0.72 0.74 0.76 0.78              
+
+> Accuracy
+> 0.00 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08
+> Unfairness
+> DP Difference
+> 0.70 0.72 0.74 0.76 0.78 0.80
+> Accuracy
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12 0.14
+> Unfairness
+> EOD Difference
+> 0.70 0.72 0.74 0.76 0.78 0.80
+> Accuracy
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+> Unfairness
+> Equal Opportunity Difference LR+EG RF+EG XGB+EG FairTFM
+
+Figure 5: Fairness-accuracy trade-off comparison with task-specific classical models trained with fairness constraints using Exponentiated Gradient (EG), on ACSIncome (Alabama) with gender as the sensitive attribute. Results for race and age are shown in Figure 11 of Appendix E. 
+
+Comparing FairTFM against classical fairness-aware models The results above show that 
+
+FairTFM improves fairness substantially while remaining competitive with standard classical base-lines such as LR and KNN. A stronger comparison, however, is against classical methods that are themselves explicitly optimized for fairness. To this end, we evaluate three tabular models—LR, RF, and XGB—augmented with the Exponentiated Gradient (EG) reduction of Agarwal et al. [1], which enforces group-fairness constraints during training. We focus on ACSIncome in Alabama (AL) and instantiate three fairness tasks by varying the sensitive attribute over gender, race, and age. For each task, we use a random 80/20 train–test split and sweep the EG fairness-violation tolerance over [0 .01 , 0.02 , . . . , 0.1, 0.2, . . . , 1.0] , with finer resolution in the low-violation regime to better characterize the high-fairness end of the trade-off. We average the results across three random seeds. This setup allows us to compare FairTFM not only to strong predictive baselines, but also to established in-processing fairness methods under a matched downstream evaluation protocol. Figure 5 shows that FairTFM remains highly competitive even against these fairness-constrained baselines. Across all three sensitive attributes, its checkpoints trace out a broad Pareto frontier, indicating that a single pretrained model can realize multiple fairness–accuracy operating points without retraining. For gender, FairTFM attains especially strong trade-offs for EOD and EOP, matching or improving upon the frontier formed by EG-based baselines while remaining competitive on DP. For race (Figure 11 in Appendix E), where all methods incur larger fairness gaps, FairTFM 
+
+still spans a wide and competitive portion of the frontier, particularly at the lower-unfairness end. For age, the comparison is more metric-dependent: EG-based classical models achieve stronger accuracy–fairness trade-offs for EOD and EOP, whereas FairTFM remains competitive on DP but exhibits a clearer trade-off between predictive performance and these stricter parity criteria. Overall, the main advantage of FairTFM is not that it dominates every baseline on every metric, but that it delivers competitive Pareto-efficient solutions across heterogeneous fairness tasks in a single forward pass, whereas the classical alternatives must be retrained with task-specific fairness constraints for each new setting. Moreover, as shown in Figure 12 of Appendix E, FairTFM provides the best overall Pareto front when predictive performance is measured through AUCROC. We also evaluated the EG baselines on the 12 non-ACS tasks with results in Appendix E.7. Each 
+
+FairTFM setting improves the metrics that are relevant to each EG variant—by 20–33% for FairTFM -0.7 and 79–82% for FairTFM -25—while achieving substantially higher AUCROC: EG reduces XGBoost’s AUCROC from 0.803 to about 0.70, whereas FairTFM -0.7 remains at 0.803. 
+
+FairTFM as a fair representation learner We hypothesize that the FairTFM encoder produces representations that are useful for downstream fair prediction. Fair representation learning methods learn a map g of the input that suppresses information about the sensitive attribute while preserving task-relevant signal; formally: 
+
+Definition 1 (Fair Representation) Let (X, Y, S ) be random variables where X ∈ Rm×d is the input, Y ∈ Y is the target label, and S ∈ S is a sensitive attribute. Let g : Rm×d → Rm×d′
+
+be a representation map and define Z := g(X). We say that Z is a fair representation with respect to S if 
+
+Z ⊥⊥ S | Y .
+
+Definition 1 is conceptually aligned with the objective of FairTFM , which encourages the learned query embedding to suppress sensitive-attribute information while preserving task-relevant signal. We compare FairTFM embeddings against two task-specific pre-processing methods from the fairlearn 
+
+80.75 0.76 0.77 0.78 0.79            
+
+> Accuracy
+> 0.05 0.10 0.15 0.20 0.25
+> Unfairness
+> DP Difference
+> 0.75 0.76 0.77 0.78 0.79
+> Accuracy
+> 0.05 0.10 0.15 0.20 0.25 0.30
+> Unfairness
+> EOD Difference
+> 0.75 0.76 0.77 0.78 0.79
+> Accuracy
+> 0.00 0.05 0.10 0.15 0.20 0.25 0.30
+> Unfairness
+> Equal Opportunity Difference Raw Input CR LFR FairTFM
+
+Figure 6: Pareto front of XGBoost models trained with different data representations, with gender as the sensitive attribute. Results for race and age, and for RF and LR as downstream models, are shown in Appendix E.4. Table 1: Linear probe AUC for predicting the sensitive attribute s and the label y on different representations. We show AUC mean ± std over three seeds and the three sensitive attributes on ACSIncome, Alabama. FairTFM displays a controllable trade-off of reducing the predictability of the sensitive attribute with some obfuscation of the label. 
+
+Probe target (AUC) Raw input nanoTabPFN FairTFM -0.7 FairTFM -25 Sensitive attribute s 0.783 ± 0.11 0.746 ± 0.10 0.646 ± 0.14 0.542 ± 0.11 Label y 0.834 ± 0.02 0.823 ± 0.03 0.805 ± 0.04 0.787 ± 0.03 library [6]: Correlation Remover (CR) and Learning Fair Representations (LFR) [42], on ACSIncome (Alabama) with gender, race, and age as sensitive attributes. Notably, FairTFM embeddings are computed in a single forward pass without any task-specific gradient updates. For each type of representation as well as the raw features, we train downstream classifiers (LR, RF, and XGBoost), and compare their accuracy and fairness properties. Full protocol details are in Appendix E.4. Figure 6 showcases the Pareto front of XGBoost models trained using data representation from different fair methods, with gender as the sensitive attribute. As can be seen, FairTFM can provide competitive Pareto points on downstream tasks compared to raw data and dominates LFR, whereas CR severely worsens fairness. The results show the ability of FairTFM to generate embeddings that encode less information about the given sensitive attributes while still being predictive of the target. 
+
+FairTFM stands out due to its ability to adapt to new tasks via ICL without needing task-specific optimization. The remaining sensitive attributes (race and age) and downstream models (RF and LR) in Appendix E.4 show a similar trend. 
+
+Probing the learned representations To verify that the GRL removes information about the designated sensitive attribute rather than degrading the embedding broadly (Section 3), we train linear probes to predict (a) the sensitive attribute s and (b) the label y from three representations: the raw input features X, the query embeddings of nanoTabPFN, and the query embeddings of FairTFM . For the embedding-based representations, the query embeddings of the initial test set are treated as a new dataset for each probing task. For both sensitive-attribute and label prediction, this dataset is randomly split into 80% training and 20% testing subsets. The probing model (XGBoost) is trained on the training split, and performance is evaluated on the held-out test split using AUC. Table 1 shows three things. First, the nanoTabPFN embedding retains most of the sensitive information present in the raw features (AUC 0.746 vs. 0.783) even though sqy itself is not an input. Second, 
+
+FairTFM substantially reduces the sensitive-attribute AUC, approaching random guessing (0.542 at 
+
+λ = 25 ). Third, task-relevant information is largely preserved (AUC 0.834 → 0.805 at λ = 0 .7). These probes support the idea that suppression of sensitive information is attributable to the adversarial objective and is selective. 
+
+5 Conclusion 
+
+We present FairTFM , the first pretraining framework for tabular foundation models that provides group fairness while preserving the single-pass inference setting of in-context learning. The key 9idea is to synthesize fairness tasks during pretraining and couple label prediction with adversarial sensitive-attribute prediction through a gradient reversal layer. On 120 ACS-based fairness tasks and 12 additional tasks from six non-ACS benchmarks, the resulting models consistently improve demographic parity, equal opportunity, and equalized odds while maintaining competitive accuracy. Beyond the aggregate benchmark results, we showed that these gains emerge throughout training, remain competitive against fairness-constrained classical baselines, and transfer to downstream fair-representation settings, with probing experiments confirming that the learned embeddings selectively remove sensitive information. Taken together, these results suggest that fairness can be incorporated directly into the pretraining of TFMs, rather than introduced only through task-specific post-hoc correction as done in prior work. 
+
+Limitations and future work Despite the strong empirical performance of FairTFM , our study has several limitations. First, our pretraining strategy relies only on TabICL’s prior generation, which provides scale and diversity but may not capture all of the semantic and societal structure of real sensitive attributes in downstream deployments. Second, while FairTFM is broadly competitive, the results also show that it does not dominate specialized fairness-aware baselines on every metric or every task configuration, especially in the stricter settings where age is used as sensitive attribute. We view these limitations not as drawbacks of the overall approach, but as evidence that fairness-aware pretraining opens a rich new research direction. In particular, our findings pave the way for future work on better fairness-task priors, improved trade-off control during pretraining, and foundation models that can adapt their fairness behaviour more explicitly to downstream deployment requirements. Finally, we emphasize that our experiments rely on nanoTabPFN, a lightweight backbone chosen to isolate the effect of fairness-aware pretraining. We believe the proposed framework is largely orthogonal to architectural scaling, and integrating it into larger state-of-the-art TFMs such as TabPFNv2.5 or TabICLv2 may yield substantially stronger fairness–accuracy trade-offs through improved representation learning and richer pretrained priors. 
+
+References 
+
+[1] A. Agarwal, A. Beygelzimer, M. Dudik, J. Langford, and H. Wallach. A reductions approach to fair classification. In Proceedings of the 35th International Conference on Machine Learning ,volume 80 of Proceedings of Machine Learning Research , pages 60–69, 2018. [2] J. Angwin, J. Larson, S. Mattu, and L. Kirchner. Machine bias. In Ethics of data and analytics ,pages 254–264. Auerbach Publications, 2022. [3] V. Balazadeh, H. Kamkari, V. Thomas, B. Li, J. Ma, J. C. Cresswell, and R. G. Krishnan. CausalPFN: Amortized Causal Effect Estimation via In-Context Learning. In Advances in Neural Information Processing Systems , 2025. [4] R. Balestriero, M. Ibrahim, V. Sobal, A. Morcos, S. Shekhar, T. Goldstein, F. Bordes, A. Bardes, G. Mialon, Y. Tian, A. Schwarzschild, A. G. Wilson, J. Geiping, Q. Garrido, P. Fernandez, A. Bar, H. Pirsiavash, Y. LeCun, and M. Goldblum. A Cookbook of Self-Supervised Learning . 
+
+arXiv:2304.12210 , 2023. [5] B. Becker and R. Kohavi. Adult. UCI Machine Learning Repository, 1996. DOI: https://doi.org/10.24432/C5XW20. [6] S. Bird, M. Dudík, R. Edgar, B. Horn, R. Lutz, V. Milan, M. Sameki, H. Wallach, and K. Walker. Fairlearn: A toolkit for assessing and improving fairness in AI. Technical Report MSR-TR-2020-32, Microsoft, 2020. [7] T. Brown, B. Mann, N. Ryder, M. Subbiah, J. D. Kaplan, P. Dhariwal, A. Neelakantan, P. Shyam, G. Sastry, A. Askell, S. Agarwal, A. Herbert-Voss, G. Krueger, T. Henighan, R. Child, A. Ramesh, D. Ziegler, J. Wu, C. Winter, C. Hesse, M. Chen, E. Sigler, M. Litwin, S. Gray, B. Chess, J. Clark, C. Berner, S. McCandlish, A. Radford, I. Sutskever, and D. Amodei. Lan-guage models are few-shot learners. In Advances in Neural Information Processing Systems ,2020. [8] T. Chen and C. Guestrin. XGBoost: A Scalable Tree Boosting System. In Proceedings of the 22nd ACM SIGKDD International Conference on Knowledge Discovery and Data Mining .10 Association for Computing Machinery, 2016. ISBN 9781450342322. doi: 10.1145/2939672. 2939785. [9] T. Chen, S. Kornblith, M. Norouzi, and G. Hinton. A Simple Framework for Contrastive Learning of Visual Representations. In Proceedings of the 37th International Conference on Machine Learning , volume 119, pages 1597–1607, 2020. [10] J. C. Cresswell. Trustworthy AI must account for interactions. arXiv:2504.07170 , 2025. [11] A. Defazio, X. Yang, H. Mehta, K. Mishchenko, A. Khaled, and A. Cutkosky. The road less scheduled. In Advances in Neural Information Processing Systems , volume 37, pages 9974–10007, 2024. doi: 10.52202/079017-0320. [12] F. Ding, M. Hardt, J. Miller, and L. Schmidt. Retiring Adult: New Datasets for Fair Machine Learning. In Advances in Neural Information Processing Systems , volume 34, 2021. [13] C. Dwork, M. Hardt, T. Pitassi, O. Reingold, and R. Zemel. Fairness through awareness. In 
+
+Proceedings of the 3rd Innovations in Theoretical Computer Science Conference , 2012. ISBN 9781450311151. doi: 10.1145/2090236.2090255. [14] N. Erickson, L. Purucker, A. Tschalzev, D. Holzmüller, P. M. Desai, D. Salinas, and F. Hutter. TabArena: A Living Benchmark for Machine Learning on Tabular Data. In The Thirty-ninth Annual Conference on Neural Information Processing Systems Datasets and Benchmarks Track ,volume 34, 2021. [15] Y. Ganin and V. Lempitsky. Unsupervised domain adaptation by backpropagation. In Proceed-ings of the 32nd International Conference on Machine Learning , volume 37 of Proceedings of Machine Learning Research , pages 1180–1189, 2015. [16] Y. Ganin, E. Ustinova, H. Ajakan, P. Germain, H. Larochelle, F. Laviolette, M. March, and V. Lempitsky. Domain-Adversarial Training of Neural Networks. Journal of Machine Learning Research , 17(59):1–35, 2016. [17] A. Garg, M. Ali, N. Hollmann, L. Purucker, S. Müller, and F. Hutter. Real-TabPFN: Improving Tabular Foundation Models via Continued Pre-training With Real-World Data. 
+
+arXiv:2507.03971 , 2025. [18] Y. Gorishniy, I. Rubachev, V. Khrulkov, and A. Babenko. Revisiting deep learning models for tabular data. In Advances in Neural Information Processing Systems , volume 34, pages 18932–18943, 2021. [19] L. Grinsztajn, K. Flöge, O. Key, F. Birkel, P. Jund, B. Roof, B. Jäger, D. Safaric, S. Alessi, A. Hayler, M. Manium, R. Yu, F. Jablonski, S. B. Hoo, A. Garg, J. Robertson, M. Bühler, V. Moroshan, L. Purucker, C. Cornu, L. C. Wehrhahn, A. Bonetto, B. Schölkopf, S. Gambhir, N. Hollmann, and F. Hutter. TabPFN-2.5: Advancing the State of the Art in Tabular Foundation Models. arXiv:2511.08667 , 2026. [20] M. Hardt, E. Price, and N. Srebro. Equality of Opportunity in Supervised Learning. In Advances in Neural Information Processing Systems , volume 29, 2016. [21] N. Hollmann, S. Müller, K. Eggensperger, and F. Hutter. TabPFN: A Transformer That Solves Small Tabular Classification Problems in a Second. In International Conference on Learning Representations , 2023. [22] N. Hollmann, S. Müller, L. Purucker, A. Krishnakumar, M. Körfer, S. B. Hoo, R. T. Schirrmeis-ter, and F. Hutter. Accurate predictions on small data with a tabular foundation model. Nature ,637(8045):319–326, 2025. [23] F. Kamiran and T. Calders. Classifying without discriminating. In 2009 2nd International Conference on Computer, Control and Communication , pages 1–6, 2009. doi: 10.1109/IC4. 2009.4909197. [24] P. Kenfack, S. E. Kahou, and U. Aïvodji. Towards fair in-context learning with tabular foundation models. Transactions on Machine Learning Research , 2026, 2026. 11 [25] M. Khan, S. Mohamed, B. Marlin, and K. Murphy. A stick-breaking likelihood for categorical data analysis with latent gaussian models. In Artificial Intelligence and Statistics , pages 610–618. PMLR, 2012. [26] M. J. Kusner, J. Loftus, C. Russell, and R. Silva. Counterfactual fairness. In Advances in Neural Information Processing Systems , volume 30, 2017. [27] T. Le Quy, A. Roy, V. Iosifidis, W. Zhang, and E. Ntoutsi. A survey on datasets for fairness-aware machine learning. Wiley Interdisciplinary Reviews: Data Mining and Knowledge Discovery , 12 (3):e1452, 2022. [28] I. Loshchilov and F. Hutter. Decoupled Weight Decay Regularization. In International Confer-ence on Learning Representations , 2019. [29] J. Ma, V. Thomas, R. Hosseinzadeh, A. Labach, H. Kamkari, J. C. Cresswell, K. Golestan, G. Yu, A. L. Caterini, and M. Volkovs. TabDPT: Scaling Tabular Foundation Models on Real Data. In Advances in Neural Information Processing Systems , volume 38, 2025. [30] D. Madras, E. Creager, T. Pitassi, and R. Zemel. Learning adversarially fair and transferable representations. In International Conference on Machine Learning , pages 3384–3393. PMLR, 2018. [31] N. Mehrabi, F. Morstatter, N. Saxena, K. Lerman, and A. Galstyan. A Survey on Bias and Fairness in Machine Learning. ACM Comput. Surv. , 54(6), 2021. ISSN 0360-0300. doi: 10.1145/3457607. [32] F. Pedregosa, G. Varoquaux, A. Gramfort, V. Michel, B. Thirion, O. Grisel, M. Blondel, P. Prettenhofer, R. Weiss, V. Dubourg, J. Vanderplas, A. Passos, D. Cournapeau, M. Brucher, M. Perrot, and Édouard Duchesnay. Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research , 12:2825–2830, 2011. [33] A. Pfefferle, J. Hog, L. Purucker, and F. Hutter. nanoTabPFN: A Lightweight and Educational Reimplementation of TabPFN. arXiv:2511.03634 , 2025. [34] J. Qu, D. Holzmüller, G. Varoquaux, and M. Le Morvan. TabICL: A Tabular Foundation Model for In-Context Learning on Large Data. In Proceedings of the 42nd International Conference on Machine Learning , volume 267, pages 50817–50847, 2025. [35] J. Qu, D. Holzmüller, G. Varoquaux, and M. L. Morvan. TabICLv2: A better, faster, scalable, and open tabular foundation model. In Forty-third International Conference on Machine Learning , 2026. [36] J. Robertson, N. Hollmann, S. Müller, N. Awad, and F. Hutter. FairPFN: A Tabular Foundation Model for Causal Fairness. In Forty-second International Conference on Machine Learning ,2025. [37] C. Stith, M. Barath, V. Balazadeh, J. C. Cresswell, and R. G. Krishnan. Causal Foundation Models with Continuous Treatments. arXiv:2605.15133 , 2026. [38] B. Strack, J. P. DeShazo, C. Gennings, J. L. Olmo, S. Ventura, K. J. Cios, and J. N. Clore. Impact of hba1c measurement on hospital readmission rates: analysis of 70,000 clinical database patient records. BioMed research international , 2014(1):781670, 2014. [39] Y. Sui, T. Wu, J. Cresswell, G. Wu, G. Stein, X. Huang, X. Zhang, and M. Volkovs. Self-supervised representation learning from random data projectors. In International Conference on Learning Representations , 2024. [40] A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin. Attention is all you need. In Advances in Neural Information Processing Systems ,volume 30, 2017. [41] L. F. Wightman. Lsac national longitudinal bar passage study. lsac research report series. 1998. 12 [42] R. Zemel, Y. Wu, K. Swersky, T. Pitassi, and C. Dwork. Learning fair representations. In 
+
+Proceedings of the 30th International Conference on Machine Learning , volume 28, 2013. [43] B. H. Zhang, B. Lemoine, and M. Mitchell. Mitigating unwanted biases with adversarial learning. In Proceedings of the 2018 AAAI/ACM Conference on AI, Ethics, and Society , pages 335–340, 2018. 13 A Additional Related Work 
+
+Fairness interventions Classical fairness-aware learning methods are often grouped by where the intervention occurs in the pipeline [10]. Pre-processing methods attempt to reduce bias directly in the data, for example through label massaging [23] or fair representation learning [42]. In-processing methods instead modify the training objective to encourage fairer behavior during optimization [43]. Post-processing methods operate on a trained model’s outputs to enforce fairness constraints after training [20]. These families of methods have been influential, but they typically assume task-specific model access, retraining, or output recalibration. 
+
+Fairness in in-context learning These assumptions become restrictive for foundation models used through ICL, where predictions are generated without task-specific parameter updates. In our setting, the goal is not to retrofit fairness onto a frozen predictor after deployment, but to pretrain a model whose internal representations already support fairer predictions at inference time. Our method therefore combines aspects of in-processing and representation learning: fairness is encouraged during training, yet inference remains a single forward pass without additional optimization. 
+
+Tabular foundation models Work on deep learning for tabular data has evolved from special-ized supervised architectures [18] to pretrained tabular foundation models that generalize across tasks through ICL. TabPFN [21] established this direction by showing that transformers trained on synthetic supervised tasks can perform strong zero-shot prediction. Subsequent models, includ-ing TabPFNv2.5 [19] and TabICLv2 [35], improved efficiency and scale, while models such as TabDPT [29] and related real-data pretraining approaches [17] sought to better align training with real-world tabular distributions. 
+
+Fairness-aware TFMs Among prior TFM work, FairPFN [36] is the closest to our setting because it also incorporates fairness during pretraining. However, FairPFN is designed around a causal notion of fairness, using structurally generated datasets with biased and fair outcomes to target counterfactual fairness [26]. Our focus is different: we study statistical group fairness notions, namely demographic parity, equal opportunity, and equalized odds, which are more directly aligned with the evaluation metrics commonly used in fair classification benchmarks. Statistical fairness is data-driven and focuses on distributional fairness (outcome-based), while counterfactual fairness is more interventional and does not necessarily ensure outcome parity across groups 
+
+B Datasets 
+
+In this section, we provide more details about the datasets used for evaluation. We describe the prediction tasks and the dataset construction. 
+
+B.1 Prediction Task Details 
+
+We construct our benchmark from tasks provided by the folktables benchmark [12], which is derived from the American Community Survey (ACS) Public Use Microdata Sample (PUMS). In particular, we consider five binary prediction tasks commonly used in prior work for fairness evaluation: • ACSIncome : predict whether an individual’s annual income exceeds $50,000. Following the standard task definition, we restrict the data to individuals older than 16 who worked at least one hour per week during the previous year and earned at least $100. • ACSMobility : predict whether an individual lived at the same address one year earlier. We focus on individuals between 18 and 35 years old, which makes the task less imbalanced than in the full population, where most individuals do not move within a year. • ACSTravelTime : predict whether an individual’s commute exceeds 20 minutes. The task is defined on employed individuals older than 16, and the 20-minute threshold roughly matches the median commute time in the 2018 ACS PUMS data. • ACSEmployment : predict whether an individual is employed. For this task, we consider individu-als between 16 and 90 years old. • ACSPublicCoverage : predict whether an individual receives public health insurance coverage. We restrict the sample to individuals younger than 65 with income below $30,000, thereby focusing on lower-income individuals who are not eligible for Medicare. 14 B.2 Task Construction 
+
+Generating new learning signals from randomly selected features in pretraining data is a core concept in self-supervised learning [39]. In our work, we specifically construct fairness tasks, which is necessary to scale up pretraining, due to insufficient existing datasets labeled with fairness attributes. For each base prediction task, we instantiate fairness evaluation settings by combining it with three sensitive attributes—Gender, Age, and Race—and with data drawn from eight states: Alabama (AL), California (CA), Hawaii (HI), Indiana (IN), Maine (ME), Michigan (MI), New Mexico (NM), and New York (NY). We choose these states to span a range of bias levels reported in the original 
+
+folktables study [12], so that the benchmark includes settings with meaningfully different fairness profiles rather than a narrow slice of the ACS. This yields a total of 5 × 3 × 8 = 120 tasks. In other words, each prediction problem contributes 24 tasks, each sensitive attribute appears in 40 tasks, and each state contributes 15 tasks to the full benchmark. For the sensitive attributes, Age is binarized using a 25-year-old threshold, and Race is restricted to White and Black Americans. Across all task instantiations, dataset sizes vary from roughly 3.5k to 12k samples, and we use a random 80/20 train–test split. This evaluation design is important for two reasons. First, varying the prediction problem, sensitive attribute, and state allows us to assess fairness across substantially different label distributions, demographic compositions, and regional contexts, rather than tailoring conclusions to a single task configuration. Second, reporting results over the full Cartesian product reduces the risk that observed fairness improvements are driven by a small number of favorable settings. We therefore view performance aggregated over these 120 tasks as a stronger indicator of whether a method learns fairness-aware behavior that transfers across heterogeneous real-world tabular prediction problems. 
+
+C Fairness metrics 
+
+In this work, we focus on group fairness criteria that quantify disparities in model behavior across demographic groups. Let ˆY = f (X) denote the binary prediction of a classifier, let Y ∈ { 0, 1} be the ground-truth label, and let S ∈ { 0, 1} denote the sensitive attribute. We consider the following three standard fairness notions. • Demographic parity (DP) requires the rate of positive predictions to be the same across groups [13]. Formally, 
+
+P( ˆY = 1 | S = 0) = P( ˆY = 1 | S = 1) . (2) • Equalized odds (EOD) requires the predictor to have the same true positive and false positive rates across groups [20]. Equivalently, for each label value y ∈ { 0, 1},
+
+P( ˆY = 1 | S = 0 , Y = y) = P( ˆY = 1 | S = 1 , Y = y). (3) • Equal opportunity (EOP) focuses only on parity of true positive rates across groups. It can be viewed as the y = 1 special case of equalized odds: 
+
+P( ˆY = 1 | S = 0 , Y = 1) = P( ˆY = 1 | S = 1 , Y = 1) . (4) In the experiments, we report empirical disparity versions of these metrics. For demographic parity, we use the absolute difference in the expected positive prediction rate across groups: 
+
+DP = E
+
+> x|S=0
+
+h
+
+I{ ˆY = 1 }
+
+i
+
+− E
+
+> x|S=1
+
+h
+
+I{ ˆY = 1 }
+
+i
+
+. (5) Where I(·) denotes the indicator function. For the equalized-odds-based metrics, we define the group gaps in false positive rate and true positive rate using the same expectation notation: 
+
+δFPR = E 
+
+> x|S=0 ,Y =0
+
+h
+
+I{ ˆY = 1 }
+
+i
+
+− E 
+
+> x|S=1 ,Y =0
+
+h
+
+I{ ˆY = 1 }
+
+i
+
+, (6) 
+
+δTPR = E 
+
+> x|S=0 ,Y =1
+
+h
+
+I{ ˆY = 1 }
+
+i
+
+− E 
+
+> x|S=1 ,Y =1
+
+h
+
+I{ ˆY = 1 }
+
+i
+
+. (7) 15 We then report 
+
+EOD = max ( δFPR , δ TPR ) (8) 
+
+EOP = δTPR . (9) Smaller values of DP , EOD , and EOP indicate fairer behaviour, with zero corresponding to perfect parity under the respective criterion. We use these empirical gaps because they provide an interpretable summary of group-level disparities and are standard in fairness evaluations for binary classification. 
+
+D Model Architecture and Hyperparameters 
+
+Our model builds on the nanoTabPFN architecture from TFM-Playground 2, which we use as a lightweight transformer backbone for fairness-aware pretraining. Concretely, we use a model with 6 transformer layers, 6 attention heads, embedding dimension 192, and feed-forward hidden dimension 192. Consistent with the main architecture described in Section 3, we augment this backbone with three input encoders—for features, targets, and sensitive attributes—that map their respective inputs into the shared 192-dimensional token space. The label-prediction head and the sensitive-attribute head are both implemented as two-layer MLPs with hidden size 768. 
+
+Pretraining setup. We pretrain on 300,000 synthetically generated tabular datasets sampled from the TabICL’s prior implementation [35]. Each sampled task contains 150 datapoints, 6 features, and 2 classes, and training is performed with batch size 32. During pretraining, the model receives context and query sets as described in Section 3, with the query label masked and the query sensitive attribute replaced by the learned mask token. All reported FairTFM results are obtained from checkpoints trained under this shared setup, varying only the fairness weight λ in the joint objective. 
+
+Optimization details. We optimize the model using Schedule-Free AdamW [11, 28] with learning rate 1 × 10 −4 and no weight decay. This choice provided stable optimization across the fairness weights considered in the main experiments. For the fairness-aware variants, the only task-level hyperparameter we vary is λ, which directly controls the strength of the adversarial sensitive-attribute objective and thereby the fairness–accuracy trade-off. 
+
+E Additional Results 
+
+E.1 Aggregated results on the 120 ACS tasks 
+
+Table 2 reports the aggregated accuracy and fairness metrics behind Figure 2, and Figure 7 shows the corresponding Pareto front when predictive performance is measured with AUCROC instead of accuracy. The two views agree: unconstrained TFMs sit in the most accurate but least fair region, while FairTFM variants trace the fair end of the front. 0.70 0.72 0.74 0.76 0.78 0.80           
+
+> ROCAUC
+> 0.04 0.06 0.08 0.10 0.12
+> Unfairness
+> DP Difference
+> 0.70 0.72 0.74 0.76 0.78 0.80
+> ROCAUC
+> 0.04 0.06 0.08 0.10 0.12 0.14
+> Unfairness
+> EOD Difference
+> 0.70 0.72 0.74 0.76 0.78 0.80
+> ROCAUC
+> 0.02 0.04 0.06 0.08 0.10
+> Unfairness
+> EOP Difference FairTFM-0.1 FairTFM-0.7 FairTFM-10 FairTFM-25 FairPFN KNN LR RF TabICLv2 TabPFNv2.5 XGB
+
+Figure 7: Pareto front between AUCROC and fairness for various models. ↑ indicates higher is better (accuracy) and ↓ indicates smaller is better (unfairness). 
+
+> 2https://github.com/automl/TFM-Playground
+
+16 Table 2: Average accuracy, AUCROC, and fairness metrics across the 120 benchmark tasks, reported as mean ± standard deviation over three random seeds. This table complements Figure 2 by summarizing the final-checkpoint performance of FairTFM models. Recent unconstrained TFMs attain the highest average accuracy but also the largest fairness gaps, classical baselines are generally less accurate without being substantially fairer, and FairTFM variants provide better fairness–accuracy trade-offs, with larger λ yielding progressively lower unfairness at the cost of reduced accuracy.  
+
+> Model
+
+Accuracy AUCROC DP Diff EOD Diff EOP Diff 
+
+TabICLv2 0.771 ± 0.05 0.802 ± 0.07 0.120 ± 0.11 0.140 ± 0.10 0.096 ± 0.09 
+
+TabPFNv2.5 0.770 ± 0.05 0.801 ± 0.07 0.121 ± 0.12 0.145 ± 0.11 0.098 ± 0.10 
+
+XGB 0.744 ± 0.06 0.760 ± 0.09 0.116 ± 0.11 0.144 ± 0.11 0.097 ± 0.10 
+
+KNN 0.716 ± 0.07 0.707 ± 0.10 0.106 ± 0.11 0.139 ± 0.10 0.093 ± 0.09 
+
+RF 0.745 ± 0.06 0.767 ± 0.08 0.113 ± 0.11 0.147 ± 0.11 0.100 ± 0.10 
+
+LR 0.728 ± 0.06 0.733 ± 0.10 0.107 ± 0.12 0.134 ± 0.11 0.094 ± 0.09 
+
+FairPFN 0.690 ± 0.07 0.695 ± 0.11 0.043 ± 0.07 0.078 ± 0.11 0.069 ± 0.10 
+
+FairTFM -0.7 0.729 ± 0.07 0.754 ± 0.10 0.077 ± 0.13 0.098 ± 0.13 0.065 ± 0.10 
+
+FairTFM -1.0 0.726 ± 0.07 0.751 ± 0.10 0.075 ± 0.12 0.091 ± 0.12 0.064 ± 0.09 
+
+FairTFM -10 0.711 ± 0.07 0.743 ± 0.10 0.063 ± 0.12 0.076 ± 0.12 0.051 ± 0.08 
+
+FairTFM -25 0.688 ± 0.06 0.731 ± 0.10 0.059 ± 0.14 0.072 ± 0.15 0.025 ± 0.06 
+
+E.2 Percent improvement over the strongest baselines 
+
+To make the size of the fairness gains explicit, Table 3 reports the relative change of each FairTFM 
+
+variant against the strongest TFM baseline (TabPFNv2.5), the strongest classical baseline (XGB), and LR, computed from the averages in Table 2. Positive fairness numbers mean fairer (lower DP, EOD, or EOP), and negative accuracy and AUCROC numbers mean lower predictive performance. Three points stand out. First, the fairness gains are large relative to the predictive costs: FairTFM -0.7 improves DP, EOD, and EOP by 32–36% for a 5.3% accuracy cost against TabPFNv2.5, and only a 2% accuracy and 0.8% AUCROC cost against XGB. Second, against LR—the classical baseline closest in accuracy— FairTFM -0.7 improves every metric at once: slightly higher accuracy (+0.1%), higher AUCROC (+2.9%), and 27–31% better fairness. Third, the gains grow monotonically with λ,up to 51–75% for FairTFM -25, confirming that λ provides direct control over the fairness–accuracy trade-off. 
+
+E.3 Performance dynamics during training 
+
+Figure 4 in the main text provides a finer-grained view of how fairness emerges over the course of pretraining. We track accuracy and fairness (DP and EOD) for FairTFM with λ ∈ { 0.7, 25 } and for nanoTabPFN, evaluating checkpoints throughout training and averaging the resulting curves over 10 real-world fairness tasks from our benchmark. The shaded regions indicate one standard deviation across these tasks. Since lower DP and EOD correspond to fairer behavior, the middle and right panels show that both FairTFM variants achieve a fairness advantage over nanoTabPFN very early in training and retain this advantage throughout optimization. This gap is not confined to a narrow set of checkpoints: it persists across most of the training trajectory and becomes especially pronounced in the later stages. We note that the nanoTabPFN reference is trained under the same data prior, backbone, optimizer, and training budget as FairTFM ; the two differ only in the fairness-specific components (the sensitive-feature designation in task sampling, the added encoder and adversarial head, and the fairness loss), so this comparison isolates the effect of our intervention. At the same time, the figure makes the fairness–accuracy trade-off induced by λ visually explicit. Specifically, nanoTabPFN and FairTFM with λ = 0 .7 converge to very similar final accuracies, but the latter does so while maintaining consistently lower DP and EOD gaps. By contrast, FairTFM with 
+
+λ = 25 occupies a distinctly different operating regime: its accuracy remains below that of the other two models, but it attains by far the lowest unfairness on both metrics. The trajectories are also mildly non-monotonic, which is expected because fairness and accuracy are measured on heterogeneous downstream tasks rather than on the pretraining objective itself. Taken together, these dynamics show that our objective changes the optimization path, steering the encoder toward representations that are 17 Table 3: Fairness improvement (positive numbers mean fairer) and accuracy and AUCROC change of each FairTFM variant relative to (a) the best TFM (TabPFNv2.5), (b) the best classical model (XGB), and (c) LR, averaged over the 120 benchmark tasks and derived from Table 2. 
+
+> (a) vs. TabPFNv2.5
+
+Model Acc AUCROC DP EOD EOP 
+
+FairTFM -0.7 −5.3% −5.9% +36 .4% +32 .4% +33 .7%
+
+FairTFM -1.0 −5.7% −6.2% +38 .0% +37 .2% +34 .7%
+
+FairTFM -10 −7.7% −7.2% +47 .9% +47 .6% +48 .0%
+
+FairTFM -25 −10 .6% −8.7% +51 .2% +50 .3% +74 .5%
+
+> (b) vs. XGB
+
+Model Acc AUCROC DP EOD EOP 
+
+FairTFM -0.7 −2.0% −0.8% +33 .6% +31 .9% +33 .0%
+
+FairTFM -1.0 −2.4% −1.2% +35 .3% +36 .8% +34 .0%
+
+FairTFM -10 −4.4% −2.2% +45 .7% +47 .2% +47 .4%
+
+FairTFM -25 −7.5% −3.8% +49 .1% +50 .0% +74 .2%
+
+> (c) vs. LR
+
+Model Acc AUCROC DP EOD EOP 
+
+FairTFM -0.7 +0 .1% +2 .9% +28 .0% +26 .9% +30 .9%
+
+FairTFM -1.0 −0.3% +2 .5% +29 .9% +32 .1% +31 .9%
+
+FairTFM -10 −2.3% +1 .4% +41 .1% +43 .3% +45 .7%
+
+FairTFM -25 −5.5% −0.3% +44 .9% +46 .3% +73 .4%
+
+progressively less informative about the sensitive attribute, with λ providing a direct handle on the final fairness–accuracy operating point. 
+
+E.4 Fair representation learning: protocol details and additional results 
+
+The fairness condition in Definition 1 is equivalent to P(Z | Y, S ) = P(Z | Y ) or, in information-theoretic terms, I(Z; S | Y ) = 0 . A downstream model trained on Z is therefore expected to exhibit improved fairness relative to a model trained directly on X.Existing approaches for learning g are typically task-specific, requiring a separate model to be fitted for each downstream task [42, 30]. We compare FairTFM against two open-source, sklearn-compatible pre-processing methods from the fairlearn library [6]. The first is Correlation Remover (CR), which reduces linear dependence on the sensitive attribute by applying a linear transformation to the non-sensitive features [6]. The second is Learning Fair Representations (LFR), which maps inputs to latent prototypes while encouraging similar assignment behaviour across demographic groups [42]. We consider ACSIncome for Alabama (AL) with three sensitive attributes—gender, race, and age— yielding three downstream fairness tasks. Each task is randomly split into 80% training data and 20% test data. For CR and LFR, the training split is used to fit the representation map g, which is then applied to both the training and test features. For FairTFM , we use the training split as context with the test as query, and compute embeddings for both training and test examples from the transformer’s output. Importantly, these representations are obtained in a single forward pass, without any task-specific gradient updates. We train three downstream classifiers—LR, RF, and XGB—on four types of representations: the raw input features and the fair representations produced by CR, LFR, and FairTFM .For CR and LFR, we sweep the parameter controlling the fairness–accuracy trade-off over 18 [0 .01 , 0.02 , . . . , 0.1, 0.2, . . . , 1.0] , with denser coverage in the higher-fairness regime. For FairTFM ,we evaluate the checkpoints associated with the λ values used in Figure 2. We run this experiment across three random seeds and average the results. Figure 8 shows the XGBoost results for the remaining sensitive attributes (race and age; gender is in Figure 6 of the main text), and Figures 9 and 10 show the Pareto fronts with Random Forest and Logistic Regression as downstream models. Across all three downstream models, FairTFM 
+
+embeddings provide competitive fairness–accuracy trade-offs without any task-specific fitting of the representation map, while CR is most effective for the linear LR model, as it only removes linear correlation with the sensitive attribute. 0.760 0.765 0.770 0.775 0.780 0.785 0.790 0.795                  
+
+> Accuracy
+> 0.11 0.12 0.13 0.14 0.15 0.16 0.17 0.18
+> Unfairness
+> DP Difference
+> 0.760 0.765 0.770 0.775 0.780 0.785 0.790 0.795
+> Accuracy
+> 0.12 0.14 0.16 0.18 0.20 0.22 0.24
+> Unfairness
+> EOD Difference
+> 0.760 0.765 0.770 0.775 0.780 0.785 0.790 0.795
+> Accuracy
+> 0.12 0.14 0.16 0.18 0.20 0.22 0.24
+> Unfairness
+> Equal Opportunity Difference Raw Input CR LFR FairTFM
+
+(a) Race 0.760 0.765 0.770 0.775 0.780 0.785 0.790 0.795                  
+
+> Accuracy
+> 0.22 0.23 0.24 0.25 0.26 0.27 0.28 0.29
+> Unfairness
+> DP Difference
+> 0.760 0.765 0.770 0.775 0.780 0.785 0.790 0.795
+> Accuracy
+> 0.25 0.30 0.35 0.40 0.45 0.50 0.55
+> Unfairness
+> EOD Difference
+> 0.760 0.765 0.770 0.775 0.780 0.785 0.790 0.795
+> Accuracy
+> 0.25 0.30 0.35 0.40 0.45 0.50 0.55
+> Unfairness
+> Equal Opportunity Difference Raw Input CR LFR FairTFM
+
+(b) Age 
+
+Figure 8: Pareto front of XGBoost models trained with different data representations, for race and age as sensitive attributes (gender is shown in Figure 6 of the main text). 
+
+E.5 Additional Exponentiated Gradient results 
+
+Figure 11 complements Figure 5 in the main text by showing the fairness–accuracy trade-off against the EG-constrained baselines when race and age are used as sensitive attributes (same setup, ACSIn-come in Alabama). For race, where all methods incur larger fairness gaps, FairTFM spans a wide and competitive portion of the frontier, particularly at the lower-unfairness end. For age, EG-based classical models achieve stronger accuracy–fairness trade-offs for EOD and EOP, whereas FairTFM 
+
+remains competitive on DP. Figure 12 additionally measures predictive performance with AUCROC instead of accuracy. Because the EG reduction produces randomized ensembles that trade calibrated scores for constraint satisfac-tion, its AUCROC drops sharply, and FairTFM provides the best overall Pareto front across all three sensitive attributes under this view. 19 0.73 0.74 0.75 0.76 0.77 0.78 0.79 0.80 
+
+Accuracy 
+
+0.05 0.10 0.15 0.20 0.25 
+
+> Unfairness
+
+DP Difference 
+
+0.73 0.74 0.75 0.76 0.77 0.78 0.79 0.80 
+
+Accuracy 
+
+0.05 0.10 0.15 0.20 0.25 
+
+> Unfairness
+
+EOD Difference 
+
+0.73 0.74 0.75 0.76 0.77 0.78 0.79 0.80 
+
+Accuracy 
+
+0.00 0.05 0.10 0.15 0.20 0.25 
+
+> Unfairness
+
+Equal Opportunity Difference Raw Input CR LFR FairTFM (a) Gender 0.73 0.74 0.75 0.76 0.77 0.78 0.79 
+
+Accuracy 
+
+0.11 0.12 0.13 0.14 0.15 0.16 0.17 0.18 
+
+> Unfairness
+
+DP Difference 
+
+0.73 0.74 0.75 0.76 0.77 0.78 0.79 
+
+Accuracy 
+
+0.10 0.12 0.14 0.16 0.18 0.20 0.22 0.24 
+
+> Unfairness
+
+EOD Difference 
+
+0.73 0.74 0.75 0.76 0.77 0.78 0.79 
+
+Accuracy 
+
+0.075 0.100 0.125 0.150 0.175 0.200 0.225 0.250 
+
+> Unfairness
+
+Equal Opportunity Difference Raw Input CR LFR FairTFM 
+
+(b) Race 0.75 0.76 0.77 0.78 0.79 
+
+Accuracy 
+
+0.24 0.25 0.26 0.27 0.28 0.29 0.30 
+
+> Unfairness
+
+DP Difference 
+
+0.75 0.76 0.77 0.78 0.79 
+
+Accuracy 
+
+0.25 0.30 0.35 0.40 0.45 0.50 0.55 
+
+> Unfairness
+
+EOD Difference 
+
+0.75 0.76 0.77 0.78 0.79 
+
+Accuracy 
+
+0.20 0.25 0.30 0.35 0.40 0.45 0.50 0.55 0.60 
+
+> Unfairness
+
+Equal Opportunity Difference Raw Input CR LFR FairTFM 
+
+(c) Age 
+
+Figure 9: Pareto front of Random Forest models trained with different data representations. 20 0.72 0.74 0.76 0.78 
+
+Accuracy 
+
+0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 
+
+> Unfairness
+
+DP Difference 
+
+0.72 0.74 0.76 0.78 
+
+Accuracy 
+
+0.02 0.03 0.04 0.05 0.06 0.07 
+
+> Unfairness
+
+EOD Difference 
+
+0.72 0.74 0.76 0.78 
+
+Accuracy 
+
+0.00 0.01 0.02 0.03 0.04 0.05 0.06 0.07 
+
+> Unfairness
+
+Equal Opportunity Difference Raw Input CR LFR FairTFM (a) Gender 0.70 0.72 0.74 0.76 0.78 
+
+Accuracy 
+
+0.02 0.04 0.06 0.08 0.10 0.12 0.14 0.16 
+
+> Unfairness
+
+DP Difference 
+
+0.70 0.72 0.74 0.76 0.78 
+
+Accuracy 
+
+0.025 0.050 0.075 0.100 0.125 0.150 0.175 0.200 0.225 
+
+> Unfairness
+
+EOD Difference 
+
+0.70 0.72 0.74 0.76 0.78 
+
+Accuracy 
+
+0.025 0.050 0.075 0.100 0.125 0.150 0.175 0.200 0.225 
+
+> Unfairness
+
+Equal Opportunity Difference Raw Input CR LFR FairTFM 
+
+(b) Race 0.76 0.77 0.78 0.79 0.80 
+
+Accuracy 
+
+0.05 0.10 0.15 0.20 0.25 0.30 
+
+> Unfairness
+
+DP Difference 
+
+0.76 0.77 0.78 0.79 0.80 
+
+Accuracy 
+
+0.1 0.2 0.3 0.4 0.5 0.6 
+
+> Unfairness
+
+EOD Difference 
+
+0.76 0.77 0.78 0.79 0.80 
+
+Accuracy 
+
+0.1 0.2 0.3 0.4 0.5 0.6 
+
+> Unfairness
+
+Equal Opportunity Difference Raw Input CR LFR FairTFM 
+
+(c) Age 
+
+Figure 10: Pareto front of Logistic Regression models trained with different data representations. 21 0.70 0.72 0.74 0.76 0.78 
+
+Accuracy 
+
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12 0.14
+> Unfairness
+
+DP Difference      
+
+> 0.70 0.72 0.74 0.76 0.78 0.80
+
+Accuracy 
+
+> 0.00 0.05 0.10 0.15 0.20 0.25
+> Unfairness
+
+EOD Difference      
+
+> 0.70 0.72 0.74 0.76 0.78 0.80
+
+Accuracy 
+
+> 0.00 0.05 0.10 0.15 0.20 0.25
+> Unfairness
+
+Equal Opportunity Difference LR+EG RF+EG XGB+EG FairTFM (a) Race 0.70 0.72 0.74 0.76 0.78 
+
+Accuracy 
+
+> 0.00 0.05 0.10 0.15 0.20
+> Unfairness
+
+DP Difference      
+
+> 0.70 0.72 0.74 0.76 0.78 0.80
+
+Accuracy 
+
+> 0.0 0.1 0.2 0.3 0.4
+> Unfairness
+
+EOD Difference      
+
+> 0.70 0.72 0.74 0.76 0.78 0.80
+
+Accuracy 
+
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6
+> Unfairness
+
+Equal Opportunity Difference LR+EG RF+EG XGB+EG FairTFM 
+
+(b) Age 
+
+Figure 11: Fairness-accuracy trade-off comparison with task-specific classical models trained with fairness constraints using Exponentiated Gradient (EG), on ACSIncome (Alabama) with race and age as sensitive attributes (gender is shown in Figure 5 of the main text). 22 0.70 0.72 0.74 0.76 0.78 0.80 0.82 0.84 
+
+ROCAUC 
+
+0.00 0.01 0.02 0.03 0.04 0.05 0.06 0.07 0.08 
+
+> Unfairness
+
+DP Difference 
+
+0.70 0.72 0.74 0.76 0.78 0.80 0.82 0.84 
+
+ROCAUC 
+
+0.00 0.02 0.04 0.06 0.08 0.10 0.12 0.14 
+
+> Unfairness
+
+EOD Difference 
+
+0.70 0.72 0.74 0.76 0.78 0.80 0.82 0.84 
+
+ROCAUC 
+
+0.00 0.02 0.04 0.06 0.08 0.10 0.12 
+
+> Unfairness
+
+Equal Opportunity Difference LR+EG RF+EG XGB+EG FairTFM (a) Gender 0.60 0.65 0.70 0.75 0.80 0.85 
+
+ROCAUC 
+
+0.00 0.02 0.04 0.06 0.08 0.10 0.12 0.14 
+
+> Unfairness
+
+DP Difference 
+
+0.60 0.65 0.70 0.75 0.80 0.85 
+
+ROCAUC 
+
+0.00 0.05 0.10 0.15 0.20 0.25 
+
+> Unfairness
+
+EOD Difference 
+
+0.65 0.70 0.75 0.80 0.85 
+
+ROCAUC 
+
+0.00 0.05 0.10 0.15 0.20 0.25 
+
+> Unfairness
+
+Equal Opportunity Difference LR+EG RF+EG XGB+EG FairTFM 
+
+(b) Race 0.60 0.65 0.70 0.75 0.80 0.85 
+
+ROCAUC 
+
+0.00 0.05 0.10 0.15 0.20 
+
+> Unfairness
+
+DP Difference 
+
+0.65 0.70 0.75 0.80 0.85 
+
+ROCAUC 
+
+0.0 0.1 0.2 0.3 0.4 
+
+> Unfairness
+
+EOD Difference 
+
+0.650 0.675 0.700 0.725 0.750 0.775 0.800 0.825 0.850 
+
+ROCAUC 
+
+0.0 0.1 0.2 0.3 0.4 0.5 0.6 
+
+> Unfairness
+
+Equal Opportunity Difference LR+EG RF+EG XGB+EG FairTFM 
+
+(c) Age 
+
+Figure 12: Pareto front of classical models trained with fairness constraints using Exponentiated Gradient (EG). FairTFM show best overall pareto front when performance are measured with AUCROC. 23 E.6 Evaluation beyond ACS PUMS tasks 
+
+The main evaluation covers 120 tasks derived from ACS PUMS [12]. To test whether the observed fairness–utility trends extend beyond this data source, we additionally evaluate on a collection of widely used fairness benchmarks spanning different domains, prediction targets, and sensitive attributes [27]. Specifically, we consider the following datasets: • The Adult (Census Income) dataset contains demographic and socioeconomic records from the U.S. Census [5]. The task is to predict whether an individual’s annual income exceeds $50,000, using gender, race, and age as sensitive attributes. • The COMPAS dataset contains criminal justice screening records for defendants [2]. The task is to predict whether an individual will be rearrested within two years of their initial arrest, with race as the sensitive attribute. • The German Credit dataset contains records of bank account holders and is commonly used for credit risk assessment. The task is to classify applicants as low-risk or high-risk, using gender and age ( ≤25 years) as sensitive attributes. • The Diabetes dataset contains clinical records from 130 U.S. hospitals collected between 1999 and 2008 [38]. The task is to predict whether a patient will be readmitted within 30 days of discharge, using gender and race as sensitive attributes. • The Law School dataset consists of admissions records collected by the Law School Admission Council (LSAC) from 163 U.S. law schools in 1991 [41]. The task is to predict whether a candidate will pass the bar exam, using race and gender as sensitive attributes. • The CelebA dataset provides facial-attribute annotations for celebrity images. We consider two binary prediction tasks, Blond Hair and Smiling , using gender as the sensitive attribute in both cases. Together, these benchmarks define 12 additional fairness tasks. We use the same evaluation protocol as in Section 4 and average results over three random seeds. Figure 3 in the main text shows the accuracy Pareto fronts, Figure 13 below shows the AUCROC view, and Table 4 reports the averaged metrics, playing the same role as Table 2 for the 120 ACS tasks. As there, the table reports the last pretraining checkpoint of each FairTFM variant, so it is a conservative summary: Pareto-dominant checkpoints in the figures could yield better trade-offs, at the cost of model selection on a real-world validation set. The trend from the main evaluation transfers fully to these tasks: FairTFM -0.7 reduces DP by 49% and EOD by 47% relative to TabPFNv2.5 while matching XGB and LR in AUCROC (0.803), and FairTFM -25 nearly eliminates group disparities (DP of 0.011, an 89% reduction). Notably, KNN—the fairest unconstrained baseline—achieves its lower disparities only through much weaker predictive performance (AUCROC 0.664), whereas FairTFM offers strictly better fairness at substantially higher AUCROC. Since FairTFM is pretrained on purely synthetic data, all real datasets are unseen during pretraining; these results additionally rule out any ACS-specific effect in the evaluation and show that the fairness behavior learned from synthetic pretraining generalizes across data provenances. 0.675 0.700 0.725 0.750 0.775 0.800 0.825 
+
+> ROCAUC
+> 0.00 0.02 0.04 0.06 0.08 0.10
+> Unfairness
+> DP Difference
+> 0.675 0.700 0.725 0.750 0.775 0.800 0.825
+> ROCAUC
+> 0.02 0.04 0.06 0.08 0.10
+> Unfairness
+> EOD Difference
+> 0.675 0.700 0.725 0.750 0.775 0.800 0.825
+> ROCAUC
+> 0.00 0.02 0.04 0.06 0.08
+> Unfairness
+> EOP Difference FairTFM-0.1 FairTFM-0.7 FairTFM-10 FairTFM-25 FairPFN KNN LR RF TabICLv2 TabPFNv2.5 XGB
+
+Figure 13: Pareto front between AUCROC and fairness for various models on the 12 fairness tasks beyond ACS PUMS. ↑ indicates higher is better and ↓ indicates smaller is better (unfairness). As for the 120 ACS tasks, Table 5 reports the relative change of each FairTFM variant against TabPFNv2.5, XGB, and LR, derived from Table 4. The picture is even stronger than on the ACS benchmark: FairTFM -0.7 improves DP, EOD, and EOP by 39–50% against TabPFNv2.5 for a 5.2% accuracy and 3.0% AUCROC cost, and against XGB and LR it improves fairness by 34–51% with no 
+
+24 Table 4: Average fairness and accuracy metrics across the 12 fairness tasks beyond ACS PUMS, reported as mean ± standard deviation over three random seeds. The same pattern as on the 120 ACS tasks holds: unconstrained TFMs are the most accurate but least fair, while FairTFM variants sharply reduce disparities at a moderate predictive cost. 
+
+Model Accuracy AUCROC DP Diff EOD Diff EOP Diff 
+
+TabICLv2 0.796 ± 0.09 0.829 ± 0.09 0.101 ± 0.09 0.097 ± 0.06 0.087 ± 0.06 
+
+TabPFNv2.5 0.793 ± 0.10 0.828 ± 0.09 0.097 ± 0.09 0.106 ± 0.07 0.092 ± 0.08 
+
+KNN 0.732 ± 0.10 0.664 ± 0.14 0.065 ± 0.06 0.078 ± 0.05 0.062 ± 0.06 
+
+XGB 0.780 ± 0.10 0.803 ± 0.10 0.100 ± 0.09 0.099 ± 0.07 0.085 ± 0.07 
+
+LR 0.784 ± 0.09 0.803 ± 0.10 0.099 ± 0.09 0.115 ± 0.08 0.087 ± 0.07 
+
+RF 0.786 ± 0.09 0.806 ± 0.09 0.102 ± 0.09 0.112 ± 0.06 0.084 ± 0.05 
+
+FairPFN 0.737 ± 0.10 0.705 ± 0.10 0.045 ± 0.08 0.062 ± 0.09 0.043 ± 0.08 
+
+FairTFM -0.1 0.753 ± 0.11 0.782 ± 0.13 0.052 ± 0.09 0.060 ± 0.10 0.060 ± 0.10 
+
+FairTFM -0.7 0.752 ± 0.10 0.803 ± 0.09 0.049 ± 0.08 0.056 ± 0.09 0.056 ± 0.09 
+
+FairTFM -10 0.734 ± 0.10 0.780 ± 0.10 0.021 ± 0.07 0.025 ± 0.07 0.025 ± 0.07 
+
+FairTFM -25 0.708 ± 0.14 0.737 ± 0.12 0.011 ± 0.10 0.015 ± 0.10 0.015 ± 0.10 
+
+AUCROC cost at all (0.803 for all three models). At the fair end, FairTFM -25 improves fairness by 82–89% across all three baselines. Table 5: Fairness improvement (positive numbers mean fairer) and accuracy and AUCROC change of each FairTFM variant relative to (a) TabPFNv2.5, (b) XGB, and (c) LR, averaged over the 12 fairness tasks beyond ACS PUMS and derived from Table 4. 
+
+> (a) vs. TabPFNv2.5
+
+Model Acc AUCROC DP EOD EOP 
+
+FairTFM -0.1 −5.0% −5.6% +46 .4% +43 .4% +34 .8%
+
+FairTFM -0.7 −5.2% −3.0% +49 .5% +47 .2% +39 .1%
+
+FairTFM -10 −7.4% −5.8% +78 .4% +76 .4% +72 .8%
+
+FairTFM -25 −10 .7% −11 .0% +88 .7% +85 .8% +83 .7%
+
+> (b) vs. XGB
+
+Model Acc AUCROC DP EOD EOP 
+
+FairTFM -0.1 −3.5% −2.6% +48 .0% +39 .4% +29 .4%
+
+FairTFM -0.7 −3.6% ±0.0% +51 .0% +43 .4% +34 .1%
+
+FairTFM -10 −5.9% −2.9% +79 .0% +74 .7% +70 .6%
+
+FairTFM -25 −9.2% −8.2% +89 .0% +84 .8% +82 .4%
+
+> (c) vs. LR
+
+Model Acc AUCROC DP EOD EOP 
+
+FairTFM -0.1 −4.0% −2.6% +47 .5% +47 .8% +31 .0%
+
+FairTFM -0.7 −4.1% ±0.0% +50 .5% +51 .3% +35 .6%
+
+FairTFM -10 −6.4% −2.9% +78 .8% +78 .3% +71 .3%
+
+FairTFM -25 −9.7% −8.2% +88 .9% +87 .0% +82 .8%
+
+25 E.7 Fairness-aware baselines on the 12 non-ACS tasks 
+
+We next compare FairTFM against task-specific fairness-aware baselines on the same 12 non-ACS tasks. We wrap XGBoost with the Exponentiated Gradient (EG) reduction [1]; we fo-cus on XGBoost because it is among the strongest non-TFM baselines on these tasks (Table 4) and was the strongest EG-wrapped model in the ACS comparison (Figure 5). For each of the three fairness constraints (DP, EOD, EOP), we sweep the fairness-violation tolerance ε over 
+
+{0.01 , 0.02 , 0.03 , 0.05 , 0.07 , 0.10 , 0.20 , 0.30 , 0.50 , 0.70 , 0.90 }, yielding 33 configurations, each re-trained per task and averaged over three seeds. Table 7 reports all configurations, and Table 6 summarizes the comparison using, for each constraint type, the best (lowest) value of its targeted metric across ε.Three observations follow. First, each FairTFM variant improves on the fairness metric that each EG variant explicitly optimizes: relative to the best EG value of each targeted metric (DP 0.062, EOD 0.083, EOP 0.070), FairTFM -0.7 improves by 21% (DP), 33% (EOD), and 20% (EOP), FairTFM -10 by 66%, 70%, and 64%, and FairTFM -25 by 82%, 82%, and 79%. Second, this comes at substantially higher predictive performance: the EG randomized ensembles reduce XGBoost’s AUCROC from 0.803 to roughly 0.69–0.70 regardless of ε, while FairTFM -0.7 keeps AUCROC at 0.803 with only a modest accuracy cost. Third, the comparison highlights a structural advantage: obtaining the EG numbers required retraining 33 × 12 × 3 model configurations, whereas a single pretrained FairTFM 
+
+checkpoint serves every task and constraint in one forward pass. This per-task, per-constraint retraining cost is itself part of the case for fairness-aware pretraining. Table 6: Summary comparison on the 12 non-ACS tasks. For each EG constraint type, we report the configuration achieving the best (lowest) value of its targeted metric across the ε sweep (targeted metric in bold); unconstrained XGBoost is included as a reference. Each FairTFM variant is fairer on every targeted metric at substantially higher AUCROC. 
+
+Model Accuracy AUCROC DP Diff EOD Diff EOP Diff 
+
+XGB (unconstrained) 0.780 0.803 0.100 0.099 0.085 
+
+XGB-EG-DP (best ε) 0.777 0.695 0.062 0.075 0.060 
+
+XGB-EG-EOD (best ε) 0.778 0.702 0.084 0.083 0.068 
+
+XGB-EG-EOP (best ε) 0.777 0.700 0.085 0.084 0.070 
+
+FairTFM -0.7 0.752 0.803 0.049 0.056 0.056 
+
+FairTFM -10 0.734 0.780 0.021 0.025 0.025 
+
+FairTFM -25 0.708 0.737 0.011 0.015 0.015 
+
+26 Table 7: Full Exponentiated Gradient results on the 12 non-ACS tasks: average fairness and accuracy metrics for each fairness constraint (DP, EOD, EOP) and tolerance ε, mean ± standard deviation over three random seeds. 
+
+Model ε Accuracy AUCROC DP Diff EOD Diff EOP Diff 
+
+XGB-EG-DP 0.01 0.778 ± 0.10 0.695 ± 0.07 0.068 ± 0.06 0.073 ± 0.03 0.061 ± 0.03 0.02 0.778 ± 0.10 0.695 ± 0.07 0.064 ± 0.05 0.065 ± 0.03 0.054 ± 0.03 0.03 0.778 ± 0.10 0.694 ± 0.07 0.064 ± 0.05 0.069 ± 0.03 0.058 ± 0.03 0.05 0.778 ± 0.10 0.692 ± 0.06 0.067 ± 0.05 0.070 ± 0.03 0.059 ± 0.03 0.07 0.777 ± 0.10 0.694 ± 0.06 0.062 ± 0.05 0.072 ± 0.03 0.062 ± 0.03 0.10 0.777 ± 0.10 0.692 ± 0.06 0.068 ± 0.05 0.071 ± 0.02 0.059 ± 0.03 0.20 0.778 ± 0.10 0.693 ± 0.06 0.067 ± 0.05 0.075 ± 0.04 0.061 ± 0.04 0.30 0.776 ± 0.10 0.693 ± 0.07 0.068 ± 0.06 0.078 ± 0.03 0.065 ± 0.03 0.50 0.777 ± 0.10 0.695 ± 0.07 0.062 ± 0.05 0.075 ± 0.04 0.060 ± 0.04 0.70 0.778 ± 0.10 0.696 ± 0.07 0.072 ± 0.06 0.083 ± 0.04 0.068 ± 0.04 0.90 0.777 ± 0.10 0.695 ± 0.06 0.066 ± 0.06 0.071 ± 0.04 0.059 ± 0.04 XGB-EG-EOD 0.01 0.778 ± 0.10 0.702 ± 0.07 0.084 ± 0.08 0.084 ± 0.05 0.069 ± 0.05 0.02 0.778 ± 0.10 0.702 ± 0.07 0.084 ± 0.08 0.083 ± 0.05 0.068 ± 0.05 0.03 0.778 ± 0.10 0.704 ± 0.07 0.084 ± 0.08 0.086 ± 0.05 0.071 ± 0.05 0.05 0.778 ± 0.10 0.704 ± 0.07 0.086 ± 0.08 0.090 ± 0.05 0.075 ± 0.05 0.07 0.778 ± 0.10 0.703 ± 0.07 0.086 ± 0.08 0.088 ± 0.05 0.074 ± 0.05 0.10 0.778 ± 0.10 0.703 ± 0.07 0.085 ± 0.08 0.084 ± 0.05 0.067 ± 0.05 0.20 0.778 ± 0.10 0.700 ± 0.07 0.086 ± 0.08 0.087 ± 0.06 0.072 ± 0.06 0.30 0.779 ± 0.10 0.700 ± 0.07 0.085 ± 0.07 0.084 ± 0.06 0.069 ± 0.05 0.50 0.777 ± 0.10 0.701 ± 0.07 0.084 ± 0.08 0.089 ± 0.06 0.076 ± 0.06 0.70 0.777 ± 0.10 0.700 ± 0.07 0.086 ± 0.08 0.087 ± 0.06 0.074 ± 0.06 0.90 0.778 ± 0.10 0.701 ± 0.07 0.088 ± 0.08 0.088 ± 0.06 0.074 ± 0.06 XGB-EG-EOP 0.01 0.776 ± 0.10 0.698 ± 0.07 0.087 ± 0.08 0.089 ± 0.06 0.074 ± 0.06 0.02 0.776 ± 0.10 0.698 ± 0.07 0.085 ± 0.08 0.087 ± 0.06 0.072 ± 0.06 0.03 0.776 ± 0.10 0.699 ± 0.07 0.086 ± 0.08 0.088 ± 0.06 0.072 ± 0.06 0.05 0.777 ± 0.10 0.699 ± 0.07 0.084 ± 0.08 0.087 ± 0.06 0.073 ± 0.06 0.07 0.776 ± 0.10 0.699 ± 0.07 0.085 ± 0.08 0.086 ± 0.06 0.073 ± 0.06 0.10 0.777 ± 0.10 0.699 ± 0.07 0.087 ± 0.08 0.087 ± 0.06 0.074 ± 0.06 0.20 0.778 ± 0.10 0.699 ± 0.07 0.086 ± 0.08 0.085 ± 0.06 0.071 ± 0.06 0.30 0.777 ± 0.10 0.700 ± 0.07 0.085 ± 0.09 0.084 ± 0.06 0.070 ± 0.06 0.50 0.777 ± 0.10 0.700 ± 0.07 0.088 ± 0.08 0.088 ± 0.06 0.075 ± 0.06 0.70 0.778 ± 0.10 0.699 ± 0.07 0.091 ± 0.09 0.092 ± 0.06 0.077 ± 0.06 0.90 0.777 ± 0.10 0.701 ± 0.07 0.086 ± 0.08 0.091 ± 0.06 0.080 ± 0.06 
+
+27
