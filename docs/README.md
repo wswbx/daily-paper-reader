@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-17</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-18</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 7 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>6</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-17 20:44:22 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-18 20:03:43 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读4篇、速读1篇，聚焦多模态异常检测与符号回归特征构造两大方向。最值得关注的是《ADOPD》提出的参考特权蒸馏方法（9.0分）与《Adaptive Protection》在信用分类中的自适应保护机制（9.0分），均具实用价值。建议普通读者优先跟进ADOPD在工业质检场景的落地思路，其余可速览。</p>
+<p>今日精读6篇、速读1篇，聚焦符号回归在材料预测与自动建模中的前沿应用。最值得关注：机器学习符号回归可提取物理可解释的数学表达式预测MOF的CO2吸附量，AutoSR则探索搜索研究状态实现自动符号回归。建议普通读者优先关注“符号回归+科学发现”这一交叉方向，后续可追踪其向材料设计自动化的延伸。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">6 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ADOPD: Reference-Privileged On-Policy Distillation for MLLM-Based Industrial Anomaly Detection">ADOPD: Reference-Privileged On-Policy Distillation for MLLM-Based Industrial Anomaly Detection</span></li><li><span class="dpr-home-dashboard-paper-title" title="Adaptive Protection for Evolutionary Feature Construction in Symbolic Regression with Application to Credit Classification">Adaptive Protection for Evolutionary Feature Construction in Symbolic Regression with Application to Credit Classification</span></li><li><span class="dpr-home-dashboard-paper-title" title="Training Fair Tabular Foundation Models">Training Fair Tabular Foundation Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Discovering Physically Interpretable Mathematical Expression for Predicting CO2 Adsorption in Metal-Organic Frameworks via Machine Learning-Symbolic Regression">Discovering Physically Interpretable Mathematical Expression for Predicting CO2 Adsorption in Metal-Organic Frameworks via Machine Learning-Symbolic Regression</span></li><li><span class="dpr-home-dashboard-paper-title" title="AutoSR: Automatic Symbolic Regression by Searching Research States">AutoSR: Automatic Symbolic Regression by Searching Research States</span></li><li><span class="dpr-home-dashboard-paper-title" title="VALG: An Agentic System for ML Theory Research">VALG: An Agentic System for ML Theory Research</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">opd <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>3</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Generating Benchmark Health Data Using a Tabular Diffusion Transformer">Generating Benchmark Health Data Using a Tabular Diffusion Transformer</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RecipeNet: A Hierarchical Transformer for Recipe Data">RecipeNet: A Hierarchical Transformer for Recipe Data</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
