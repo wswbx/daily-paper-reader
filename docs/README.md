@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-19</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-20</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 3 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-19 20:23:55 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-20 20:56:40 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读4篇表格预测论文，重点关注自适应检索与表格基础模型的泛化特性。</p>
-<p>最值得看：《ARASH》与《Understanding the Surprising Generalization Properties》均获9.0高分，揭示表格预测中检索选择和模型泛化的重要进展。</p>
-<p>建议从这两篇入手，结合速读中的TabNSM体会不同建模思路，再延伸至AutoML方向。</p>
+<p>今日精读2篇、速读1篇，聚焦表格基础模型蒸馏与ML理论智能体。</p>
+<p>最值得看：GEAR提出生成扩展+真实锚定的两阶段表格蒸馏（10分），VALG探索ML理论研究的智能体系统（9分）。</p>
+<p>建议普通读者优先关注GEAR的表格生成思路，可迁移至数据增强场景。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -76,9 +76,9 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ARASH: Adaptive Retrieval And Shot Selection for Tabular Prediction">ARASH: Adaptive Retrieval And Shot Selection for Tabular Prediction</span></li><li><span class="dpr-home-dashboard-paper-title" title="Understanding the Surprising Generalization Properties of Tabular Foundation Models">Understanding the Surprising Generalization Properties of Tabular Foundation Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GEAR: Generative Expansion and Real Anchoring for Two-Stage Distillation of Tabular Foundation Models">GEAR: Generative Expansion and Real Anchoring for Two-Stage Distillation of Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="VALG: An Agentic System for ML Theory Research">VALG: An Agentic System for ML Theory Research</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +86,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TabNSM: Neural Sparse Mixer for Tabular Regression">TabNSM: Neural Sparse Mixer for Tabular Regression</span></li><li><span class="dpr-home-dashboard-paper-title" title="Evolving Executable Pipeline Programs for AutoML with Language Models">Evolving Executable Pipeline Programs for AutoML with Language Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Polaris: Learning to Generate Table Descriptions from Retrieval Feedback">Polaris: Learning to Generate Table Descriptions from Retrieval Feedback</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 </div>
 
