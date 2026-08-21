@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-20</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-21</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 3 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-20 20:56:40 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-21 20:02:07 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读2篇、速读1篇，聚焦表格基础模型蒸馏与ML理论智能体。</p>
-<p>最值得看：GEAR提出生成扩展+真实锚定的两阶段表格蒸馏（10分），VALG探索ML理论研究的智能体系统（9分）。</p>
-<p>建议普通读者优先关注GEAR的表格生成思路，可迁移至数据增强场景。</p>
+<p>今日精读1篇、速读2篇，聚焦AI在生物与药物研发中的前沿应用。最值得关注的是符号回归用于发现细胞内信号传导动力学模型（9.0分），其次AI系统自主演化算法辅助药物开发（7.0分）。建议优先阅读精读论文，了解AI如何从数据中提取可解释的生物学规律。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GEAR: Generative Expansion and Real Anchoring for Two-Stage Distillation of Tabular Foundation Models">GEAR: Generative Expansion and Real Anchoring for Two-Stage Distillation of Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="VALG: An Agentic System for ML Theory Research">VALG: An Agentic System for ML Theory Research</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Symbolic regression enables coarse-grained model discovery of intracellular signalling dynamics">Symbolic regression enables coarse-grained model discovery of intracellular signalling dynamics</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Polaris: Learning to Generate Table Descriptions from Retrieval Feedback">Polaris: Learning to Generate Table Descriptions from Retrieval Feedback</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="An AI System for Autonomous Algorithm Evolution in Drug Development">An AI System for Autonomous Algorithm Evolution in Drug Development</span></li><li><span class="dpr-home-dashboard-paper-title" title="Constraint-Aware Synthetic Tabular Data Generation via Inter-Column Constraint Discovery with LLM Agents">Constraint-Aware Synthetic Tabular Data Generation via Inter-Column Constraint Discovery with LLM Agents</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 </div>
 
