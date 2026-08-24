@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-23</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-24</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-23 20:19:13 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-24 20:32:41 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读2篇、速读2篇，聚焦AI驱动科研自动化与药物研发算法。最值得关注的是多智能体自动注释转录组系统（9.0分），以及AI自主演化药物开发算法（8.0分）。若时间有限，可先看跨模态训练提升单细胞基础模型性能的速读结论，作为背景补充。</p>
+<p>今日精读5篇论文，聚焦符号回归与表格数据建模，其中两篇高分工作值得关注。最值得看的是《NestyNet III》的神经代理符号回归（10/10）与《Tydra》的表格数据混合模型（9/10），分别代表可解释性与效率的突破。建议普通读者从这两篇入手，先理解核心方法，再结合速读中的异常检测与自编码器应用扩展视野。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Automating scientific annotations for open transcriptomic profiles via multi-stage agents">Automating scientific annotations for open transcriptomic profiles via multi-stage agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="An AI System for Autonomous Algorithm Evolution in Drug Development">An AI System for Autonomous Algorithm Evolution in Drug Development</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="NestyNet. III. Symbolic Regression from Analytic Neural Surrogates">NestyNet. III. Symbolic Regression from Analytic Neural Surrogates</span></li><li><span class="dpr-home-dashboard-paper-title" title="Tydra: An Efficient Hybrid Model for Tabular Data">Tydra: An Efficient Hybrid Model for Tabular Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="An AI System for Autonomous Algorithm Evolution in Drug Development">An AI System for Autonomous Algorithm Evolution in Drug Development</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,7 +87,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Single-cell foundation models benefit from cross-modal training: adding proteomics data beats parameter scaling">Single-cell foundation models benefit from cross-modal training: adding proteomics data beats parameter scaling</span></li><li><span class="dpr-home-dashboard-paper-title" title="LLM as Detector: An In-context Learning Approach for Tabular Anomaly Detection">LLM as Detector: An In-context Learning Approach for Tabular Anomaly Detection</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Conditional-Independence-Regularized Distributional Autoencoders for Mixed-Type Data">Conditional-Independence-Regularized Distributional Autoencoders for Mixed-Type Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="LLM as Detector: An In-context Learning Approach for Tabular Anomaly Detection">LLM as Detector: An In-context Learning Approach for Tabular Anomaly Detection</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span></div>
 </section>
