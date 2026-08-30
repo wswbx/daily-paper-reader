@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-29</span>
+      <span class="dpr-home-dashboard-kicker">2026-08-30</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 3 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-29 21:54:05 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-08-30 22:16:14 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读聚焦《Beyond Execution》，审视LLM驱动科研的实验保真度；两篇速读分别涉及高维贝叶斯优化与生物医学知识图谱构建。最值得关注的是精读提出的实验保真度审计框架（8/10），以及查询高效优化方向。若想快速跟进，建议优先精读LLM科研审计一文，其余可作背景拓展。</p>
+<p>今日精读1篇、速读2篇，重点覆盖AI闭环工程设计、可解释性与形式化定理证明。</p>
+<p>最值得关注的是《Closed-loop AI achieves certifiable engineering design》（8.0/10），揭示AI在工程设计中实现可认证闭环的路径。</p>
+<p>建议普通读者优先了解AI可认证性与可解释性方向，其余两篇可作扩展速读。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -74,7 +76,7 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Beyond Execution: Auditing Experimental Fidelity in LLM-Driven Scientific Research">Beyond Execution: Auditing Experimental Fidelity in LLM-Driven Scientific Research</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Closed-loop AI achieves certifiable engineering design">Closed-loop AI achieves certifiable engineering design</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
 </section>
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GRAPE: Gradient Refinement and Progress-Aware Exploitation for Query-Efficient High-Dimensional Bayesian Optimization">GRAPE: Gradient Refinement and Progress-Aware Exploitation for Query-Efficient High-Dimensional Bayesian Optimization</span></li><li><span class="dpr-home-dashboard-paper-title" title="Automating Biomedical Knowledge Graph Construction For Context-Aware Scientific Inference">Automating Biomedical Knowledge Graph Construction For Context-Aware Scientific Inference</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Interpretable AI with Local Distillation">Interpretable AI with Local Distillation</span></li><li><span class="dpr-home-dashboard-paper-title" title="ProofEvolve: Neuro-Symbolic Evolution for Formal Automated Theorem Proving">ProofEvolve: Neuro-Symbolic Evolution for Formal Automated Theorem Proving</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 </div>
 
