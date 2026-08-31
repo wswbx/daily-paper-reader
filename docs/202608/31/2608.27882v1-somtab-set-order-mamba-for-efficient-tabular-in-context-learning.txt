@@ -1,0 +1,961 @@
+Title: SOMTab: Set-Order Mamba for Efficient Tabular In-Context Learning
+
+URL Source: https://arxiv.org/pdf/2608.27882v1
+
+Published Time: Mon, 31 Aug 2026 00:28:02 GMT
+
+Number of Pages: 17
+
+Markdown Content:
+SOMTab: Set-Order Mamba for Efficient Tabular In-Context Learning 
+
+Hao Wang 1, Siyu Zhang 1, Wei Ma 1,* 
+
+> 1
+
+Institute of Statistics and Big Data, Renmin University of China, Beijing, China 
+
+> *
+
+Correspondence: mawei@ruc.edu.cn 
+
+Abstract 
+
+Tabular foundation models based on in-context learning have recently emerged as strong al-ternatives to task-specific model fitting. How-ever, the current performance frontier remains dominated by attention-heavy architectures, where attention is used throughout the mod-eling pipeline. This raises a natural question: is attention necessary at every stage of tabular in-context learning? We introduce SOMTab, a Set-Order Mamba architecture for efficient tabular in-context learning. SOMTab sepa-rates representation construction from query-conditioned retrieval. For row and column rep-resentations, it maps unordered table tokens into stable latent slots and applies Mamba-based state-space mixing to construct com-pact representations. For final prediction, it retains attention-based in-context learning to preserve query-conditioned retrieval from la-beled context examples. We further intro-duce DCH-TailMix, a synthetic prior that com-bines degree-corrected graph heterogeneity with mixed heavy-tailed regimes to diversify synthetic dependency structures. Across tabu-lar benchmarks, SOMTab approaches the per-formance of strong Transformer-based tabular foundation models while achieving faster infer-ence and lower GPU memory usage, yielding a favorable efficiency–accuracy trade-off. 
+
+1 Introduction 
+
+Tabular data are among the most common data for-mats in scientific and industrial machine learning, with applications in healthcare, finance, biology, materials science, and the social sciences (Borisov et al., 2022; Grinsztajn et al., 2022). Despite the remarkable progress of deep learning in vision and language, tabular prediction has long been domi-nated by tree-based methods such as random forests and gradient-boosted decision trees (Breiman, 2001; Chen and Guestrin, 2016; Ke et al., 2017; Prokhorenkova et al., 2018). One key challenge 10 −1 10 0
+
+> Total time per 1K train samples (s, median)
+> 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7
+> Mean Min-Max Norm. Log-Loss
+> Optimal
+> Normalized log-loss vs. runtime
+> 10 −1
+> 0.05 0.10
+> SOMTab TabICLv2 TabICLv2-1 TabICL TabPFNv2 RealMLP CatBoost XGBoost ExtraTrees RandomForest Pareto Front
+
+Figure 1: Predictive quality–efficiency trade-off on all TALENT classification datasets. The horizontal axis reports the median fit-plus-predict time per 1K labeled context samples, and the vertical axis reports the mean min–max normalized log-loss across datasets. Lower values are better on both axes, and the runtime axis is shown on a logarithmic scale. All methods are rerun on the same H200 server under a common evaluation pipeline; baselines use their official default configura-tions. The dashed line denotes the empirical Pareto frontier. 
+
+is that tabular datasets are highly heterogeneous: different tables have different feature spaces, fea-ture distributions, sample sizes, class cardinalities, missing-value patterns, and degrees of feature inter-action. These properties make it difficult to design a single neural architecture that transfers reliably across datasets (Borisov et al., 2022; Zhu et al., 2023; Ye et al., 2024). Tabular foundation models have begun to change this landscape. Built on the framework of Prior-Data Fitted Networks (PFNs), models such as TabPFN, TabPFNv2, TabICL, and TabICLv2 are pretrained on synthetic tabular tasks to amortize prediction across datasets, and apply the learned predictor to a new dataset through in-context learn-ing (ICL), without updating model parameters on the target data (Müller et al., 2021; Hollmann et al., 2022, 2025; Qu et al., 2025, 2026). Given labeled arXiv:2608.27882v1 [cs.LG] 28 Aug 2026 training examples as context and unlabeled test examples as queries, these models are trained to approximate the posterior predictive distribution induced by a synthetic prior over datasets. This paradigm replaces per-dataset model selection and hyperparameter tuning with a single forward-pass predictor, and has achieved strong performance on tabular benchmarks. However, current leading PFN-style tabular foun-dation models remain largely built around Trans-former attention. Exemplified by TabPFNv2 and its successors, attention serves as a general-purpose table-mixing mechanism: it allows samples, fea-tures, and labels to interact so that the model can infer feature distributions, cross-feature depen-dencies, and task-specific structure from the con-text (Vaswani et al., 2017; Hollmann et al., 2025; Qu et al., 2025, 2026). This all-to-all compari-son is expressive and well aligned with in-context learning, especially in the final prediction stage where test examples must condition on labeled con-text examples. Yet it also inherits the quadratic cost of attention along the sample or feature di-mension, making long-context tabular prediction increasingly expensive as tables grow. This raises a more specific architectural question: must atten-tion be the default operator throughout a tabular foundation model, or is it mainly needed for query-context matching at prediction time? Since earlier table-representation stages often aggregate distri-butional and interaction information before final prediction, they may be amenable to more efficient linear-complexity sequence operators, such as se-lective state-space models (Gu et al., 2021; Gu and Dao, 2023; Dao and Gu, 2024). We argue that tabular ICL can be usefully decom-posed into two computational roles: representation construction and query-context matching. Rep-resentation construction transforms raw cell val-ues and context information into intermediate table or row representations by capturing distributional properties of columns and interactions among fea-tures. Query-context matching, in contrast, pre-dicts labels for test examples by conditioning each test representation on labeled examples in the con-text (Brown et al., 2020; Xie et al., 2021; Müller et al., 2021). Attention is naturally suited for this role because its query-key-value mechanism pro-vides direct query-dependent routing between test and training examples (Vaswani et al., 2017). The former role, however, can be viewed as a structured compression problem: the model must aggregate information from unordered rows and columns into useful representations before final prediction. This observation suggests that attention should be allo-cated selectively rather than treated as the default operator across all stages. Selective state-space models, exemplified by Mamba, provide a promising alternative for effi-cient representation construction (Gu et al., 2021; Gu and Dao, 2023). Mamba uses input-dependent state-space dynamics to propagate, suppress, or up-date information, achieving strong sequence mod-eling performance while scaling linearly with se-quence length (Gu and Dao, 2023). Yet directly ap-plying Mamba to tabular ICL is nontrivial. Tables are not natural sequences: the order of rows and columns is largely arbitrary (Zaheer et al., 2017; Lee et al., 2019), whereas Mamba operates through an ordered state-space scan. Moreover, replacing the final ICL stage with pure state-space compres-sion may remove the query-dependent matching be-havior that makes attention effective for in-context prediction. Thus, the challenge is not simply to replace Transformers with Mamba, but to integrate state-space mixing into tabular ICL while preserv-ing both the unordered structure of tables and the query-dependent matching capability of attention. We propose SOMTab , a Set-Order Mamba ar-chitecture for efficient tabular in-context learning. SOMTab uses attention selectively in the tabular ICL pipeline. For representation construction, it first maps unordered table tokens into ordered la-tent slots through a set-to-order mechanism, and then applies Mamba-based mixing over these slots to encode column distributions and row-wise fea-ture interactions efficiently (Zaheer et al., 2017; Lee et al., 2019; Gu and Dao, 2023). For final pre-diction, SOMTab retains attention-based ICL, al-lowing test examples to condition on label-relevant information from labeled context examples. This hybrid design reflects our central hypothesis: atten-tion is most valuable for query-context matching, whereas state-space sequence mixing can provide a sufficient and more efficient alternative for ta-ble representation once the unordered structure of tabular data is explicitly handled. In addition to the architecture, we intro-duce a synthetic dependency prior, DCH-TailMix (Degree-Corrected Heterogeneity with 
+
+Tail Mix ing), to improve the diversity of pretrain-ing tasks. PFN-style tabular foundation models depend critically on the synthetic prior used dur-ing pretraining (Müller et al., 2021; Hollmann Input Table  (1) Set-Order Representation Construction (Mamba-based)  (2) In-Context Learning (Attention-based)                                       
+
+> X₁ X₂
+> ⋯Xₘ y
+> 1.2 3.4 ⋯cat 1
+> 0.5 -1.1 ⋯dog 0
+> ⋯⋯⋯⋯⋮
+> 2.1 0.3 ⋯bird 1
+> 0.7 -0.2 ⋯cat ?
+> 1.5 0.8 ⋯dog ?
+> ⋯⋯⋯⋯?
+> -0.3 1.2 ⋯bird ?
+> Target
+> Context (labeled)
+> Query (unlabeled)
+> Column-wise Set-to-Order Mamba
+> X₁ X₂ ⋯Xₘ
+> Row-wise Set-to-Order Mamba
+
+⋮Set read + Mamba-2 (× Lₛ)   
+
+> Attention-based ICL Reader
+> Transformer
+> (Lᵣ layers)
+> Class Probabilities (for query rows)
+> Context set read + Mamba-2 All-row readback (× Lᵥ)
+> M features Target
+
+Variable-level Set-to-Order Mamba                
+
+> (for feature column j)
+> Latent lane
+> Context tokens 𝑺 𝒋 𝒄𝒕𝒙
+> Learned seeds 𝑈 𝑣
+> Set Read
+> Q = 𝑼 𝒗
+> K,V = 𝑺 𝒋
+> 𝒄𝒕𝒙
+> Mamba-2
+> 𝒁 𝒋 (𝑲 𝒗 slots)
+> Readback lane
+> All-row tokens 𝑺 𝒋
+> 𝒂𝒍𝒍
+> Readback
+> Q = 𝑺 𝒋
+> 𝒂𝒍𝒍
+> K,V =𝒁 𝒋
+> +FFN +
+> Column-conditioned tokens 𝑬 𝒋 𝒄𝒐𝒍
+> (all rows)
+> 𝒏 𝒄 + 𝒏 𝒒 × 𝒅 𝒄
+
+Sample-level Set-to-Order Mamba               
+
+> (for row i)
+> Row token set 𝑺 𝒊
+> (m features + 𝑲 𝒓 learned row) Learned seeds 𝑼 𝒔
+> Set Read
+> Q = 𝑼 𝒔
+> K,V = 𝑺 𝒊
+> 𝒛 𝒊 𝟎 (𝑲 𝒔 slots)
+> Mamba-2
+> 𝒁 𝒊 (𝑲 𝒔 ×d)
+> Flatten
+> 𝒉 𝒊 ∈ 𝑹 𝑲 𝒓 𝒅
+> 𝑲 𝒔 = 𝑲 𝒓 = 𝟒
+
+Attention-based ICL Reader            
+
+> Row embeddings
+> Context rows
+> (with labels)
+> Query rows
+> (to predict)
+> 𝒈 𝒊 = 𝒉 𝒊 + 𝑬𝒎𝒃 𝒚 𝒊
+> Transformer Block (× 𝐿 𝑟 layers)
+> LayerNorm Context-only Mul-Head
+> Q=all rows; K,V=context +
+> LayerNorm FFN +
+> Output Head
+> (MLP)
+> Class probabilities (query rows)
+> 𝑶 𝒒 ∈𝑹 𝒏 𝒒 ×𝑪
+> 𝒈 ∗= 𝒉 ∗
+> ⋯
+> ⋯
+> ⋯
+> ⋯
+> ⋯
+> ⋯⋯
+> ⋯
+> ⋯
+> ⋯
+> ⋯
+
+Figure 2: Architecture overview of SOMTab. The top illustrates the end-to-end pipeline, where variable- and sample-level Set-to-Order Mamba modules construct compact row representations, followed by an attention-based ICL reader for query prediction. The bottom details the corresponding representation modules and context-only attention mechanism. 
+
+et al., 2022, 2025; Qu et al., 2025, 2026). Ex-isting priors based on structural causal models or random graph mechanisms encode useful induc-tive biases (Pearl, 2009; Peters et al., 2017), but a single graph-sampling regime may not fully cap-ture the diverse dependency patterns encountered in real-world tables. DCH-TailMix addresses this lim-itation by combining degree-corrected graph het-erogeneity with mixed heavy-tailed regimes, gen-erating diverse dependency structures that expose the model to a broader range of feature-target and feature-feature relationships during pretraining. Our experiments on TALENT classification datasets show that SOMTab achieves competitive predictive performance among strong Transformer-based tabular foundation models while substan-tially reducing fit-plus-predict runtime and exhibit-ing increasingly favorable peak-memory scaling as the labeled context grows. Additional results on TabArena further demonstrate a competitive efficiency–performance trade-off across a broader collection of tabular baselines (Erickson et al., 2025). Ablations show that both the set-to-order Mamba encoder and the DCH-TailMix prior con-tribute to the final performance. These results sup-port a simple design principle for tabular ICL: use attention for query–context matching, while em-ploying efficient state-space sequence operators for representation construction when the unordered ta-ble structure can be organized into a stable latent order. Our main contributions are summarized as fol-lows: • We introduce SOMTab , a Set-Order Mamba architecture for tabular in-context learning that organizes unordered table tokens into or-dered latent sequences, uses Mamba-based mixing for efficient representation construc-tion, and retains attention for final query-context matching. • We propose DCH-TailMix , a synthetic depen-dency prior that combines degree-corrected graph heterogeneity with mixed heavy-tailed regimes to generate more diverse feature-target and feature-feature dependency struc-tures for PFN-style pretraining. • We provide empirical evaluations and abla-tion studies showing that SOMTab achieves a favorable speed–accuracy trade-off, approach-ing the predictive performance of strong Transformer-based tabular foundation models while substantially reducing inference time. 
+
+2 Related Work 
+
+Tabular foundation models. Tabular foundation models aim to apply a pretrained predictor directly to unseen tabular tasks without fitting a separate model from scratch. A central branch is based on Prior-Data Fitted Networks (PFNs), which pretrain neural predictors on tasks sampled from a prior over datasets and perform inference by condition-ing on the labeled training set (Müller et al., 2021). TabPFN introduced this paradigm for small tab-ular classification tasks (Hollmann et al., 2022), while TabPFNv2 substantially improved its accu-racy, task coverage, and handling of heterogeneous tabular inputs (Hollmann et al., 2025). Subse-quent work has improved PFN-style models along several directions, including scalable context con-struction and localized inference (Thomas et al., 2024), real-data or hybrid pretraining (Ma et al., 2025; Grinsztajn et al., 2025), richer synthetic pri-ors (Zhang et al., 2025b,a; Qu et al., 2026), and more efficient architectures for large tables (Qu et al., 2025, 2026). Beyond PFN-style ICL, other tabular foundation models generate task-adaptive predictors through hypernetworks (Bonet et al., 2024; Müller et al., 2025) or leverage column and task semantics through language-model-based rep-resentations (Gardner et al., 2024; Wen et al., 2024). SOMTab belongs to the PFN-style tabular ICL fam-ily, but studies whether state-space mixing can re-place attention in representation construction while retaining attention for final query-conditioned re-trieval. 
+
+Efficient architectures and state-space sequence models. The strong performance of PFN-style tabular ICL models is closely tied to attention-based architectures, which enable flexible interac-tions within and across tabular contexts. However, attention can be costly when used as the default operator throughout the full tabular ICL pipeline. Efficient sequence models, especially structured state-space models, provide an alternative computa-tional primitive for long-context representation (Gu et al., 2021). Mamba introduces input-dependent selective state-space dynamics, allowing the model to propagate, suppress, or update information con-ditioned on the current token while retaining linear scaling in sequence length (Gu and Dao, 2023). Hy-brid Mamba–Transformer architectures have also been explored to balance modeling quality and inference efficiency (Waleffe et al., 2024; Blake-man et al., 2025). Directly applying Mamba to tabular ICL is nontrivial because tables are not natural sequences: rows are exchangeable exam-ples and columns do not have a universal ordering across datasets. Set-based architectures such as Set Transformer address unordered inputs through permutation-invariant or permutation-equivariant attention (Lee et al., 2019), but still rely on atten-tion as the main representation engine. SOMTab addresses this mismatch by mapping unordered ta-ble tokens into ordered latent slots before applying Mamba-based mixing for efficient representation construction. 
+
+Synthetic priors for tabular pretraining. The inductive bias and performance of PFN-style mod-els are strongly shaped by the synthetic prior used during pretraining. TabPFN uses synthetic priors based on structural causal models and Bayesian neural networks to generate diverse supervised tasks (Hollmann et al., 2022; Pearl, 2009). Sub-sequent tabular foundation models enrich these priors with mechanisms such as tree-based gen-eration, heterogeneous feature types, missing val-ues, categorical variables, and more diverse graph and function families (Hollmann et al., 2025; Qu et al., 2025, 2026). These priors implicitly specify the class of learning problems that the model is trained to amortize. SOMTab complements these developments with DCH-TailMix, which combines degree-corrected graph heterogeneity with mixed heavy-tailed regimes. 
+
+3 Method 
+
+3.1 Tabular In-Context Learning 
+
+We focus on supervised tabular classification. A task consists of a labeled context set Dtrain =
+
+{(xi, y i)}ntr 
+
+> i=1
+
+, where, after preprocessing, each row is represented as xi ∈ Rm with m tabular fea-tures, and yi ∈ { 1, . . . , C } denotes its class la-bel. The model is given an unlabeled query set 
+
+Xtest = {x∗ 
+
+> j
+
+}nte 
+
+> j=1
+
+, and directly predicts the condi-tional label distribution qθ(y∗ 
+
+> j
+
+| x∗ 
+
+> j
+
+, D train ), with-out updating its parameters on the target dataset. In the PFN-style formulation, synthetic classifi-cation tasks are sampled from a prior over datasets and randomly partitioned into context and query examples; the model is then trained by minimizing the negative log-likelihood of the held-out query labels (Müller et al., 2021; Hollmann et al., 2022). During pretraining, the query labels are used only to compute the loss and are never provided as model inputs. For a synthetic task with query pairs 
+
+Dtest = {(x∗ 
+
+> j
+
+, y ∗ 
+
+> j
+
+)}nte 
+
+> j=1
+
+, we minimize the query-set cross-entropy 
+
+LICL (θ) = ED∼ p(D), π 
+
+ 1
+
+nte 
+
+> nte
+
+X
+
+> j=1
+
+− log qθ(y∗ 
+
+> j
+
+| x∗ 
+
+> j
+
+, D train ) ,
+
+(1) where π denotes a random context–query split of the sampled task D. At inference time, the pre-trained model is applied to a real dataset by placing the training examples in context and predicting the label distributions of the query examples in a single forward pass. 
+
+3.2 Attention Allocation in Tabular ICL 
+
+We organize SOMTab around two computational roles in tabular ICL: representation construction and query-conditioned prediction. The first jointly maps the task table into row representations, 
+
+H = Eθ(X; Dtrain ) = [ h1, . . . , h ntr , h ∗
+
+> 1
+
+, . . . , h ∗ 
+
+> nte
+
+]⊤,
+
+(2) where X = [ Xtrain ; Xtest ] contains the table val-ues, while only context labels from Dtrain are avail-able to the representation module. The encoder summarizes column-wise distributional informa-tion and row-wise feature interactions without di-rectly scanning the arbitrary row or column order. The second role predicts each query label by re-trieving information from the labeled context con-ditioned on its row representation, 
+
+qθ(y∗ 
+
+> j
+
+| x∗ 
+
+> j
+
+, D train ) = Rθ
+
+ h∗ 
+
+> j
+
+, {(hi, y i)}ntr 
+
+> i=1
+
+ .
+
+(3) These roles favor different computational opera-tors. Representation construction compresses un-ordered table tokens into fixed-dimensional row embeddings, whereas final prediction requires query-specific access to labeled context examples. Accordingly, SOMTab uses Set-Order Mamba blocks for representation construction and retains attention in the final row-level ICL reader. This design reduces attention-heavy computation during table encoding while preserving query-dependent retrieval from the labeled context. 
+
+3.3 Set-to-Order Mamba Block 
+
+Mamba-family selective state-space models effi-ciently mix ordered sequences, whereas the rows and features of a table have no canonical order. Applying a state-space scan directly to their input order would therefore make the resulting represen-tations depend on arbitrary permutations. Within each representation block, SOMTab instead maps an unordered token collection to a fixed-index la-tent sequence before applying Mamba-based mix-ing. Let 
+
+S = [ s1; . . . ; sN ] ∈ RN ×d, si ∈ Rd, (4) denote a token collection whose input order is arbi-trary. We introduce K learnable seed slots 
+
+U = [ u1; . . . ; uK ] ∈ RK×d, (5) whose fixed indices define the latent sequence order. The seed slots aggregate information from the input set through cross-attention: 
+
+Z′ = U + Attn  LN( U ), LN( S), LN( S),Z0 = Z′ + FFN  LN( Z′). (6) Because no positional encoding is attached to the input tokens, permuting the rows of S leaves the latent sequence Z0 unchanged. Its order is instead determined by the seed-slot indices. The latent sequence is then processed by a pre-normalized Mamba-2 residual block (Dao and Gu, 2024): 
+
+eZ = Z0 + Mamba2  LN( Z0),Z = eZ + FFN  LN( eZ). (7) The cross-attention in Eq. (6) provides a set-to-slot interface with cost O(N K ), while Mamba-2 mod-els interactions along the ordered latent sequence. When the subsequent stage requires an updated representation for each input token, the latent infor-mation is read back to the original tokens: 
+
+bS′ = S + Attn  LN( S), LN( Z), LN( Z),
+
+bS = bS′ + FFN  LN( bS′). (8) Here, cross-attention transfers the slot-level summary to each input token, while the residual connection preserves its original representation. At the block level, the set-to-order mapping is permutation-invariant, and the readback operation is permutation-equivariant with respect to the input tokens. The latent sequence Z provides a com-pact set representation, while the optional readback produces updated representations aligned with the original input tokens. 3.4 SOMTab Architecture 
+
+SOMTab applies the Set-to-Order Mamba block along two complementary axes of a table: across samples within each feature and across features within each sample. The resulting sample repre-sentations are then used for row-level in-context prediction. 
+
+Representation construction. Given a task table 
+
+X ∈ Rn×m, where n = ntr + nte , we construct a token for each active feature position. Following TabICLv2 (Qu et al., 2026), we adopt repeated feature grouping to alleviate feature symmetries. Let exij denote the grouped input associated with feature j in row i. The initial cell token is 
+
+e(0)  
+
+> ij
+
+= ϕx(exij )+ 1[i ≤ ntr ]ψy(yi), e(0)  
+
+> ij
+
+∈ Rd.
+
+(9) Thus, label information is injected only into context rows. For each feature j, we collect its context-row to-kens as Svar  
+
+> j, tr
+
+= {e(0)  
+
+> ij
+
+}ntr 
+
+> i=1
+
+. This set is mapped to la-tent slots using the set-to-order operation in Eq. (6) and mixed by Mamba as in Eq. (7). The resulting feature-level latent representation is then read back, through Eq. (8), to the tokens of all context and query rows, yielding updated cell representations 
+
+{e(1)  
+
+> ij
+
+}ni=1 . Thus, only context rows determine the latent summary of each feature, while query rows read from this summary without altering it. For each row i, the m updated feature tokens are combined with Kr = 4 shared learned row to-kens to form the unordered sample-level token set 
+
+Ssample  
+
+> i
+
+= {r1, . . . , r Kr , e (1)  
+
+> i1
+
+, . . . , e (1)  
+
+> im
+
+}. We map this set to Ks = 4 ordered latent slots and apply Mamba-based mixing. Since Ks = Kr = 4 in the reported model, the resulting slots are directly con-catenated: hi = Concat( zi1, . . . , z iK s ) ∈ R4d.
+
+Attention-based ICL reader. A second label embedding is added to each context row repre-sentation, after which the attention-based reader in Eq. (3) predicts the query labels. The early label embedding conditions table representation, whereas the later embedding explicitly provides labeled context pairs to the final reader. 
+
+Complexity. Let N = ntr + nte be the total number of rows, and let Kv and Ks
+
+denote the numbers of variable-level and sample-level latent slots. Ignoring hidden-dimension, layer-count, and constant feature-group-size factors, the representation modules cost 
+
+O(mn tr Kv + mN K v + N mK s + mK v + N K s) ,
+
+where the first two terms correspond to variable-level aggregation and readback, the third term to sample-level aggregation, and the last two terms to Mamba mixing over latent slots. Since 
+
+ntr ≤ N , this simplifies to O(N m (Kv + Ks)) .
+
+For fixed Kv and Ks, representation construction is therefore linear in the number of observed cells, rather than quadratic in the sample or feature dimension as in full attention. The final ICL reader retains row-level attention with cost 
+
+O n2tr + ntr nte 
+
+ , which is bounded by O(N 2).
+
+3.5 DCH-TailMix Synthetic Prior 
+
+We introduce DCH-TailMix, a synthetic prior that generates classification tasks from latent directed acyclic graphs (DAGs) with diverse structural and heavy-tailed dependency regimes. 
+
+Degree-corrected graph sampling. Let 
+
+1, . . . , L denote topologically ordered latent nodes. For each pair i < j , an edge i → j is sampled with probability 
+
+pij = σ(ℓij ), (10) where the edge logit combines complementary sources of graph variation: 
+
+ℓij = τ + g + aout  
+
+> i
+
++ ain  
+
+> j
+
++ bci,c j + λ ⟨ui, v j ⟩√r + ϵij .
+
+(11) Here, τ controls base sparsity, g introduces task-level density variation, and aout  
+
+> i
+
+and ain  
+
+> j
+
+create het-erogeneous outgoing and incoming degrees. The module-pair bias bci,c j induces block-structured de-pendencies, while the low-rank term captures cor-related connection patterns and ϵij adds edge-level randomness. A separately sampled graph family controls the emphasis placed on these structural components, allowing the prior to generate sparse, modular, dense, correlated, and hub-dominated graphs. Detailed graph-family definitions and sam-pling probabilities are provided in Appendix B. 
+
+Tail-regime mixture. TailMix controls the tail behavior of the task-level and node-level graph biases. Rather than relying on a single distribution family, we sample 
+
+ρ ∼ Cat( πbase , π hier , π pareto ), (g, a out , a in ) ∼ Pρ.
+
+(12) The independent Student-t regime samples the graph biases independently with controllable tail strength. The hierarchical Student-t regime shares a task-level tail parameter across node biases, pro-ducing coherent within-task degree heterogeneity. The symmetric Pareto regime produces occasional extreme positive and negative biases, leading to more pronounced hub-like structures. Thus, DCH controls the structural placement of dependencies, whereas TailMix controls the tail behavior of the biases governing their concentration. 
+
+Latent propagation and task construction. Af-ter sampling the DAG, root nodes are initialized by random vectors, and each non-root node is gener-ated from its parents: 
+
+zj = fj ({zi : i ∈ Pa( j)}) (13) where fj is sampled from function families includ-ing smooth, tree-like, thresholding, and interaction-based mappings. Observed features are converted from selected latent nodes, while the target is gener-ated from one to three latent nodes and discretized into class labels. Further details on the tail parame-ters, nonlinear functions, feature converters, parent truncation, and task-filtering rules are provided in Appendix B. 
+
+3.6 Pretraining Objective 
+
+During pretraining, each mini-batch consists of synthetic classification tasks sampled from DCH-TailMix. For each task, we sample a context–query split, feed the labeled context and unlabeled query rows into SOMTab, and minimize the ICL loss in Eq. (1). We use a two-stage curriculum over synthetic task sizes and context fractions. Archi-tectural, prior-generation, and training details are provided in Appendices A–C. 
+
+4 Experiments 
+
+We evaluate SOMTab in terms of predictive quality, runtime, and GPU-memory scaling, and compare the attention-based final row-level ICL reader with a Mamba-based alternative. 
+
+4.1 Experimental Setup Benchmark and evaluation protocol. We eval-uate SOMTab on all classification datasets in the TALENT benchmark (Ye et al., 2024). For each dataset, we combine the official training and vali-dation splits to form the labeled context and report performance on the official test split. All methods are evaluated using the same data splits and metric computation. 29 210 211 212 213 214 215           
+
+> Context train rows
+> 10 −1
+> 10 0
+> 10 1
+> End-to-end ICL time (s)
+> 29210 211 212 213 214 215
+> Context train rows
+> 10 3
+> 10 4
+> Peak CUDA memory (MB)
+> SOMTab TabICLv2 n=1 TabICLv2 n=8 TabPFNv2 TabICL
+
+Figure 3: Runtime and GPU-memory scaling with context length. We fix ntest = 1024 , m = 32 features, and C = 10 classes, and vary the number of context rows from 512 to 28,672. All foundation models use one estimator to isolate architectural scaling from prediction ensembling. Results are measured after one warmup run and report the median of three repeats on identical synthetic data. 
+
+Baselines and configurations. We compare SOMTab with RandomForest (Breiman, 2001), Ex-traTrees (Geurts et al., 2006), XGBoost (Chen and Guestrin, 2016), CatBoost (Prokhorenkova et al., 2018), RealMLP (Holzmüller et al., 2024), TabPFNv2 (Hollmann et al., 2025), TabICL (Qu et al., 2025), and TabICLv2 (Qu et al., 2026). All methods are evaluated on the same compute server. For each baseline, we use its official implementa-tion and default configuration, including the default preprocessing and ensemble size. 
+
+Metrics and timing. Let Lm,d denote the test log-loss of method m on dataset d. We report the mean min–max normalized log-loss 
+
+eLm,d = Lm,d − Lmin ,d 
+
+Lmax ,d − Lmin ,d 
+
+, Lm = 1
+
+|D| 
+
+X
+
+> d∈D
+
+eLm,d ,
+
+(14) where Lmin ,d and Lmax ,d are the best and worst log-loss values on dataset d. Runtime is the me-                                                
+
+> Method Norm. LL ↓Accuracy ↑Macro F1 ↑Time/1K ↓
+> SOMTab 0.054 0.849 0.785 0.019 TabICLv2 0.029 0.854 0.790 0.463 TabICLv2(1 est.) 0.046 0.853 0.789 0.151 TabICL 0.105 0.846 0.776 0.453 TabPFNv2 0.100 0.849 0.779 0.675 RealMLP 0.498 0.830 0.757 4.379 CatBoost 0.309 0.826 0.755 0.508 XGBoost 0.509 0.827 0.767 0.442 ExtraTrees 0.716 0.825 0.752 0.232 RandomForest 0.498 0.828 0.755 0.262
+
+Table 1: Aggregate performance over all TALENT classification datasets. Normalized log-loss, accuracy, and Macro F1 are averaged across datasets, while run-time is the median fit-plus-predict time per 1K labeled context samples. TabICLv2 (default) uses the standard ensemble setting with eight estimators, whereas TabI-CLv2 (1 estimator) uses a single estimator. 5000 10000 15000 20000 
+
+> Training Steps
+> 0.55 0.60 0.65 0.70
+> Average Accuracy
+> SOMTab Cauchy Prior SOMTab (Mamba Reader) SCM–Tree Prior
+
+Figure 4: Controlled early-training ablation. All vari-ants are trained from scratch for 20K steps under the same configuration. Checkpoints at 5K, 10K, 15K and 20K steps are evaluated on the 15 TALENT datasets where SOMTab has the largest accuracy gaps relative to TabICLv2 in the main benchmark. The vertical axis reports the equally weighted mean accuracy across datasets. 
+
+dian fit-plus-predict time per 1K labeled context samples across datasets. We exclude external pre-processing, model construction, and checkpoint loading, and record peak allocated CUDA memory over the same interval. 
+
+SOMTab pretraining. The main SOMTab model contains 28 .6M parameters and is trained on synthetic tasks generated by DCH-TailMix. Train-ing follows a two-stage schedule. Stage 1 runs for 300K steps with an initial learning rate of 8 × 10 −4
+
+on four 40 GB NVIDIA A100 GPUs and takes ap-proximately 17 days. Stage 2 continues from the Stage-1 checkpoint for 100K steps with an initial learning rate of 5 × 10 −5, requiring approximately six additional days on the same hardware. All train-ing uses float32 precision. 
+
+4.2 Predictive Quality–Efficiency Trade-off 
+
+Figure 1 compares probabilistic predictive perfor-mance, measured by normalized log-loss, against fit-plus-predict runtime. Its normalized log-loss is close to that of strong tabular foundation models, including TabICLv2 and TabPFNv2, while requir-ing substantially less runtime and outperforming most tree-based baselines. To separate the effect of prediction ensembling, we additionally report TabICLv2 with a single estimator alongside its official default configuration. Reducing the esti-mator count lowers the runtime of TabICLv2 but also increases its normalized log-loss, revealing the trade-off introduced by ensembling. Under the matched H200 evaluation, SOMTab requires sub-stantially less runtime than both the default and single-estimator TabICLv2 configurations while maintaining competitive predictive performance. This result supports our architectural design: by replacing the most computationally expensive attention-based representation construction stages with Mamba-based mixing while retaining atten-tion for the final ICL prediction stage, SOMTab substantially improves efficiency with only a minor impact on predictive quality. Table 1 provides the aggregate values underly-ing Figure 1. SOMTab achieves competitive aver-age classification performance while maintaining one of the lowest runtimes among high-performing methods. Per-dataset accuracy results on 20 se-lected TALENT datasets are provided in Appendix E. We additionally place SOMTab in the broader TabArena benchmark landscape. Appendix F re-ports an improvability–runtime Pareto comparison and a pairwise win-rate matrix against a broad collection of tabular models. Because the public TabArena baselines retain their original H100 con-figurations while SOMTab is measured on A100 and H200 GPUs, the runtime comparison pro-vides contextual positioning rather than a hardware-matched speed ranking. 
+
+4.3 Runtime and Memory Scaling 
+
+Figure 3 compares SOMTab with TabICL, TabI-CLv2, and TabPFNv2 as the labeled context size increases. We fix the numbers of query samples, features, and classes to 1024, 32, and 10, respec-tively, and vary the number of context rows from 512 to 28,672. For a fair comparison, all mod-els are first evaluated with a single estimator. We additionally report TabICLv2 with its default eight-estimator configuration to quantify the overhead introduced by prediction ensembling. Runtime and memory are measured under the same evaluation protocol described above. SOMTab exhibits the lowest runtime across the evaluated context lengths, with an increasing ad-vantage as the context size grows. For memory us-age, SOMTab can be slightly higher than attention-based baselines in small-context settings due to its latent representation modules; however, as the con-text size increases, the quadratic memory growth of attention-based architectures becomes dominant. Overall, replacing attention in column- and row-level representation construction with Set-Order Mamba improves long-context efficiency while re-taining attention for final in-context prediction. 
+
+4.4 Ablation Studies 
+
+Figure 4 compares the effects of different synthetic priors and final ICL readers. To better reveal dif-ferences between variants, we evaluate them on 15 TALENT datasets where SOMTab performs rel-atively less favorably than TabICLv2 in the main benchmark. The same subset is used for all variants and checkpoints. The three prior variants share the same SOMTab architecture and differ only in the synthetic prior. They respectively use DCH-TailMix, a random Cauchy graph prior following the TabICLv2 (Qu et al., 2026) generation mechanism, and the TabICL-style mixture of 70% MLP-based SCM tasks and 30% tree-based SCM tasks. DCH-TailMix achieves the highest mean accuracy at the evaluated checkpoints, indicating better transfer under the same pretraining budget. The fourth variant retains DCH-TailMix and the same Set-Order Mamba representation encoders but replaces the final attention-based ICL reader with a Mamba-based reader. Its lower accuracy under the same training configuration suggests that Mamba-based mixing is effective for table repre-sentation construction, whereas attention remains better suited to the final in-context prediction stage. 
+
+5 Conclusion 
+
+In this paper, we revisit the role of attention in tab-ular in-context learning and introduce SOMTab, a Set-Order Mamba architecture that separates table representation construction from query-conditioned retrieval. By organizing unordered table tokens into stable latent sequences and apply-ing Mamba-based mixing for representation learn-ing while retaining attention for final ICL predic-tion, SOMTab achieves a more efficient architec-ture for tabular foundation models. We further introduce DCH-TailMix, a synthetic prior that im-proves the diversity of dependency structures dur-ing pretraining. Extensive experiments show that SOMTab approaches the predictive performance of strong Transformer-based tabular foundation models while substantially reducing inference cost. These results suggest that future tabular founda-tion models may benefit from assigning different sequence modeling mechanisms to different stages of in-context learning. 
+
+References 
+
+Aaron Blakeman, Aarti Basant, Abhinav Khattar, Adithya Renduchintala, Akhiad Bercovich, Alek-sander Ficek, Alexis Bjorlin, Ali Taghibakhshi, Amala Sanjay Deshmukh, Ameya Sunil Mahabalesh-warkar, et al. 2025. Nemotron-h: A family of accu-rate and efficient hybrid mamba-transformer models. 
+
+arXiv preprint arXiv:2504.03624 .David Bonet, Daniel Mas Montserrat, Xavier Giró-i Nieto, and Alexander G Ioannidis. 2024. Hyperfast: Instant classification for tabular data. In Proceedings of the AAAI Conference on Artificial Intelligence ,volume 38, pages 11114–11123. Vadim Borisov, Tobias Leemann, Kathrin Seßler, Jo-hannes Haug, Martin Pawelczyk, and Gjergji Kas-neci. 2022. Deep neural networks and tabular data: A survey. IEEE transactions on neural networks and learning systems , 35(6):7499–7519. Leo Breiman. 2001. Random forests. Machine learning ,45(1):5–32. Tom Brown, Benjamin Mann, Nick Ryder, Melanie Subbiah, Jared D Kaplan, Prafulla Dhariwal, Arvind Neelakantan, Pranav Shyam, Girish Sastry, Amanda Askell, et al. 2020. Language models are few-shot learners. Advances in neural information processing systems , 33:1877–1901. Tianqi Chen and Carlos Guestrin. 2016. Xgboost: A scalable tree boosting system. In Proceedings of the 22nd acm sigkdd international conference on knowledge discovery and data mining , pages 785– 794. Tri Dao and Albert Gu. 2024. Transformers are ssms: Generalized models and efficient algorithms through structured state space duality. arXiv preprint arXiv:2405.21060 .Nick Erickson, Lennart Purucker, Andrej Tschalzev, David Holzmüller, Prateek Desai, David Salinas, and Frank Hutter. 2025. Tabarena: A living benchmark for machine learning on tabular data. Advances in Neural Information Processing Systems , 38. Josh Gardner, Juan C Perdomo, and Ludwig Schmidt. 2024. Large scale transfer learning for tabular data via language modeling. Advances in Neural Informa-tion Processing Systems , 37:45155–45205. Pierre Geurts, Damien Ernst, and Louis Wehenkel. 2006. Extremely randomized trees. Machine learning ,63(1):3–42. Léo Grinsztajn, Klemens Flöge, Oscar Key, Felix Birkel, Philipp Jund, Brendan Roof, Benjamin Jäger, Do-minik Safaric, Simone Alessi, Adrian Hayler, et al. 2025. Tabpfn-2.5: Advancing the state of the art in tabular foundation models. arXiv preprint arXiv:2511.08667 .Léo Grinsztajn, Edouard Oyallon, and Gaël Varoquaux. 2022. Why do tree-based models still outperform deep learning on typical tabular data? Advances in neural information processing systems , 35:507–520. Albert Gu and Tri Dao. 2023. Mamba: Linear-time sequence modeling with selective state spaces. arXiv preprint arXiv:2312.00752 .Albert Gu, Karan Goel, and Christopher Ré. 2021. Effi-ciently modeling long sequences with structured state spaces. arXiv preprint arXiv:2111.00396 .Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. 2022. Tabpfn: A transformer that solves small tabular classi-fication problems in a second. arXiv preprint arXiv:2207.01848 .Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo, Robin Tibor Schirrmeister, and Frank Hutter. 2025. Accurate predictions on small data with a tabular foundation model. Nature , 637(8045):319–326. David Holzmüller, Léo Grinsztajn, and Ingo Steinwart. 2024. Better by default: Strong pre-tuned mlps and boosted trees on tabular data. Advances in Neural Information Processing Systems , 37:26577–26658. Guolin Ke, Qi Meng, Thomas Finley, Taifeng Wang, Wei Chen, Weidong Ma, Qiwei Ye, and Tie-Yan Liu. 2017. Lightgbm: A highly efficient gradient boost-ing decision tree. Advances in neural information processing systems , 30. Juho Lee, Yoonho Lee, Jungtaek Kim, Adam Ko-siorek, Seungjin Choi, and Yee Whye Teh. 2019. Set transformer: A framework for attention-based permutation-invariant neural networks. In Interna-tional conference on machine learning , pages 3744– 3753. PMLR. Junwei Ma, Valentin Thomas, Rasa Hosseinzadeh, Alex Labach, Jesse Cresswell, Keyvan Golestan, Guang-wei Yu, Anthony L Caterini, and Maks Volkovs. 2025. TabDPT: Scaling tabular foundation models on real data. Advances in Neural Information Processing Systems , 38:172692–172722. Andreas Müller, Carlo Curino, and Raghu Ramakrish-nan. 2025. Mothernet: Fast training and inference via hyper-network transformers. In International Con-ference on Learning Representations , volume 2025, pages 76666–76686. Samuel Müller, Noah Hollmann, Sebastian Pineda Arango, Josif Grabocka, and Frank Hutter. 2021. Transformers can do bayesian inference. arXiv preprint arXiv:2112.10510 .Judea Pearl. 2009. Causality: Models, Reasoning, and Inference , 2 edition. Cambridge University Press. Jonas Peters, Dominik Janzing, and Bernhard Schölkopf. 2017. Elements of Causal Inference: Foundations and Learning Algorithms . MIT Press. Liudmila Prokhorenkova, Gleb Gusev, Aleksandr Vorobev, Anna Veronika Dorogush, and Andrey Gulin. 2018. Catboost: unbiased boosting with cat-egorical features. Advances in neural information processing systems , 31. Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. 2025. TabICL: A tabular foun-dation model for in-context learning on large data. In Proceedings of the 42nd International Conference on Machine Learning , volume 267 of Proceedings of Machine Learning Research , pages 50817–50847. PMLR. Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. 2026. Tabiclv2: A better, faster, scalable, and open tabular foundation model. arXiv preprint arXiv:2602.11139 .Valentin Thomas, Junwei Ma, Rasa Hosseinzadeh, Key-van Golestan, Guangwei Yu, Maksims Volkovs, and Anthony Caterini. 2024. Retrieval & fine-tuning for in-context tabular models. Advances in Neural Infor-mation Processing Systems , 37:108439–108467. Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N Gomez, Łukasz Kaiser, and Illia Polosukhin. 2017. Attention is all you need. Advances in neural information processing systems , 30. Roger Waleffe, Wonmin Byeon, Duncan Riach, Bran-don Norick, Vijay Korthikanti, Tri Dao, Albert Gu, Ali Hatamizadeh, Sudhakar Singh, Deepak Narayanan, et al. 2024. An empirical study of mamba-based language models. arXiv preprint arXiv:2406.07887 .Xumeng Wen, Han Zhang, Shun Zheng, Wei Xu, and Jiang Bian. 2024. From supervised to generative: A novel paradigm for tabular deep learning with large language models. In Proceedings of the 30th ACM SIGKDD Conference on Knowledge Discovery and Data Mining , pages 3323–3333. Sang Michael Xie, Aditi Raghunathan, Percy Liang, and Tengyu Ma. 2021. An explanation of in-context learn-ing as implicit bayesian inference. arXiv preprint arXiv:2111.02080 .Han-Jia Ye, Si-Yang Liu, Hao-Run Cai, Qi-Le Zhou, and De-Chuan Zhan. 2024. A closer look at deep learning methods on tabular datasets. arXiv preprint arXiv:2407.00956 .Manzil Zaheer, Satwik Kottur, Siamak Ravanbakhsh, Barnabas Poczos, Russ R Salakhutdinov, and Alexan-der J Smola. 2017. Deep sets. Advances in neural information processing systems , 30. Xingxuan Zhang, Gang Ren, Han Yu, Hao Yuan, Hui Wang, Jiansheng Li, Jiayun Wu, Lang Mo, Li Mao, Mingchao Hao, et al. 2025a. Limix: Unleashing structured-data modeling capability for generalist in-telligence. arXiv preprint arXiv:2509.03505 .Xiyuan Zhang, Danielle Maddix Robinson, Junming Yin, Nick Erickson, Abdul Fatir Ansari, Boran Han, Shuai Zhang, Leman Akoglu, Christos Faloutsos, Michael Mahoney, et al. 2025b. MITRA: Mixed syn-thetic priors for enhancing tabular foundation models.     
+
+> Advances in neural information processing systems ,38:15795–15840. Bingzhao Zhu, Xingjian Shi, Nick Erickson, Mu Li, George Karypis, and Mahsa Shoaran. 2023. Xtab: Cross-table pretraining for tabular transformers.
+> arXiv preprint arXiv:2305.06090 .
+
+A Architecture and Implementation Details 
+
+We provide the architectural details used in the experiments, including tensor shapes, information flow, and model hyperparameters. We use the nota-tion of the main paper. 
+
+A.1 Task Layout and Cell Tokenization 
+
+Let a classification task contain ntr labeled con-text rows and nte unlabeled query rows, with 
+
+n = ntr + nte . After numerical preprocessing, the model receives 
+
+X = [ Xtr ; Xte ] ∈ Rn×m, ytr ∈ { 0, . . . , C −1}ntr ,
+
+(15) where, during pretraining, tasks are sampled with 
+
+m ≤ 100 active features and C ≤ 10 classes. Query labels are used only to compute the pre-training loss and are not provided to the model. Following TabICLv2 (Qu et al., 2026), the in-put projection uses circular feature grouping with offsets (0 , 1, 3) :
+
+exij = xi,j , x i, ⟨j+1 ⟩m , x i, ⟨j+3 ⟩m
+
+ ,
+
+⟨r⟩m = 1 + (( r − 1) mod m). (16) Grouping is applied to active features before padding. A shared linear projection produces the initial cell token, 
+
+e(0)  
+
+> ij
+
+= Wx exij +bx+1[i ≤ ntr ] ψearly (yi), e(0)  
+
+> ij
+
+∈ Rd.
+
+(17) Only context rows receive label embeddings. Padded feature positions are masked throughout the sample-level encoder. 
+
+A.2 Set-to-Order Mamba Block 
+
+For an unordered token set S ∈ RN ×d, let U ∈
+
+RK×d denote the seed vectors obtained by adding an MLP embedding of each normalized slot coordi-nate to its learned seed vector. Their fixed indices define the latent order, while the input tokens carry no positional encoding. The set read is 
+
+Z′ = U + MHA(LN( U ), LN( S), LN( S)) ,
+
+(18) 
+
+Z(0) = Z′ + FFN  LN( Z′) . (19) The seed slots aggregate information from the input set through cross-attention. Since the input tokens carry no positional information, Eq. (19) is invariant to permutations of S.The ordered latent slots are mixed by a pre-normalized Mamba-2 residual block (Dao and Gu, 2024), 
+
+eZ = Z(0) + Mamba2 
+
+
+
+LN( Z(0) )
+
+
+
+, (20) 
+
+Z = eZ + FFN 
+
+
+
+LN( eZ)
+
+
+
+. (21) When token-aligned outputs are needed, the latent sequence is read back to the original set: 
+
+bS′ = S + MHA(LN( S), LN( Z), LN( Z)) , (22) 
+
+bS = bS′ + FFN 
+
+
+
+LN( bS′)
+
+
+
+. (23) The readback is permutation equivariant with re-spect to S. Cross-attention provides set-to-slot ag-gregation and readback, while Mamba-2 mixes the ordered latent slots. 
+
+A.3 Variable- and Sample-Level Encoders 
+
+For each feature j, the variable-level encoder reads only the context-row tokens: 
+
+Sctx  
+
+> j
+
+= {e(0)  
+
+> ij
+
+}ntr 
+
+> i=1
+
+. (24) The resulting Kv latent slots are processed by one Mamba-2 residual block and read back to the corresponding tokens of all rows. This set-read–Mamba-2–readback operation constitutes one variable-level block. SOMTab applies Lv = 3 such blocks sequentially, with the output tokens of one block used as the input tokens of the next. At the sample level, the m updated feature to-kens of each row i are augmented with Kr = 4 
+
+shared learned row-summary tokens. The resulting m + Kr tokens are first mapped to Ks = 4 ordered latent slots. The slots are then processed sequentially by Ls = 3 Mamba-2 resid-ual blocks, with each block receiving the output of the preceding block. The final slots are denoted by 
+
+Zsample  
+
+> i
+
+∈ R4×d.Symbol Shape Description                                 
+
+> E(0) n×m×dinitial cell tokens
+> Zvar
+> jKv×dlatent memory for feature jEvar n×m×dcontext-conditioned cell tokens
+> Zsample
+> i4×dordered slots for row ihi4drow representation
+> Hn×4drepresentations of all rows
+> Ote nte ×Cquery logits
+
+Table 2: Principal tensors in the SOMTab forward pass. Batch dimensions are omitted. The main model uses d = 128 , Kv = 64 , and Kr = Ks = 4 .
+
+The row representation is obtained by flattening these slots: 
+
+hi = vec 
+
+
+
+Zsample 
+
+> i
+
+
+
+∈ R4d. (25) Table 2 summarizes the main intermediate ten-sors. 
+
+A.4 Context-Only ICL Reader 
+
+Before the final reader, SOMTab adds a second label embedding to the context row representations: 
+
+gi =
+
+(
+
+hi + ψlate (yi), i ≤ ntr ,hi, i > n tr . (26) Let G = [ g1; . . . ; gn] and Gctx = G1: ntr . Each reader block applies 
+
+eG = G + MHA(LN( G), LN( Gctx ), LN( Gctx )) ,
+
+(27) 
+
+G′ = eG + FFN 
+
+
+
+LN( eG)
+
+
+
+. (28) All rows act as queries, while keys and values are restricted to the labeled context. Context rows inter-act with one another, and each query row attends in-dependently to the context. After 12 reader blocks, a two-layer MLP maps the query representations to class logits. 
+
+B DCH-TailMix Synthetic Prior 
+
+DCH-TailMix defines a prior over synthetic clas-sification tasks through degree-corrected DAGs, mixed tail regimes, and heterogeneous nonlinear mechanisms. This section gives the sampling dis-tributions, observation model, and task-validity cri-teria. 
+
+B.1 Generation Procedure 
+
+Algorithm 1 summarizes the generation procedure. Sequence length, feature count, class count, and 
+
+Algorithm 1 DCH-TailMix task generation 
+
+Require: sequence length n, feature count m,number of classes C 
+
+> 1:
+
+Sample L ∈ { 2, . . . , 32 } latent nodes on a logarithmic scale  
+
+> 2:
+
+Sample a graph family and a tail regime  
+
+> 3:
+
+Sample a topologically ordered DCH DAG and truncate parent sets  
+
+> 4:
+
+Sample root states and propagate non-root la-tent variables  
+
+> 5:
+
+Select one to three target nodes and eligible observed-feature nodes  
+
+> 6:
+
+Convert selected latent states to numerical or categorical columns  
+
+> 7:
+
+Construct and standardize a continuous target signal  
+
+> 8:
+
+Convert the target signal to class labels and permute feature and label identities  
+
+> 9:
+
+Reject degenerate tasks or invalid context– query splits  
+
+> 10:
+
+return a synthetic classification task (X, y )
+
+context size are determined by the training curricu-lum. Within each task, related scalar and categor-ical hyperparameters share task-specific distribu-tions. For a scalar parameter, we first draw 
+
+t ∼ U (0 , 1) , s ∼ LogUniform(0 .1, 10 4),
+
+(29) use (st, s (1 − t)) as beta-distribution parameters, and map the resulting draw to the required linear or logarithmic interval. For categorical parameters, task-specific probabilities are obtained by normal-izing log-normal weights whose log-standard de-viation is sampled from [0 .2, 2.0] . Sharing these distributions within a task induces correlated gen-erator settings. 
+
+B.2 Degree-Corrected Graph Sampling 
+
+For each topologically valid pair i < j , the edge 
+
+i → j is sampled as 
+
+Aij ∼ Bernoulli( σ(ℓij )) , (30) where 
+
+ℓij = τ + g + aout  
+
+> i
+
++ ain  
+
+> j
+
++ bci,c j + λ ⟨ui, v j ⟩√r + ϵij .
+
+(31) The global, outgoing, and incoming scales are sam-pled log-uniformly from [0 .2, 1.5] , [0 .3, 2.0] , and 
+
+[0 .3, 2.0] , respectively. The edge-level noise sat-isfies ϵij | sϵ ∼ N (0 , s 2 
+
+> ϵ
+
+), where sϵ is sampled log-uniformly from [0 .05 , 0.8] . Before Bernoulli sampling, logits are clipped to [−6, 6] and proba-bilities to [0 .002 , 0.995] .When the modular component is active, the number of modules is sampled uniformly from 
+
+{2, . . . , 5}. The module-pair bias includes a Gaussian term scaled by a draw from [0 .2, 1.0] 
+
+and a within-module diagonal bias sampled from 
+
+[0 .5, 2.5] . The low-rank dimension is sampled uni-formly from {2, . . . , min(8 , L )}, with weight sam-pled log-uniformly from [0 .1, 1.5] .Table 3 lists the graph-family mixture, and Fig-ure 5 shows representative samples. After edge sampling, parent sets are truncated to bound the input dimension of the random node functions. Ob-served features are drawn with replacement from a latent pool that includes nodes sharing ancestry with the target, allowing correlated and occasion-ally duplicated columns. 
+
+B.3 Tail-Regime Mixture 
+
+The tail regime is sampled once per task: 
+
+ρ ∼ Cat(0 .70 , 0.20 , 0.10) , (g, a out , a in ) ∼ Pρ.
+
+(32) The mixture contains three regimes: 1. Independent Student-t (0.70). The three de-grees of freedom are sampled independently as νg, ν out , ν in ∼ U (1 , 10) .2. Hierarchical Student-t (0.20). A shared base degree of freedom is sampled from 
+
+ν0 ∼
+
+
+
+U(1 , 2) , 0.35 ,
+
+U(2 , 5) , 0.40 ,
+
+U(5 , 10) , 0.25 .
+
+(33) Each realized value is νq = clip( ν0eδq , 1, 10) 
+
+with δq ∼ N (0 , 0.15 2) and q ∈ { g, out , in }.3. Symmetric Pareto (0.10). With α ∼U(1 .5, 5.0) , U ∼ U (0 , 1) , and an equiprob-able sign s ∈ {− 1, +1 }, a raw draw is 
+
+r = s
+
+
+
+U −1/α − 1
+
+
+
+. (34) Vector-valued draws are normalized by the 
+
+0.75 quantile of |r| before applying their sam-pled scale. In every regime, g is clipped to [−5, 5] , and the incoming and outgoing corrections are clipped to 
+
+[−6, 6] . Figure 6 shows representative survival curves before clipping. 
+
+B.4 Latent States and Random Functions 
+
+The dimension of each latent node is sampled log-arithmically from 1 to 32. Root states are drawn from one of four families: independent Gaussian, uniform on [−1, 1] d, uniform in the unit ball, or a random-covariance model. With probability 0.35 ,a random linear map and activation are applied to the root state. For a non-root node with parent states {zp : p ∈
+
+Pa( j)}, the parents are either concatenated and passed through a single function, or processed sepa-rately and combined by a normalized sum, product, maximum, or log-sum-exp. The single-function form is used for one parent and is sampled with probability 0.5 otherwise. Table 4 lists the function families. Their probabilities are sampled at the task level rather than fixed to a uniform distribution. The activation library comprises GELU, ReLU, 
+
+tanh , sine, cosine, sigmoid, and absolute value. After propagation, node states are standardized, dimension-wise reweighted, normalized by their mean sample norm, and rescaled by a factor sam-pled log-uniformly from [0 .1, 10] .
+
+B.5 Observation and Classification Adapters 
+
+The observation model samples a task-level cate-gorical rate 
+
+qcat = clip( U(−0.5, 1.2) , 0, 1) (35) and converts each selected latent feature to cate-gorical form independently with probability qcat .Numerical features are one-dimensional latent pro-jections. With probability 0.35 , a numerical fea-ture is min–max scaled and transformed by a Ku-maraswamy distribution whose two shape parame-ters are sampled log-uniformly from [0 .2, 5] .Categorical features have cardinality between 2 and 9 and use one of two converters. The nearest-center converter uses at most 12 latent dimensions and an ℓp distance with log-uniform p ∈ [0 .5, 4] .The softmax converter uses a standardized random projection, category biases, and a separation pa-rameter sampled log-uniformly from [0 .1, 10] . An additional numerical-to-categorical conversion is applied with task-level probability 0.2, followed by feature standardization, outlier clipping, random feature permutation, and zero padding. One to three target nodes are combined by the same random function mechanism to produce a standardized continuous target. The class count is set to C = 2 with probability 1/2 and is otherwise Graph family Probability Base sparsity τ Structural terms Parent cap controlled heavy-tail 0.40 U(−4.0, −0.5) degree corrections; λ = 0 at most 8
+
+modular heavy-tail 0.25 U(−4.0, −0.5) module-pair and low-rank biases at most 8
+
+low-rank correlated connectivity 0.15 U(−4.0, −0.5) correlated low-rank edge logits at most 8
+
+dense weak-dependency 0.20 U(−2.4, −0.8) denser modular and low-rank effects at most 12 
+
+Table 3: Graph-family mixture in DCH-TailMix. For dense weak-dependency graphs, the parent cap for node j is at least min(8 , j − 1) under one-based topological indexing. When the initial Bernoulli sample for the final node is too sparse, additional high-probability candidate edges are inserted before applying this cap. Controlled heavy-tail Modular heavy-tail Low-rank confounder Dense weak-dependency 
+
+> Representative DCH graph-family realizations
+
+Figure 5: Representative realizations from the four DCH graph families. Nodes are arranged in topological order from left to right; colors identify sampled modules when modular structure is active. Each panel shows one sampled graph. 10 0 10 1     
+
+> Threshold t
+> 10 4
+> 10 3
+> 10 2
+> 10 1
+> 10 0
+> Pr(| a| >  t)
+> Illustrative tail behavior before clipping
+> Independent Student-t
+> Hierarchical Student-t
+> Symmetric Pareto
+
+Figure 6: Illustrative tail behavior of the three mix-ture components before clipping. Curves show repre-sentative draws of the regime parameters. 
+
+sampled uniformly from {2, . . . , 10 }. The result-ing marginal probability is 5/9 for binary tasks and 1/18 for each class count from 3 to 10. The continuous target is discretized using either ran-domly selected observed-value thresholds or Gaus-sian thresholds, and the class identities are then permuted. 
+
+B.6 Validity Conditions 
+
+Degenerate tasks are removed using validity checks that do not require fitting a separate predictor. A task is rejected if the features or target contain non-finite values, if fewer than max(1 , min(2 , m )) fea-tures have non-negligible variance, or if the largest absolute feature–target marginal correlation is at most 0.015 on a subsample of at most 2048 rows. Constant columns are removed after classification conversion. The row order is then resampled up to ten times until the context and query partitions contain the same set of at least two classes. 
+
+C Pretraining Details 
+
+C.1 Two-Stage Curriculum 
+
+The main model is trained entirely on DCH-TailMix tasks. Stage 1 covers a broad range of task sizes and context fractions. Stage 2 continues from the Stage-1 checkpoint with a lower learning rate. Table 5 summarizes the curriculum. Stage 2 uses polynomial decay with power two. Each synthetic task contains between 2 and 100 fea-tures and at most ten classes, with the class-count distribution specified in Appendix B.5. NumPy and PyTorch use random seed 42 in all training runs. 
+
+C.2 Optimization and Compute 
+
+Training uses a hybrid Muon–AdamW optimizer. Muon is applied to non-embedding matrix parame-ters with momentum 0.95 and five Newton–Schulz iterations. Embedding and lower-dimensional pa-rameters use AdamW with (β1, β 2) = (0 .9, 0.95) 
+
+and ϵ = 10 −8. Weight decay is set to zero, and the global gradient norm is clipped at 1.0. Family Construction Sampled ranges / constraints linear random matrix projection Gaussian, low-rank, SVD-shaped, kernel, or activated matrix; input dimension ≤ 128                                              
+
+> neural shallow random MLP depth 1–3; width 1–127 ; sampled input/output activations tree ensemble of random split trees 1–128 trees; depth 1–7; input dimension ≤32
+> discretization nearest-center partition followed by projection 2–255 centers; ℓpdistance with p∈[0 .5,4] log-uniform GP-like finite random Fourier-feature map 256 features; axis-aligned probability 0.5; spectral tail a∈[2 ,20] log-uniform quadratic symmetric quadratic form with a bias coordinate input dimension ≤20
+> EM-like mixture-responsibility transform followed by projection at least 2components; p∈[1 ,4] ; response power in [1 ,2]
+> product standardized product of two sampled subfunctions subfunctions exclude neural, EM-like, and product recursion
+
+Table 4: Random function library for latent propagation. 2
+
+> 02
+
+Linear 
+
+> 2
+> 02
+
+Neural 
+
+> 2
+> 02
+
+Tree 
+
+> 2
+> 02
+
+Discretization   
+
+> 2022
+> 02
+
+GP-like   
+
+> 2022
+> 02
+
+Quadratic   
+
+> 2022
+> 02
+
+EM-like   
+
+> 2022
+> 02
+
+Product 
+
+One-dimensional slice of the parent state Standardized child response 
+
+Representative random-function realizations 
+
+Figure 7: Representative one-dimensional slices of the random function families. Each panel shows the response of one function family along a fixed low-dimensional parent trajectory, illustrating smooth, thresholded, piecewise, and interaction-based mechanisms. 
+
+Setting Stage 1 Stage 2 Initialization random Stage-1 checkpoint Training steps 300 ,000 100 ,000 
+
+Sequence length 400 –8192 400 –8192 
+
+Length sampling log-uniform log-uniform Context fraction U(0 .1, 0.9) U(0 .5, 0.9) 
+
+Initial learning rate 8 × 10 −4 5 × 10 −5
+
+Scheduler cosine + warmup polynomial decay Warmup 2% none Final learning rate approximately 0 5 × 10 −6
+
+Global / micro batch 64 / 1 64 / 1
+
+Numerical precision float32 float32 
+
+Table 5: Two-stage pretraining curriculum. Sequence length is the total number of context and query rows. 
+
+Training is distributed over four NVIDIA A100 GPUs with 40 GB of memory per GPU. Each global batch contains 64 independently generated tasks. The per-device micro-batch size is one, and gradient accumulation yields the global batch size. Stage 1 requires approximately 17 days, followed by approximately six days for Stage 2 on the same hardware. The final Stage-2 checkpoint is used for evaluation. 
+
+D Additional Evaluation Details and Results 
+
+D.1 TALENT Metrics and Aggregation 
+
+For each TALENT classification dataset (Ye et al., 2024), the official training and validation splits form the labeled context, and the official test split forms the query set. Accuracy, Macro F1, and log-loss are computed on the test rows, with equal weight assigned to each dataset in aggregate results. For model a and dataset d, log-loss is normalized across the methods in the common result table: 
+
+eLa,d = La,d − min b Lb,d 
+
+max b Lb,d − min b Lb,d 
+
+, La = 1
+
+|D| 
+
+X
+
+d∈D 
+
+eLa,d .
+
+(36) All methods in an aggregate comparison are evalu-ated on the same intersection of datasets. 
+
+D.2 Timing and Memory Measurement 
+
+For methods rerun on TALENT, timing includes model fitting, when applicable, and prediction. Dataset loading, external preprocessing, model con-struction, and checkpoint loading are excluded. Variant Representation Prior / reader change SOMTab Set-Order Mamba DCH-TailMix + attention reader Cauchy Set-Order Mamba random Cauchy graph prior SCM–Tree Set-Order Mamba 70% MLP-SCM + 30% tree-SCM Tab-Full Set-Order Mamba DCH-TailMix + Mamba reader 
+
+Table 6: Variants in the controlled ablation. All unspecified architecture and optimization settings are shared. 5000 10000 15000 20000 
+
+> Training Steps
+> 0.55 0.60 0.65 0.70
+> Average Accuracy
+> SOMTab Cauchy Prior SOMTab (Mamba Reader) SCM–Tree Prior
+
+Figure 8: Early-training accuracy under a matched 20K-step budget. Values are equally weighted means over the fixed 15-dataset subset. 
+
+Runtime is normalized by the number of labeled context rows and reported per 1000 context ex-amples; aggregate runtime is the median across datasets. Peak GPU memory is the maximum allo-cated CUDA memory during the same interval. The controlled context-scaling experiment fixes 
+
+nte = 1024 , m = 32 , and C = 10 , and varies 
+
+ntr from 512 to 28,672. All foundation models use one estimator, with the default eight-estimator TabICLv2 configuration reported separately. Each point is measured after one warmup run and re-ports the median of three repetitions on identical synthetic inputs. 
+
+D.3 Controlled Early-Training Ablation 
+
+The controlled ablation compares synthetic priors and final ICL readers under the same training bud-get. All variants are initialized randomly, trained for 20K steps, and evaluated every 5K steps. Evalu-ation uses the same subset of 15 TALENT datasets where SOMTab performs relatively less favorably than TabICLv2 in the main benchmark. This subset is used only for the ablation analysis. At each evaluated checkpoint, DCH-TailMix achieves higher mean accuracy than the Cauchy and SCM–Tree priors under the same architec-ture (Hollmann et al., 2025; Qu et al., 2025, 2026). The Mamba Reader variant, which replaces the final attention reader with Mamba, remains less accurate throughout training. These results support the use of Mamba for representation construction and attention for final in-context retrieval. 
+
+E Additional Results on TALENT 
+
+E.1 Per-Dataset Accuracy Results 
+
+Table 7 reports per-dataset accuracy on 20 TAL-ENT classification datasets. The final 15 datasets constitute the fixed evaluation subset used in the controlled early-training ablation in Appendix D.3. 
+
+F Additional Evaluation on TabArena 
+
+Figure 9 summarizes the performance–efficiency comparison on the TabArena benchmark (Erickson et al., 2025). For each dataset, TabArena reports the performance gap between a model and the best-performing method on that dataset. We average these gaps across datasets, where a smaller value indicates that a model is closer to the best perfor-mance. The runtime results should be interpreted as a reference comparison rather than a strictly con-trolled hardware benchmark. The public TabArena results are reported using their original evaluation environment with H100 GPUs, while we do not have access to H100 hardware. To reduce the im-pact of GPU differences, we additionally evaluate SOMTab on both H200 and A100 GPUs. The two measurements provide a more reliable indication of the practical efficiency of SOMTab across different GPU generations. 
+
+F.1 Evaluation Protocol 
+
+We follow the public TabArena evaluation pro-tocol and include the models provided by the benchmark. Figure 9 compares the performance– efficiency trade-off, while Figure 10 reports pair-wise comparisons between models. 
+
+F.2 Pairwise Win-rate Comparison 
+
+Figure 10 reports pairwise win rates on TabArena. Each entry shows the fraction of datasets where the model in the row achieves higher predictive performance than the model in the column. This comparison reveals how frequently one model out-performs another across individual datasets rather than relying only on averaged benchmark scores. Dataset SOMTab TabICLv2 TabICL TabPFNv2 RealMLP CatBoost XGBoost ExtraTrees RandomForest mice_protein_expression 1.000 1.000 1.000 1.000 1.000 0.972 0.954 1.000 0.986 shuttle 1.000 0.999 0.999 0.999 1.000 1.000 1.000 0.999 1.000 JapaneseVowels 0.997 0.999 0.999 0.999 0.990 0.960 0.979 0.985 0.974 gas-drift 0.997 0.997 0.997 0.996 0.996 0.991 0.995 0.996 0.994 pendigits 0.996 0.997 0.997 0.996 0.998 0.986 0.989 0.991 0.991 thyroid 0.994 0.994 0.993 0.997 0.994 0.995 0.997 0.983 0.997 Wilt 0.993 0.993 0.993 0.994 0.993 0.988 0.985 0.981 0.982 GAMETES-2Way-20 0.628 0.678 0.669 0.678 0.669 0.634 0.650 0.578 0.588 eye_movements 0.797 0.838 0.704 0.854 0.698 0.647 0.725 0.730 0.695 autoUniv-au4-2500 0.704 0.724 0.516 0.706 0.488 0.660 0.670 0.568 0.608 eeg-eye-state 0.993 0.994 0.990 0.987 0.985 0.894 0.930 0.953 0.930 Indian_pines 0.915 0.957 0.939 0.939 0.922 0.837 0.888 0.888 0.885 autoUniv-au7-1100 0.427 0.405 0.409 0.432 0.341 0.382 0.395 0.373 0.418 Firm-Teacher 0.875 0.877 0.878 0.850 0.874 0.858 0.845 0.805 0.812 FOREX_audchf-day-High 0.752 0.747 0.749 0.763 0.755 0.649 0.662 0.665 0.668 led24 0.728 0.736 0.736 0.731 0.738 0.731 0.706 0.722 0.730 heloc 0.728 0.734 0.725 0.729 0.732 0.724 0.709 0.725 0.719 page-blocks 0.978 0.977 0.979 0.980 0.970 0.976 0.973 0.975 0.975 waveform-5000 0.867 0.867 0.865 0.866 0.864 0.848 0.847 0.862 0.852 abalone 0.644 0.641 0.642 0.652 0.638 0.632 0.614 0.605 0.632 
+
+Table 7: Per-dataset accuracy results on selected TALENT datasets. We report accuracy on 20 TALENT classification datasets. The final 15 rows form the fixed subset used in the controlled early-training ablation. 10 1 10 0 10 1 10 2
+
+Inference time per 1K samples (s) (median) 
+
+10 15 20 25 30 35 40 45 50 
+
+> Improvability (%)
+> Optimal
+
+Improvability vs Inference Time Linear TabFlex PerpetualBooster KNN OrionMSP TabSTAR RandomForest ExtraTrees FastaiMLP SAP-RPT-OSS EBM Mitra TabPFNv2 BetaTabPFN xRFM ChimeraBoost TorchMLP TabSwift ModernNCA XGBoost TabICL LimiX iLTM LightGBM TabDPT CatBoost TabM SOMTab-H200 RealMLP SOMTab-A100 TabPFN-2.6 RealTabPFN-2.5 TabICLv2 TabPFN-3 Default Tuned Tuned + Ens. Baseline Pareto Front 
+
+Figure 9: Performance–efficiency comparison on TabArena. The x-axis shows inference time per 1000 samples on a logarithmic scale, and the y-axis reports the average performance gap to the best method on each dataset (lower is better). SOMTab-H200 and SOMTab-A100 denote measurements obtained on H200 and A100 GPUs, respectively, while other results are taken from the official TabArena evaluation. TabPFN-3 (default) TabPFN-2.6 (default) TabICLv2 (default) RealTabPFN-2.5 (T+E) SOMTab-A100 SOMTab-H200 RealMLP (T+E) TabM (T+E) TabICL (default) LimiX (default) LightGBM (T+E) TabDPT (T+E) CatBoost (T+E) iLTM (T+E) TabPFNv2 (T+E) Mitra (default) XGBoost (T+E) BetaTabPFN (default) ModernNCA (T+E) TabSwift (default) ChimeraBoost (T+E) xRFM (T+E) EBM (T+E) TorchMLP (T+E) SAP-RPT-OSS (default) FastaiMLP (T+E) ExtraTrees (T+E) RandomForest (T+E) TabSTAR (T+E) OrionMSP (default) PerpetualBooster (T+E) Linear (T+E) KNN (T+E) TabFlex (default) 
+
+Model B: Loser 
+
+TabPFN-3 (default) TabPFN-2.6 (default) TabICLv2 (default) RealTabPFN-2.5 (T+E) SOMTab-A100 SOMTab-H200 RealMLP (T+E) TabM (T+E) TabICL (default) LimiX (default) LightGBM (T+E) TabDPT (T+E) CatBoost (T+E) iLTM (T+E) TabPFNv2 (T+E) Mitra (default) XGBoost (T+E) BetaTabPFN (default) ModernNCA (T+E) TabSwift (default) ChimeraBoost (T+E) xRFM (T+E) EBM (T+E) TorchMLP (T+E) SAP-RPT-OSS (default) FastaiMLP (T+E) ExtraTrees (T+E) RandomForest (T+E) TabSTAR (T+E) OrionMSP (default) PerpetualBooster (T+E) Linear (T+E) KNN (T+E) TabFlex (default) 
+
+> Model A: Winner
+
+62 58 66 75 75 75 78 85 76 79 84 82 83 80 82 83 83 87 89 86 85 87 90 83 87 94 92 90 96 96 94 94 97 38 49 52 67 69 72 72 76 73 77 75 77 79 73 77 79 79 85 79 83 82 86 88 83 86 92 91 87 93 95 94 94 95 42 51 55 68 68 68 70 82 73 75 80 75 75 75 78 76 80 78 83 78 79 82 84 78 85 91 90 87 94 94 95 94 93 34 48 45 61 64 67 68 71 73 74 69 79 73 79 79 79 79 75 78 78 80 83 84 81 83 89 90 87 94 96 91 92 94 25 33 32 39 47 53 55 58 62 59 62 62 62 61 65 59 71 61 76 68 72 70 69 76 80 86 82 89 94 88 91 92 96 25 31 32 36 53 53 55 57 61 58 61 61 60 59 64 58 70 61 74 67 71 70 67 75 78 85 81 89 92 87 89 92 95 25 28 32 33 47 47 52 55 54 66 54 64 68 53 58 73 66 65 60 66 77 77 77 71 86 83 86 84 86 94 92 92 88 22 28 30 32 45 45 48 51 48 59 56 58 60 50 52 64 67 64 65 67 65 75 73 70 77 79 79 85 83 91 92 90 89 15 24 18 29 42 43 45 49 47 52 55 52 54 58 54 59 57 55 63 63 65 65 67 66 69 83 81 79 88 93 83 90 89 24 27 27 27 38 39 46 52 53 58 49 60 63 57 58 63 55 56 55 67 62 68 64 64 66 75 75 72 79 81 83 80 79 21 23 25 26 41 42 34 41 48 42 49 55 52 50 50 68 54 55 57 63 63 71 67 66 69 80 82 83 83 92 90 91 87 16 25 20 31 38 39 46 44 45 51 51 54 54 57 56 53 53 56 61 59 62 64 66 64 71 76 80 77 89 89 81 90 90 18 23 25 21 38 39 36 42 48 40 45 46 52 47 47 59 55 55 58 63 66 66 67 67 70 79 81 83 79 87 90 90 84 17 21 25 27 38 40 32 40 46 37 48 46 48 48 46 55 53 54 54 59 66 65 67 65 74 78 80 79 81 90 85 89 88 20 27 25 21 39 41 47 50 42 43 50 43 53 52 51 55 58 56 52 59 60 62 57 53 61 63 65 67 71 76 78 75 77 18 23 22 21 35 36 42 48 46 42 50 44 53 54 49 56 57 54 53 60 57 64 60 55 62 63 63 69 73 76 80 74 80 17 21 24 21 41 42 27 36 41 37 32 47 41 45 45 44 50 48 50 53 61 62 63 60 65 77 81 80 78 84 88 88 84 17 21 20 21 29 30 34 33 43 45 46 47 45 47 42 43 50 48 54 56 55 63 62 60 66 71 73 86 79 84 88 90 89 13 15 22 25 39 39 35 36 45 44 45 44 45 46 44 46 52 52 53 54 55 62 59 59 64 73 73 74 74 83 78 84 80 11 21 17 22 24 26 40 35 37 45 43 39 42 46 48 47 50 46 47 51 56 53 57 59 69 68 68 79 90 88 81 85 94 14 17 22 22 32 33 34 33 37 33 37 41 37 41 41 40 47 44 46 49 55 58 58 63 60 67 73 81 76 80 84 83 85 15 18 21 20 28 29 23 35 35 38 37 38 34 34 40 43 39 45 45 44 45 55 51 51 62 68 72 72 79 79 88 91 87 13 14 18 17 30 30 23 25 35 32 29 36 34 35 38 36 38 37 38 47 42 45 54 56 56 70 69 78 75 79 87 87 86 10 12 16 16 31 33 23 27 33 36 33 34 33 33 43 40 37 38 41 43 42 49 46 49 62 67 71 77 75 83 85 84 86 17 17 22 19 24 25 29 30 34 36 34 36 33 35 47 45 40 40 41 41 37 49 44 51 57 62 62 65 69 79 83 78 83 13 14 15 17 20 22 14 23 31 34 31 29 30 26 39 38 35 34 36 31 40 38 44 38 43 58 64 66 66 75 82 81 84 6 8 9 11 14 15 17 21 17 25 20 24 21 22 37 37 23 29 27 32 33 32 30 33 38 42 57 60 69 67 70 86 78 8 9 10 10 18 19 14 21 19 25 18 20 19 20 35 37 19 27 27 32 27 28 31 29 38 36 43 60 63 67 68 81 72 10 13 13 13 11 11 16 15 21 28 17 23 17 21 33 31 20 14 26 21 19 28 22 23 35 34 40 40 51 64 62 68 66 4 7 6 6 6 8 14 17 12 21 17 11 21 19 29 27 22 21 26 10 24 21 25 25 31 34 31 37 49 58 63 62 71 4 5 6 4 12 13 6 9 7 19 8 11 13 10 24 24 16 16 17 12 20 21 21 17 21 25 33 33 36 42 58 55 55 6 6 5 9 9 11 8 8 17 17 10 19 10 15 22 20 12 12 22 19 16 12 13 15 17 18 30 32 38 37 42 49 52 6 6 6 8 8 8 8 10 10 20 9 10 10 11 25 26 12 10 16 15 17 9 13 16 22 19 14 19 32 38 45 51 50 3 5 7 6 4 5 12 11 11 21 13 10 16 12 23 20 16 11 20 6 15 13 14 14 17 16 22 28 34 29 45 48 50 
+
+0% 20% 40% 60% 80% 100% 
+
+Win Rate 
+
+Figure 10: Pairwise win-rate comparison on TabArena. Each entry denotes the fraction of datasets where the row model achieves higher predictive perfor-mance than the column model.
