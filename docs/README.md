@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-08-31</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-01</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-08-31 23:19:33 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-01 22:45:51 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读4篇论文，聚焦AI4Science与高效学习两大方向。最值得关注的是用多模态智能体自动发现偏微分方程（9.0/10），以及基于Mamba的表格数据上下文学习模型SOMTab（9.0/10）。建议读者优先阅读这两篇高分开源工作，可分别追踪其代码复现与基准测试结果。</p>
+<p>今共读5篇，精读聚焦表格基础模型在多视图信息级联流行度预测中的应用，速读覆盖表格文档问答、定理证明与数据湖关系发现。最值得看表格基础模型的预测得分（9.0/10），以及像素级压缩的多表文档问答（7.0/10）。建议优先了解表格基础模型如何统一处理多源表格数据，再延伸至文档问答等实际场景。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="See, Hypothesize, Validate: Multimodal Agentic Framework for Discovering Governing PDEs">See, Hypothesize, Validate: Multimodal Agentic Framework for Discovering Governing PDEs</span></li><li><span class="dpr-home-dashboard-paper-title" title="SOMTab: Set-Order Mamba for Efficient Tabular In-Context Learning">SOMTab: Set-Order Mamba for Efficient Tabular In-Context Learning</span></li><li><span class="dpr-home-dashboard-paper-title" title="SymboLLM-FE: LLM-Accelerated Symbolic Regression for Automated Feature Engineering on Tabular Data">SymboLLM-FE: LLM-Accelerated Symbolic Regression for Automated Feature Engineering on Tabular Data</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Tabular Foundation Models for Multi-View Information Cascade Popularity Prediction">Tabular Foundation Models for Multi-View Information Cascade Popularity Prediction</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -84,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Table Is Worth 64 Tokens: Pixel-level Compression for Multi-Table Document Question Answering">A Table Is Worth 64 Tokens: Pixel-level Compression for Multi-Table Document Question Answering</span></li><li><span class="dpr-home-dashboard-paper-title" title="ProofEvolve: Neuro-Symbolic Evolution for Formal Automated Theorem Proving">ProofEvolve: Neuro-Symbolic Evolution for Formal Automated Theorem Proving</span></li><li><span class="dpr-home-dashboard-paper-title" title="Discovering Relationships in Data Lakes Using Large Language Models: An Industrial Case">Discovering Relationships in Data Lakes Using Large Language Models: An Industrial Case</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>3</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
 </section>
 </div>
 
