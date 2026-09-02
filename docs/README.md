@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-01</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-02</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 6 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>4</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-01 22:45:51 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-02 21:49:59 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,7 +62,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今共读5篇，精读聚焦表格基础模型在多视图信息级联流行度预测中的应用，速读覆盖表格文档问答、定理证明与数据湖关系发现。最值得看表格基础模型的预测得分（9.0/10），以及像素级压缩的多表文档问答（7.0/10）。建议优先了解表格基础模型如何统一处理多源表格数据，再延伸至文档问答等实际场景。</p>
+<p>今日精读6篇，聚焦神经符号回归与关系模型可靠性，并速读4篇关联学习与表格生成研究。</p>
+<p>最值得关注：稀疏建模显著提升神经符号回归可解释性；关系基础模型在长上下文下暴露窗口失效瓶颈。</p>
+<p>建议普通读者优先考证模型的实际上下文边界，再尝试结合元路径或合成数据优化表格任务。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -71,12 +73,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Tabular Foundation Models for Multi-View Information Cascade Popularity Prediction">Tabular Foundation Models for Multi-View Information Cascade Popularity Prediction</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Neural Symbollic Regression Using Deep Learning and Sparse Modelling">Neural Symbollic Regression Using Deep Learning and Sparse Modelling</span></li><li><span class="dpr-home-dashboard-paper-title" title="Context Window Failures in Relational Foundation Models">Context Window Failures in Relational Foundation Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -87,9 +89,9 @@
     <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A Table Is Worth 64 Tokens: Pixel-level Compression for Multi-Table Document Question Answering">A Table Is Worth 64 Tokens: Pixel-level Compression for Multi-Table Document Question Answering</span></li><li><span class="dpr-home-dashboard-paper-title" title="ProofEvolve: Neuro-Symbolic Evolution for Formal Automated Theorem Proving">ProofEvolve: Neuro-Symbolic Evolution for Formal Automated Theorem Proving</span></li><li><span class="dpr-home-dashboard-paper-title" title="Discovering Relationships in Data Lakes Using Large Language Models: An Industrial Case">Discovering Relationships in Data Lakes Using Large Language Models: An Industrial Case</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Solving In-Table Prediction Problems by Deep Neural Networks with Performance Evaluation Using Synthetic Data">Solving In-Table Prediction Problems by Deep Neural Networks with Performance Evaluation Using Synthetic Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="MetaSieve: Faster Relational Deep Learning through SQL-Based Metapath Selection">MetaSieve: Faster Relational Deep Learning through SQL-Based Metapath Selection</span></li><li><span class="dpr-home-dashboard-paper-title" title="Creation begins with understanding: LLMs as strategy designers for privacy-preserving tabular data synthesis">Creation begins with understanding: LLMs as strategy designers for privacy-preserving tabular data synthesis</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>3</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>4</strong></span></div>
 </section>
 </div>
 
