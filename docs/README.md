@@ -41,17 +41,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-03</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-04</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 3 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-03 22:56:12 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-04 22:35:50 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +62,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读探究表格基础模型的物理知识边界，并速读定理证明进化与递归多项式KAN改进。</p>
-<p>最值得关注的是：表格模型在单位变化与数据污染下可能产生“伪物理理解”，评分高达9.0，需警惕其确定性极限。</p>
-<p>建议后续阅读时优先验证模型对物理单位与污染数据的鲁棒性，再评估实际应用价值。</p>
+<p>今日精读两篇满分论文：一篇聚焦GPU加速树型遗传编程的符号回归效率优化，另一篇为小米表格基础模型报告。最值得关注的是符号回归优化算法与表格基础模型的技术细节。若想入门，建议优先看小米表格模型报告，可快速了解数据表格处理的前沿方案。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +71,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Do Tabular Foundation Models Know Physics? Contamination, Units, and the Deterministic Limit">Do Tabular Foundation Models Know Physics? Contamination, Units, and the Deterministic Limit</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Efficient Constant Optimization for Symbolic Regression with GPU-Accelerated Tree-Based Genetic Programming">Efficient Constant Optimization for Symbolic Regression with GPU-Accelerated Tree-Based Genetic Programming</span></li><li><span class="dpr-home-dashboard-paper-title" title="Xiaomi-TabLDM: A Tabular Foundation Model Technical Report">Xiaomi-TabLDM: A Tabular Foundation Model Technical Report</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rethinking On-Policy Distillation of Large Language Models II: One Training Example">Rethinking On-Policy Distillation of Large Language Models II: One Training Example</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">opd <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +84,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">2 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="ProofEvolve: Neuro-Symbolic Evolution for Formal Automated Theorem Proving">ProofEvolve: Neuro-Symbolic Evolution for Formal Automated Theorem Proving</span></li><li><span class="dpr-home-dashboard-paper-title" title="RecKAN: Kolmogorov-Arnold Networks with a Learnable Recursive Polynomial Basis">RecKAN: Kolmogorov-Arnold Networks with a Learnable Recursive Polynomial Basis</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+
 </section>
 </div>
 
