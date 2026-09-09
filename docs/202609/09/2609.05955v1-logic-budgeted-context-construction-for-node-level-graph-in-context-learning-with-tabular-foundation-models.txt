@@ -1,0 +1,425 @@
+Title: LoGIC: Budgeted Context Construction for Node-Level Graph In-Context Learning with Tabular Foundation Models
+
+URL Source: https://arxiv.org/pdf/2609.05955v1
+
+Published Time: Wed, 09 Sep 2026 00:31:43 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+> 1
+
+# LoGIC: Budgeted Context Construction for Node-Level Graph In-Context Learning with Tabular Foundation Models 
+
+Mingqi Yang, Zidong Guo, Jihui Yang, and Wenming Zuo 
+
+Abstract —Tabular foundation models have become powerful graph learners. Systems such as G2T-FM and GraphPFN encode each node as a feature row and make predictions through in-context learning (ICL), with labeled rows serving as the prompt. Current protocols employ the complete training table as context, causing attention to scale quadratically with the labeled pool and introducing preprocessing and memory bottlenecks. We investi-gate context construction for node-level graph ICL: which labeled nodes and auxiliary unlabeled nodes should constitute the prompt for specified queries. We formulate this allocation in terms of two resources: a labeled-context budget for predictive evidence and an unlabeled-halo budget for adapter message passing without using label capacity. We present LoGIC, which retrieves labeled nodes via structural, feature-based, and coverage channels, shares each context across the queries in a graph-local cluster, incorporates an unlabeled halo for adapter backbones, and chooses the channel and context budget without test labels. Across three backbone configurations drawn from two model families on GraphLand, budgeted contexts maintain locally runnable full-context performance, stay competitive with published large-dataset results, and markedly lower peak memory requirements compared with full-context and whole-graph inference. They further permit frozen graph ICL on million-node graphs without retraining. Our analysis identifies when retrieval channels work best and connects their behavior with graph properties. 
+
+Index Terms —Graph foundation models, in-context learning, tabular foundation models, context retrieval, graph machine learning, scalability 
+
+I. I NTRODUCTION 
+
+# FOUNDATION models pretrained on extensive data have transformed natural language processing and computer vision, and graph learning has sought a comparable modeling paradigm. Graphs render this transfer challenging: datasets across different domains seldom share feature spaces, degree distributions, or label semantics, and cross-graph transfer continues to be difficult [1], [2]. Tabular foundation models, 
+
+This work has been submitted to the IEEE for possible publication. Copyright may be transferred without notice, after which this version may no longer be accessible. 
+
+(Corresponding author: Wenming Zuo.) 
+
+Mingqi Yang, Zidong Guo, and Wenming Zuo are with the De-partment of Electronic Business, South China University of Technol-ogy, Guangzhou, Guangdong 510006, China (e-mail: yangmq@scut.edu.cn; 202520158576@mail.scut.edu.cn; wmzuo@scut.edu.cn). Jihui Yang is with the Meta Superintelligence Lab (e-mail: ji-hui@meta.com). This work was supported in part by the National Natural Science Foundation of China under Grant 62506134, in part by the Guangdong–Hong Kong– Macao Applied Mathematics Center Project under Grant 2026A1515060008, and in part by the Guangdong Natural Science Foundation under Grant 2026A1515010171. 
+
+pretrained for in-context learning (ICL) on synthetic tables, have become effective graph learners when every node is encoded as a feature row. G2T-FM [3] builds these rows from raw attributes, neighborhood feature aggregates, and structural encodings, and subsequently employs a frozen prior-data fitted network (PFN) [4], [5] for node prediction. GraphPFN [6] alternatively enhances the tabular backbone with pretrained graph-attention adapters. Across varied industrial benchmarks, PFN-based graph models have been shown to equal or surpass well-tuned GNNs on multiple datasets [7]. The prompt employed by these systems has received less consideration than the row representation or the backbone. In ICL, the labeled rows within the prompt provide the model’s supervision during inference, but both G2T-FM and Graph-PFN employ the entire training table as context. GraphPFN observes that its “current implementation requires process-ing the entire dataset at once, which leads to significant memory consumption” [6], and lists subgraph sampling as future work. G2T-TabPFNv2 encounters a similar limitation: practical memory consumption increases with both context size and feature width, and the published GraphLand proto-col consequently uses PCA when full-feature preprocessing surpasses available memory [3]. TAG [8] limits the prompt by randomly subsampling labeled rows, although random subsampling regulates capacity without determining which rows are pertinent to the current queries. The full-table default is likewise costly. Attention across the context scales quadratically with the number of labeled rows, and an identical cost reappears for every prediction batch. For adapter-based backbones, peak memory additionally covers the resident graph tokens, meaning that it depends on the graph, its features, and the execution configuration rather than solely on node count. In the matched local measurements presented in Section V-C, whole-graph GraphPFN consumes 19.59 GB on the 50k-node artnet-exp graph and 7.71 GB on the 57k-node city-roads-M graph, whereas the respective LoGIC configurations consume 8.24 GB and 5.73 GB. The concern is thus not a constant node-count threshold. Rather, full-graph residency is linked to the input graph, while a retrieved-subgraph interface links residency to explicit query, labeled-context, and halo budgets. This difference becomes increasingly important as graph size expands. This paper consequently asks: given a frozen tabular back-bone and a budget, which labeled nodes, and which auxiliary unlabeled nodes, should constitute the prompt for a specified set of queries? arXiv:2609.05955v1 [cs.LG] 5 Sep 2026 2
+
+Current selection techniques do not directly address this question. Retrieval-augmented tabular ICL ranks rows in fea-ture space [9]–[11] and disregards graph structure. Demon-stration selection for graph ICL has been investigated primarily with LLM backbones, frequently employing only a small number of demonstrations chosen through global centrality, learned retrieval, or query-dependent neighborhoods [12]– [15]. In GraphICL’s own ablation, PageRank-based selection fails to surpass random selection [12]. Neither research di-rection encompasses PFN-based graph FMs, in which the context may include thousands of labeled rows and, for adapter backbones, has to be provided as a subgraph instead of an unordered collection of rows. Section II examines these directions in detail. We formalize context construction as budgeted allocation across two resources: k labeled context rows and h unla-beled halo nodes. The labeled budget governs the supervised evidence, whereas the halo provides unlabeled nodes for adapter message passing without using label capacity. We subsequently introduce LoGIC (locally clustered graph in-context construction), a retrieval approach with three scoring channels: personalized-PageRank locality, feature-space sim-ilarity, and coverage sampling. LoGIC shares each retrieved context among all queries in a graph-local cluster, thereby amortizing retrieval and encoding over several queries. The retrieval channel and context budget are regarded as configu-ration choices and are chosen without test labels. This design complements advances in graph tabular foundation models: it neither replaces nor retrains the backbone, but offers a shared inference interface that bounds the labeled context and, where necessary, the supporting subgraph. Our experiments on GraphLand [16] encompass three back-bone configurations from the pure-tabular and graph-adapter families, three retrieval channels, and budgets spanning hun-dreds to tens of thousands of rows. The highest-performing channel differs across datasets. Graph-local retrieval tends to achieve the best performance when labels are smooth over edges, while coverage sampling is preferred when edge-label assortativity is distinctly negative. These findings suggest that the suitable retrieval channel depends on both the graph and the accessible context budget. Since peak accelerator mem-ory during backbone inference is constrained mainly by the query, labeled-context, and halo budgets, the same construction supports configurations unavailable under the respective full-context or full-graph protocols: full-feature inference where the official protocol needs PCA truncation, GraphPFN in-ference that surpasses its published full-graph accuracy with bounded subgraph residency, and frozen graph ICL on a 1.6-million-node graph. Figure 1 compares the two protocols, and the experiments associate retrieval-channel behavior with the context budget and measurable graph properties. The primary contributions of this paper are summarized as follows:  
+
+> •
+
+We recognize and formulate context construction for node-level graph ICL as a budgeted allocation problem involving two resources, labeled context rows and unla-beled halo nodes.  
+
+> •
+
+We introduce LoGIC, a context-construction framework developed to accommodate multiple graph tabular foun-dation model inference interfaces, incorporating multi-channel retrieval, cluster-shared contexts, and an unla-beled halo for graph-adapter backbones. It modifies nei-ther backbone parameters nor training and is implemented for both row-based and graph-adapter inference.  
+
+> •
+
+We empirically connect retrieval-channel behavior to the context budget and measurable graph properties.  
+
+> •
+
+We perform an extensive evaluation across eight Graph-Land datasets and three backbone configurations cov-ering two families, examining predictive performance, efficiency, scalability, and controlled ablations under a consistent and reproducible protocol. II. R ELATED WORK 
+
+A. Tabular Foundation Models and Context Retrieval 
+
+TabPFN [4], [5] positioned prior-data fitted networks as a training-free framework for tabular prediction, and subsequent models including TabICL [17], LimiX [18], and TabPFN-3 [19] have increased the supported context size from thou-sands to millions of rows. A complementary research direction examines what should be included in the context. LoCalPFN [9] obtains a kNN context for each query and demonstrates on synthetic tables that a local context can surpass the full table when the complete table fits the prompt. For real tables, however, row-cap restrictions preclude the equivalent full-context comparison. TabDPT [10] integrates retrieval into pre-training, MixturePFN [11] directs queries to prompt experts, chunked attention [20] lowers the cost of long contexts, and CRUMB [21], concurrent with this work, groups queries into clusters and shares a distribution-matched context within each cluster. LimiX further provides a retrieval-based ensemble, although it continues to pass over every sample [18]. These approaches motivate context selection for frozen tabular mod-els, yet their selection signals are tabular: rows are evaluated in feature space or through distributional matching, rather than through graph structure. In the language-model setting, demonstration selection is similarly recognized as changing the behavior of frozen models; embedding-based retrieval [22], learned prompt retrievers [23], and an extensive follow-up literature [24] document substantial accuracy differences from selection alone. Chunked attention and distribution-matched batching im-prove how a tabular PFN processes a provided context [20], [21]. LoGIC addresses the prior decision: which labeled graph nodes should fill the bounded PFN context, and, for adapter backbones, which unlabeled nodes should maintain local receptive fields. The resulting context can be processed by a memory-efficient PFN implementation without modifying LoGIC’s graph-aware selection interface. 
+
+B. Tabular Foundation Models as Graph Foundation Models 
+
+G2T-FM [3] transforms node prediction into tabular ICL via neighborhood feature aggregation and structural encodings, while GraphPFN [6] extends a LimiX-based PFN backbone using pretrained adjacency-masked graph-attention adapters. 3 
+
+> Fig. 1. Full-context graph ICL (a) versus budgeted context construction (b). LoGIC retrieves a labeled context per graph-local query cluster through three channels and adds an unlabeled halo for adapter backbones.
+
+Subsequent work employs tabular FMs for anomaly detec-tion [25], link prediction with constructed contexts [26], and graph tabularization [27]. NodePFN alternatively pretrains a graph-aware PFN with local message passing over synthetic graph priors [28]. An independent assessment describes PFN-based graph FMs as competitive with, and frequently stronger than, tuned GNNs across varied benchmarks [7]. These sys-tems demonstrate that tabular FMs can function as graph foundation models, although their standard inference protocols continue to employ the complete training context; GraphPFN additionally identifies whole-graph processing as its primary limitation [6]. TAG [8] constrains the prompt through class-balanced random subsampling of labeled rows, offering capac-ity control but no graph-aware retrieval policy. Earlier graph foundation models seek transfer through alternative routes: PRODIGY [29] pretrains GNNs on prompt-graph tasks for few-shot in-context learning across graphs, whereas cross-domain models including GFT [1] and GraphAny [2] transfer through architectures. Their context, if present, remains the entire graph. 
+
+C. Selecting Nodes on Graphs 
+
+Demonstration selection for graph ICL has been investi-gated with LLM backbones. GraphICL [12] evaluates prompt designs for node classification and ranks demonstrations through random sampling, cosine similarity, or global PageR-ank centrality with no more than six demonstrations. It finds that the PageRank variant fails to exceed random se-lection. AskGNN [13] trains a structure-enhanced retriever over GNN embeddings, GraphPrompter [14] jointly optimizes prompt generation, selection, and augmentation across stages, GRAIL [15] obtains top-k relevant nodes via GNN embed-dings for LLM in-context learning, and RAGraph [30] inserts retrieved subgraphs into a pretrained GNN using a prompt mechanism. Selection subject to a node budget also occurs in graph active learning, which selects nodes for annotation using cen-trality and diversity [31], feature propagation [32], partition-ing [33], or influence maximization [34]. Regarding scalability, sampling for GNN training [35]–[37] regulates gradient vari-ance across epochs, while graph condensation [38] generates a compact training set once for each graph. PPR itself has an extensive history as a propagation operator [39], [40]. Label propagation and the label-as-feature technique [41], [42] instead incorporate label information on the feature side. Graph samplers including neighborhood sampling and Cluster-GCN build computational subgraphs for GNN train-ing [35], [36]. Their sampled nodes chiefly regulate message-passing cost; they neither determine which labels should fill a limited PFN prompt nor distinguish labeled evidence from unlabeled structural support. LoGIC focuses on this frozen-inference interface. The mechanisms are nonetheless compatible: a graph partitioner could substitute for RCM in query clustering or supply candidate subgraphs, after which LoGIC would assign its label and halo budgets. 
+
+D. Positioning 
+
+Our setting diverges from these research directions in several ways. In contrast to tabular retrieval methods [9], [10], our selection signals exploit the graph, and PPR is employed to retrieve from the labeled pool instead of propa-gating predictions [39], [40]. Relative to graph-ICL methods [12], [13], [15] and active-learning methods [31]–[33], our backbone processes thousands of labeled rows simultaneously, the labels are already available, and adapter backbones demand that the retrieved context be delivered as a subgraph. The halo budget is established for this final requirement. Graph ICL with tabular FMs is further a setting where the full-context protocol is standard [3], [6] and remains executable on smaller benchmarks, allowing the subset-versus-full com-parison proposed by the tabular direction to be conducted directly; Section V-C presents this comparison under matched backbones. To the best of our knowledge, budgeted two-resource context construction for frozen tabular graph FMs has not been examined previously. TAG’s random subsam-pling [8] constitutes the nearest prior mechanism, and we employ feature-kNN retrieval [9], [10] as the feature-space control in the channel ablations. 4
+
+A full-context graph PFN [3], [6] merges three decisions: which labeled rows support the current queries, how PFN attention arranges those rows, and which nodes and edges stay resident for adapter message passing. LoGIC handles the first decision and provides a halo budget for the third. Chun-ked TabPFN [20] alters the second, whereas CRUMB [21] combines query batching with distribution-matched tabular retrieval; neither exploits graph distance nor builds adapter subgraphs. By contrast, neighborhood sampling and Cluster-GCN [35], [36] decrease graph computation but do not assign a labeled PFN prompt. These methods are not substitutes for one another, although they can be integrated: memory-efficient attention can process a LoGIC context, and graph partitioning can substitute for the RCM query order while preserving LoGIC’s labeled-context and halo allocation. This layered perspective also establishes the suitable com-parison. Full-context and full-graph runs using the same back-bone separate the effect of context construction, whereas fixed PPR, feature-kNN, and coverage policies separate the selection signal. An end-to-end comparison that simultaneously modi-fies the attention kernel, query batching rule, graph partition, and retrieved labels would confound these factors. An inte-grated system is nonetheless a promising direction: LoGIC can choose the labeled evidence and structural support, after which chunked attention or a distribution-matched scheduler can process the bounded context. III. P RELIMINARIES AND PROBLEM STATEMENT 
+
+A. Graph In-Context Learning 
+
+Let G = ( V, E, X ) denote a graph comprising node features 
+
+X ∈ Rn×d, a labeled subset L ⊂ V with targets yL, and a query set Q ⊆ V \ L (transductive node classification or regres-sion). A tabularized graph FM transforms every node into a row representation r(v) and subsequently applies a frozen PFN backbone f through in-context learning. In G2T-FM, the row includes raw attributes, neighborhood feature aggregates, and structural encodings; in GraphPFN, raw features are processed by graph-attention adapters. For a query node v, the prediction is expressed as 
+
+ˆyv = f (r(v) | { (r(u), y u) : u ∈ S} ) , (1) where S ⊆ L denotes the labeled context . The full-context G2T-FM and GraphPFN protocols use S = L, that is, they present the complete training table to the backbone. The adapter-based GraphPFN protocol additionally materializes the whole graph in accelerator memory so that graph-attention layers can exchange messages across edges. 
+
+B. Cost Model and the Memory Wall 
+
+A single forward pass over a context of size |S| and q
+
+queries produces Θ( |S| 2 + q |S| ) attention-score interactions per layer, or Θ(( |S| 2 + q |S| )d) arithmetic at row width d,with activation memory growing correspondingly. Adapter-based backbones further retain all n node tokens, although their actual VRAM also depends on feature width, edge structure, batching, and implementation details. Corresponding resource measurements are presented in Section V-C. The pertinent scaling difference is that whole-graph input residency increases with n, while LoGIC limits the materialized input through the labeled, query, and halo budgets k, q, and h.On the tabular side, the published G2T-TabPFNv2 protocol employs PCA truncation on two of the eight benchmarks since full-feature preprocessing exhausts memory [3]. For the full-attention PFN backbones examined here, expanding model capacity alone does not eliminate this bottleneck: the attention cost continues to be quadratic in the prompt size. The two budgets regulate separate resources. The labeled budget k governs the amount of supervised evidence visible to the PFN and specifies the length of the labeled context. The halo budget h regulates label-masked structural support for graph adapters and consequently the resident subgraph and its message-passing workload. Raising h does not introduce labeled demonstrations. Raising k does not inevitably restore missing neighbors for a query or context node, since the cho-sen labeled nodes need not complete its local receptive field. Combining the two into one node budget would consequently obscure their distinct statistical and systems roles. 
+
+C. Problem: Budgeted Context Construction 
+
+Definition 1 (Context construction) . For a query cluster Qc ⊆Q, a labeled budget k, and a halo budget h, a context policy 
+
+π chooses (i) a labeled context S(Qc) ⊆ L with |S| ≤ k,and (ii) a label-masked halo H(Qc) ⊆ V \ (Qc ∪ S (Qc)) with 
+
+|H| ≤ h; the backbone subsequently predicts on the subgraph induced by Qc ∪ S ∪ H .
+
+The halo constitutes the graph-specific component of the policy. Each halo label is masked, including when the node belongs to L \ S , such that a halo node provides features and edges but no supervision and consumes no label capacity. Its purpose is to complete, or approximate, the receptive fields of context and query tokens for backbones with layers that attend across edges. The tabular special case ( h=0 , no graph) corresponds to retrieval-augmented tabular ICL [9], [10]. The graph setting introduces structural retrieval signals, the halo resource, and the cluster-sharing opportunity employed in Section IV. This definition covers the main comparison protocols as special cases. In the row-based setting, h=0 , k=|L|, and 
+
+S(Qc)= L reproduce full-context inference. Choosing the query-cluster size as q=1 yields per-query retrieval, whereas 
+
+q> 1 yields a cluster-shared context. For an adapter backbone, when Qc ∪ S ∪ H =V and S=L, the materialized input and visible labels correspond to the full-graph protocol. Budgeted context construction lies in the intermediate regime: it con-strains labeled evidence and, where required, structural support without altering the frozen backbone. An effective policy should equal or surpass full-context accuracy at k ≪ |L|, constrain peak accelerator memory during backbone inference through the query, context, and halo budgets instead of whole-graph residency, amortize re-trieval and encoding among queries, operate unchanged with both pure-tabular and adapter-based backbones, and need no training or tuning beyond standard held-out model selection. 5
+
+The following section develops LoGIC according to these requirements. IV. L OGIC: G RAPH -A WARE CONTEXT CONSTRUCTION 
+
+LoGIC builds a bounded prompt for every graph-local group of queries. It initially groups query nodes such that a single retrieved context can support several nearby queries (Sec-tion IV-A). It subsequently fills the labeled budget through one of three retrieval channels (Section IV-B) and, for edge-aware backbones, incorporates unlabeled nodes that maintain local message passing (Section IV-C). The channel and budget are chosen using held-out data without test labels (Section IV-D). 
+
+A. Graph-Local Query Clustering 
+
+LoCalPFN creates an individual local kNN context for every query [9]. On graphs, a direct per-query strategy is costly: every query would need a distinct retrieval step and backbone forward. LoGIC instead arranges the query nodes according to a reverse Cuthill–McKee (RCM) permutation of the adjacency matrix. RCM is a bandwidth-reduction heuristic that generally positions graph-adjacent nodes close to each other in the resulting order [43]. We divide this order into clus-ters containing q queries; every cluster obtains one retrieved context and one backbone forward. This decreases the number of forwards from |Q| to ⌈|Q| /q ⌉ while maintaining graph locality among the queries in a cluster. The RCM order is calculated once and cached, and any balanced graph partitioner could substitute for the clustering step. Concurrent tabular research independently introduces cluster-batched contexts for efficient inference using distribution-matched retrieval [21]. In the graph setting, clustering further specifies the structural center of the retrieval scores in Section IV-B and the subgraph completed through the halo in Section IV-C. 
+
+B. Retrieval Channels 
+
+For a query cluster Qc and labeled budget k, LoGIC allocates a score to every labeled node in L and populates the context from the top of a selected ranking. The following three channels represent distinct assumptions regarding the location of useful label information. 
+
+PPR channel (structural locality). The structural channel evaluates a labeled node u using its personalized PageRank mass relative to the query cluster, 
+
+sppr (u) = πQc (u),πQc = α r Qc + (1 − α) P⊤πQc . (2) where P denotes the row-stochastic transition matrix of G, rQc
+
+denotes the uniform distribution over Qc, and α represents the teleport probability governing how frequently the walk restarts from the query cluster. We obtain the solution to Eq. (2) through power iteration; the iteration count determines the accuracy of the fixed-point approximation. The resulting score vector relies solely on the graph and the cluster, and is therefore computed once, cached across policies and budgets, and reused whenever the query cluster remains unchanged. This channel captures the inductive bias that labels are locally smooth across edges. 
+
+Feature-kNN channel (attribute similarity). The attribute channel evaluates a labeled node according to the negative distance from its closest query row, 
+
+sknn (u) = − min 
+
+> v∈Q c
+
+˜xu − ˜xv 2, (3) calculated over the transformed feature rows ˜x processed by the backbone. This channel directly transfers retrieval-augmented tabular ICL [9], [10] to the graph setting, and functions as the feature-space control in our channel ablations. 
+
+Coverage channel (global representativeness). The cover-age channel employs a seeded uniform sample of L as its basic form (the random row of the results tables). Stratified variants sample proportionally across classes, or across target quantiles for regression. This channel is suitable when global coverage represents the target better than graph locality. It further explains why a budgeted context may occasionally surpass the full table: uniform sampling retains the label marginal in expectation, stratified sampling explicitly preserves class or target-quantile coverage, and both may exclude rows unrelated to the current cluster. The deployed method and its primary ablations employ these three channels. When a channel cannot satisfy a cluster’s budget, for instance because PPR mass is restricted to a disconnected component, the coverage channel supplies the remainder. 
+
+C. The Unlabeled Halo 
+
+For adapter-based backbones (GraphPFN), tokens commu-nicate information across edges in the materialized subgraph. A context constructed solely from rows shortens the receptive field of every token whose neighbors were not retrieved. LoGIC consequently incorporates nodes from the 1-hop clo-sure of Qc ∪ S (Qc) as a label-masked halo, capped at h and sampled uniformly beyond the cap. Every node in Qc ∪ S ∪ H 
+
+enters the materialized graph-adapter subgraph, although the PFN interface handles the three sets differently: only S is presented as labeled context, only Qc is gathered as queries, and each node in H is label-masked. This mask remains applied when a halo node belongs to L \ S , ensuring that membership in the global labeled pool cannot disclose its target following retrieval. Halo nodes consequently use memory but no label capacity. Their feature rows and induced edges stay resident within the tensors processed by the graph-adapter blocks, enabling query and context tokens to obtain messages from halo neighbors. They are never converted into labeled demonstrations and are omitted from evaluation outputs. The sole path from H
+
+to a prediction is via feature- and edge-dependent adapter messages, rather than a visible label or supervised loss term. In the halo-budget ablations, performance rises as h grows before reaching saturation. On tolokers-2, incorporating the halo lifts the subgraph protocol from substantially below the full-graph result to parity with it. On artnet-exp, Fig. 5 in Section V-D demonstrates that it lifts the subgraph protocol 
+
+0.27 AP beyond the published full-graph accuracy. When the full 1-hop closure remains within h, first-layer neighborhoods 6
+
+Algorithm 1: LoGIC inference                                                      
+
+> Input: graph G, labeled set Lwith yL, queries Q, channel
+> π, budgets k, h , cluster size q, frozen backbone f
+> 1σ←RCM order of G;partition Qby σinto clusters {Q c}
+> of size q;
+> 2foreach cluster Qcdo
+> 3score Lby channel π(PPR mass from Qc/ min feature distance / coverage sampling); S ← top-k
+> (coverage-filled);
+> 4H ← label-masked 1-hop closure of Qc∪ S , capped at
+> h;// adapter backbones
+> 5ˆyQc←f rows (Qc)|rows (S), y S;G[Qc∪ S ∪ H ];
+> 6end Output: predictions ˆyQ
+
+are retained exactly; otherwise the sampled halo provides a bounded approximation. One possible explanation is that maintaining local receptive fields in a subgraph whose scale more closely resembles the graphs employed during backbone pretraining yields a more favorable input than whole-graph inference. 
+
+D. Channel and Budget Configuration 
+
+The retrieval-channel comparison in Section V-D demon-strates that no individual channel performs best across all datasets because the channels represent distinct assumptions regarding where label information resides. For the reported LoGIC configurations, we assess a coarse ×4 budget ladder using held-out validation data and preserve one (channel, 
+
+k) pair for each dataset. The identical runs generate the budget curves; no test labels are employed and no parameters are fitted. When several candidates lie within one standard deviation of the highest held-out score, they constitute a tie set. These ties frequently arise when budgets saturate and channel rankings converge. We resolve ties through measured edge-label assortativity: distinctly positive assortativity favors PPR, whereas distinctly negative assortativity favors coverage. Around zero, or if the favored channel is missing from the tie set, the candidate with the highest score is preserved. Feature-kNN thus remains available for selection whenever it achieves the strongest held-out score, and the tie-break never supersedes a clear score margin. Table V verifies that the highest-performing fixed channel differs among the eight benchmarks, although held-out and test rankings may still diverge on particular datasets. 
+
+E. Complexity Analysis and Implementation 
+
+Let n and m denote the numbers of nodes and edges, L
+
+the labeled pool, Q the query set, q the cluster size (thus 
+
+C = ⌈|Q| /q ⌉ clusters), k the label budget, h the halo cap, and 
+
+d the row width. Preprocessing consists of one RCM pass over the adjacency (O(n + m)) together with, for G2T-FM featurization, the host system’s own encodings. Both are calculated once for each graph and stored on disk. For every cluster, retrieval requires either one batched PPR power iteration ( O(iters · m)) or one blocked distance scan across the labeled pool ( O(|L| d)).                          
+
+> TABLE I PFN ATTENTION COST AND ROW RESIDENCY OF FULL -CONTEXT ,
+> PER -QUERY ,AND CLUSTER -SHARED PROTOCOLS .
+> Protocol Forwards Attention / forward Peak residency Full context / graph CΘ(( |L|2+q|L|)d)|L|+q
+> Per-query retrieval |Q| Θ(( k2+k)d)k+ 1
+> LoGIC (shared) CΘ(( k2+qk )d)k+q
+
+PPR scores are stored across budgets and reused whenever the cluster remains unchanged. Stratified coverage requires an additional O(|L|) bookkeeping. Over all C clusters, the associated retrieval bounds are O(C iters · m) and O(C|L|d).In implementation, PPR and coverage retrieval execute on the CPU, whereas feature-kNN employs a blocked scan on the accelerator. Retrieved induced subgraphs are constructed from cached sparse adjacency data, preventing reconstruction of the entire graph for every cluster. The context policy stays restricted to the inference path and does not modify backbone parameters. The protocols vary primarily in inference cost, as summa-rized in Table I. Under the PFN attention pattern employed by both host systems, the κ context rows attend inside the context and every one of the q queries reads the context; queries do not attend to each other. A forward consequently incurs Θ(( κ2 + qκ )d). The full-context protocol uses κ = |L|
+
+in every one of its C forwards, per-query retrieval uses |Q| 
+
+forwards with κ = k, and shared contexts need only C
+
+forwards with κ = k. For a row-independent backbone, resident rows decrease from |L| + q to k + q. The full-graph adapter protocol further retains all n graph nodes and their edges, while the retrieved-subgraph protocol limits resident nodes to k + q + h. Actual VRAM further depends on induced edges, row width, and model activations; Table IV measures the resulting decrease relative to whole-graph inference. The implementation incorporates the context policies into the evaluation pipelines of the host systems while keeping pretrained checkpoints and training procedures unchanged. In the full-context or full-graph setting, it retains the original preprocessing, ensembling, and evaluation metrics from each host system. V. E XPERIMENTS 
+
+We structure the evaluation around three questions. RQ1 
+
+contrasts the predictive performance of the deployed LoGIC configuration with per-dataset trained models and published graph foundation models on GraphLand. RQ2 evaluates effi-ciency, peak memory, scalability, and cross-backbone transfer relative to backbone-matched full-context or full-graph sys-tems. RQ3 separates the retrieval channels, budget, halo, and measurable graph properties that explain the conditions under which each component helps. 
+
+A. Experimental Setup 
+
+We conduct evaluations on eight GraphLand bench-marks [16] covering 12k–168k nodes, classification (AP) and regression (R 2), and both assortative and disassortative targets. 7                                                                          
+
+> TABLE II GRAPH LAND DATASETS AND RL-SPLIT STATISTICS .|L| DENOTES THE LABELED CONTEXT POOL ;EDGES COUNT UNDIRECTED PAIRS ; A SSORT .
+> DENOTES TRAIN -EDGE LABEL ASSORTATIVITY .
+> Dataset Nodes Edges Feat. |L| Task Metric Assort. tolokers-2 11,758 519,000 16 1,175 bin. cls. AP −0.06
+> artnet-exp 50,405 280,348 75 5,040 bin. cls. AP +0 .01
+> artnet-views 50,405 280,348 50 5,040 regr. R2+0 .23
+> city-roads-M 57,073 107,104 26 3,610 regr. R2+0 .58
+> hm-prices 46,563 10,730,995 41 4,656 regr. R2+0 .14
+> twitch-views 168,114 6,797,557 416,811 regr. R2−0.39
+> city-reviews 148,801 1,165,415 37 13,887 bin. cls. AP +0 .11
+> avazu-ctr 76,269 10,984,077 260 7,626 regr. R2+0 .38
+> pokec-regions 1,632,803 22,301,964 11 163,430 183-cls. Acc +0 .43
+
+An additional 1.63M-node pokec-regions experiment examines scale beyond the primary benchmark suite. We employ three frozen backbone configurations belonging to two families: pure-tabular TabPFNv2 and LimiX backbones with the G2T-FM graph featurization, and the adapter-based GraphPFN-1.3. The predictive evaluation includes all three configurations, whereas the resource study concentrates on TabPFNv2 and GraphPFN. The eight GraphLand benchmarks employ graph-local query clustering, five seeds, and the random-label (RL) splits. TabPFNv2 experiments preserve complete feature rows except in the avazu-ctr comparison, which adopts the PCA-64 preprocessing from the corresponding G2T-FM protocol. Budgeted policies reuse preprocessing artifacts via content-keyed caches, such that comparisons within a backbone mod-ify only the context. We present mean ±std across five seeds for the principal predictive and channel comparisons, and employ exact nonparametric tests for seed-level claims. Runtime is evaluated end-to-end for every inference configuration, and memory refers to peak allocated accelerator memory. Resource values are contrasted exclusively within backbone-matched experimental blocks. Prior to evaluating context policies, we validated both host pipelines on our hardware with locally runnable reference configurations. Table III contrasts LoGIC with published predictive baselines, whereas Table IV provides representative performance and resource comparisons between the original protocols and the respective LoGIC configurations. 
+
+B. Predictive Performance on GraphLand (RQ1) 
+
+Table III shows the primary predictive comparison on GraphLand. The first block lists individually trained LightGBM-NFA and GNN references from the G2T-FM eval-uation. The second block positions every full-context or full-graph result alongside its backbone-matched LoGIC config-uration, separating the effect of context construction from a backbone change. For LoGIC-TabPFNv2, the channel and budget are selected among the structural, feature, and cover-age candidates according to Section IV-D. The candidate set contains a terminal budget that depletes the labeled pool when that pool is smaller than the following budget step. The LimiX and GraphPFN rows likewise employ LoGIC configurations chosen without test labels. For LimiX, the candidates comprise the published 10-member ensemble and a terminal budget that depletes the labeled pool; the chosen terminal-budget con-figurations are applied to tolokers-2, artnet-views, city-roads-M, hm-prices, and avazu-ctr. These rows examine whether the context-construction interface transfers among backbones instead of conducting a per-backbone oracle search. Fixed channels are not shown as independent proposed methods here; RQ3 employs them as controlled ablations. With the same TabPFNv2 backbone, LoGIC preserves full-context accuracy while using a bounded context. Wherever our full-context reproduction can run, k=4096 equals it within run-to-run variation or surpasses it. On artnet-exp, LoGIC exceeds the published G2T-TabPFNv2 result, increasing from 
+
+45 .73 to 45 .94 . The labeled pools for tolokers-2, artnet-views, and city-roads-M are depleted at the terminal candi-date. For the larger pools, LoGIC surpasses the published G2T-TabPFNv2 result on twitch-views and city-reviews. On avazu-ctr, the protocol-matched PCA-64 configuration obtains 
+
+27 .55 ±0.01 R2, with a 0.45 -point gap relative to the published ten-member mean. In aggregate, LoGIC-TabPFNv2 numerically matches or surpasses G2T-TabPFNv2 on five of the eight datasets. The residual mean gaps equal 0.21 AP on tolokers-2, 0.38 R2 on hm-prices, and 0.45 R2 on avazu-ctr. The transferred LimiX configurations surpass their pub-lished full-context counterpart on five of eight datasets and match it on avazu-ctr. In addition to raising artnet-exp from 
+
+48 .42 to 48 .87 AP and twitch-views from 71 .31 to 74 .15 
+
+R2, the chosen configurations attain 61 .78 ±0.07 R2 on artnet-views, 65 .17 ±0.06 R2 on city-roads-M, and 76 .20 ±0.14 R2
+
+on hm-prices. The reported avazu-ctr means coincide at two-decimal precision ( 32 .70 R2). The GraphPFN transfer sur-passes the published full-graph result on artnet-exp by 0.27 
+
+AP and marginally surpasses it on tolokers-2, city-roads-M, hm-prices, and avazu-ctr. It remains within 0.14 R2 on artnet-views and 0.03 AP on city-reviews, whereas twitch-views retains a 1.08 R2 gap. Collectively, these rows substantiate the conclusion that LoGIC generally maintains the predictive performance of the respective full-context or full-graph proto-col across backbone families, while surpassing it on multiple datasets. The external rows bound the claim. LoGIC-TabPFNv2 sur-passes the strongest individually trained baseline on tolokers-2 and artnet-views, falls within 0.47 AP on artnet-exp, and lags behind the strongest trained result by 1.04 R2 on city-roads-M and 0.99 AP on city-reviews, with wider gaps on hm-prices, twitch-views, and avazu-ctr. Similarly, full-graph GraphPFN and G2T-LimiX lead on multiple datasets when large-memory inference is accessible. The contribution consequently does not constitute a universal accuracy substitute for per-dataset training. Instead, it is a budgeted frozen-inference protocol that retains competitive performance while eliminating the full-context resource constraint, as evaluated next. 
+
+C. Efficiency, Scalability, and Cross-Backbone Comparison (RQ2) 
+
+Table IV presents local reproductions and resource mea-surements obtained on our hardware. With TabPFNv2, LoGIC lowers artnet-exp end-to-end time from 117 .78 ±1.37 to 8
+
+TABLE III PREDICTIVE PERFORMANCE ON THE GRAPH LAND RL SPLITS (MEAN ±STD ). P UBLISHED RESULTS ARE MARKED BY †. W ITHIN EACH BACKBONE -MATCHED PAIR , BOLD MARKS THE HIGHER MEAN . T HE LOGIC CONFIGURATIONS ARE SELECTED WITHOUT USING TEST LABELS AND REPORT FIVE SEEDS .
+
+Backbone / model Inference tolokers-2 artnet-exp artnet-views city-roads-M hm-prices twitch-views city-reviews avazu-ctr Metric AP AP R2 R2 R2 R2 AP R2
+
+Per-dataset trained references [3] LightGBM-NFA † Trained 56.34 ±0.06 46.13 ±0.04 56.10 ±0.02 61.18 ±0.03 70.84 ±0.04 60.14 ±0.01 78.53 ±0.01 31.71 ±0.01 
+
+GCN † Trained 56.27 ±0.31 44.86 ±0.36 56.03 ±0.25 58.82 ±0.25 68.02 ±0.42 75.51 ±0.05 77.81 ±0.15 32.00 ±0.16 
+
+GraphSAGE † Trained 54.43 ±0.34 45.14 ±0.36 49.32 ±0.91 59.44 ±0.27 70.00 ±0.74 66.29 ±0.32 78.17 ±0.10 31.44 ±0.16 
+
+GAT † Trained 57.41 ±0.85 45.06 ±0.52 53.60 ±0.24 59.86 ±0.20 72.07 ±1.22 72.89 ±0.27 77.74 ±0.21 32.63 ±0.17 
+
+GT † Trained 56.98 ±0.55 46.41 ±0.71 53.37 ±0.46 59.55 ±0.28 69.44 ±0.94 72.13 ±0.13 77.34 ±0.21 31.11 ±0.49 
+
+Backbone-matched frozen inference 
+
+G2T-TabPFNv2 [3] Full context † 60.39 ±0.19 45.73 ±0.03 59.72 ±0.14 60.12 ±0.03 65.75 ±0.02 70.21 ±0.04 77.28 ±0.25 28.00 ±0.36 
+
+LoGIC (ours) 60.18 ±0.15 45.94 ±0.04 59.74 ±0.06 60.14 ±0.12 65.37 ±0.44 73.25 ±0.05 77.54 ±0.09 27.55 ±0.01 
+
+G2T-LimiX [3] Full context † 61.60 ±0.18 48.42 ±0.78 61.58 ±0.08 65.16 ±0.07 76.14 ±0.08 71.31 ±0.06 78.98 ±0.44 32.70 ±0.14 
+
+LoGIC (ours) 61.45 ±0.22 48.87 ±0.14 61.78 ±0.07 65.17 ±0.06 76.20 ±0.14 74.15 ±0.01 76.97 ±0.57 32.70 ±0.18 
+
+GraphPFN [6] Full graph † 61.29 ±0.12 51.79 ±0.11 62.79 ±0.08 64.85 ±0.13 77.88 ±0.09 73.20 ±0.08 80.25 ±0.05 31.63 ±0.06 
+
+LoGIC (ours) 61.35 ±0.05 52.06 ±0.18 62.65 ±0.08 64.88 ±0.15 77.89 ±0.13 72.12 ±0.05 80.22 ±0.05 32.17 ±0.31 
+
+TABLE IV PERFORMANCE , INFERENCE TIME , AND PEAK ALLOCATED VRAM OF THE FULL -CONTEXT /FULL -GRAPH BASELINES AND DEPLOYED LOGIC 
+
+CONFIGURATIONS (MEAN ±STD ). 
+
+Backbone Dataset Method Performance Time Peak VRAM TabPFNv2 tolokers-2 G2T-TabPFNv2 (full context) 60 .04 ±0.07 AP 6.84 ±0.70 s 4.10 GB LoGIC (ours) 60 .18 ±0.15 AP 7.66 ±0.89 s 2.20 GB artnet-exp G2T-TabPFNv2 (full context) 45 .68 ±0.03 AP 117 .78 ±1.37 s 6.90 GB LoGIC (ours) 45 .94 ±0.04 AP 65 .68 ±0.80 s 5.80 GB GraphPFN artnet-exp GraphPFN (full graph) 51 .86 ±0.10 AP 39 .65 ±0.16 s 19.59 GB LoGIC (ours) 52 .06 ±0.18 AP 30 .49 ±0.49 s 8.24 GB city-roads-M GraphPFN (full graph) 64 .86 ±0.14 R2 14 .69 ±0.01 s 7.71 GB LoGIC (ours) 64 .88 ±0.15 R2 11 .02 ±0.05 s 5.73 GB 
+
+65 .68 ±0.80 seconds per seed and peak VRAM from 6.9 to 
+
+5.8 GB, while marginally increasing AP. The transfer to GraphPFN evaluates another bottleneck: full-graph residency for adapter message passing. LoGIC processes one retrieved induced subgraph for each query cluster, without altering or retraining the checkpoint. In the matched local comparison on artnet-exp, it achieves 52 .06 ±0.18 AP using 8.24 GB, versus 51 .86 ±0.10 AP and 19.59 GB under full-graph inference. On city-roads-M, LoGIC attains 64 .88 ±0.15 
+
+R2 using 5.73 GB, versus 64 .86 ±0.14 R2 and 7.71 GB under full-graph inference. Figure 2 illustrates how this separation expands with graph size. 
+
+a) Million-node scale study: Pokec-regions comprises 1.63M nodes, 44.6M directed edges, and 183 classes. LoGIC predicts 76.8k cluster-sampled held-out queries with 36 .3% 
+
+accuracy in 40 minutes using 4.2 GB peak VRAM. Whole-graph residency would demand approximately two terabytes at the observed rate. A random context with the same k=4096 
+
+achieves only 8.6% , suggesting that retrieval continues to be important even when the labeled budget constitutes merely 
+
+0.25% of the graph. This experiment serves as a scale demonstration instead of a same-split SOTA claim. Posterior calibration is evaluated independently below. 
+
+D. Ablation and Mechanistic Analysis (RQ3) tolokers-2 (12k) artnet-exp (50k) city-roads-M (57k) city-reviews (149k) twitch-views (168k) pokec (1.63M) 10 1
+
+> 10 2
+> 10 3
+> peak VRAM (GB)
+> whole-graph (measured / extrapolated) LoGIC subgraph contexts (measured)
+
+Fig. 2. Peak VRAM of whole-graph GraphPFN inference versus LoGIC subgraph contexts. Whole-graph values use local measurements where avail-able (tolokers-2, artnet-exp, city-roads-M, and city-reviews) and per-node extrapolation for the remaining scale cases; LoGIC values are measured. 
+
+a) Retrieval channels: Table V positions the three can-didate channels in their designated roles. PPR represents the graph-structural channel, feature-kNN constitutes the retrieval-based tabular ICL control, and coverage/random serves as the structure-agnostic control. No fixed channel performs best across all datasets; the strongest channel varies among datasets. This finding motivates dataset-dependent channel selection instead of a single universal retriever. Table VI connects fixed-channel outcomes with train-edge label assortativity. Positive assortativity frequently coincides 9
+
+TABLE V RETRIEVAL -CHANNEL ABLATION ON THE GRAPH LAND RL SPLITS USING FROZEN TAB PFN V2. A LL CHANNELS USE FULL -FEATURE PREPROCESSING AND k=4096 . B OLD MARKS THE BEST FIXED -CHANNEL RESULT PER DATASET .                        
+
+> Variant tolokers-2 artnet-exp artnet-views city-roads-M hm-prices twitch-views city-reviews avazu-ctr Coverage/random only 60.22 45.44 59.33 60.11 65.37 72.00 74.25 23.42 Feature channel only 60.20 44.81 59.36 60.11 65.43 68.95 71.67 24.37
+> Structural (PPR) only 60.20 45.94 59.48 60.14 65.32 70.20 75.28 23.96
+
+TABLE VI TRAIN -EDGE LABEL ASSORTATIVITY AND THE BEST FIXED RETRIEVAL CHANNEL AT k=4096 . R EGRESSION USES SPEARMAN CORRELATION ;
+
+> CLASSIFICATION USES THE SAME
+
+-CLASS EDGE RATE MINUS CHANCE .
+
+Dataset Assort. Best fixed channel tolokers-2 −0.057 coverage/random artnet-exp +0 .007 PPR artnet-views +0 .228 PPR city-roads-M +0 .583 PPR hm-prices +0 .139 feature-kNN twitch-views −0.388 coverage/random city-reviews +0 .113 PPR avazu-ctr +0 .378 feature-kNN 
+
+with a strong PPR result, while the negatively assortative twitch-views graph prefers coverage/random sampling. The relationship is empirical rather than deterministic: near-zero assortativity cannot account for the PPR advantage on artnet-exp, and strong node attributes render feature-kNN best on avazu-ctr. 
+
+b) Retrieved-context geometry: Figure 3 displays what the three fixed channels retrieve for a single deterministically selected artnet-exp query cluster. Radius denotes the BFS hop distance from the query cluster; angle denotes a deterministic node hash employed solely to distinguish markers. The PPR context exhibits greater graph locality, with a median distance of two hops and no retrieved nodes at radius five or above. Feature-kNN and random sampling both yield a median dis-tance of three hops and position 1% of their contexts at radius five or above. This evidence verifies the structural-locality bias of PPR, although it does not indicate that PPR will constitute the most accurate channel on every graph. 
+
+c) Budget regimes: Figure 4 demonstrates that every channel deteriorates below approximately 512 rows, while larger budgets reveal dataset-dependent channel orderings and ultimately approach saturation. This behavior motivates choosing both the retrieval channel and the context budget. Table VII independently alters the PPR teleport probability and query ordering. artnet-exp remains stable over the tested 
+
+α values, whereas city-reviews shows greater sensitivity to locality; in the reported comparison, RCM ordering further outperforms natural node order. Consequently, the qualitative channel conclusions are not contingent on a single PPR setting, although retrieval configuration may still be important for individual datasets. 
+
+d) Unlabeled halo: For adapter backbones, a context derived solely from labeled rows shortens the graph-attention 
+
+TABLE VII SENSITIVITY OF THE PPR CHANNEL (k=4096 ) TO TELEPORT α UNDER 
+
+RCM QUERY ORDERING , WITH NATURAL NODE ORDER AS A REFERENCE .VALUES REPORT TEST AP ( MEAN ±STD OVER FIVE SEEDS ).                
+
+> α=0 .15 (def.) α=0 .05 α=0 .30 α=0 .50 nat. order artnet-exp 45.94 ±0.04 46.00 ±0.06 45.93 ±0.05 45.91 ±0.06 45.93 ±0.03 city-reviews 75.28 ±0.05 74.95 ±0.04 75.77 ±0.01 75.90 ±0.04 74.38 ±0.02
+
+neighborhood. When the 1-hop closure of Qc ∪ S remains within the halo cap, incorporating its label-masked nodes retains the first-layer neighborhoods of query and context tokens; a finite cap provides a sampled approximation. Fig-ure 5 quantifies this effect. On artnet-exp, enlarging the cap increases AP to 52 .06 ±0.18 , surpassing the published full-graph result by 0.27 AP. On tolokers-2, the respective fixed-PPR experiment at k=4096 increases from 54 .20 AP without a halo to 61 .09 AP after the 1-hop support is incorporated, a gain of 6.89 AP that matches the full-graph reference. 
+
+e) Posterior calibration: Table VIII contrasts representa-tive full and budgeted contexts through Brier score and adap-tive expected calibration error (ECE), where smaller values signify better probabilistic predictions. Brier score quantifies squared probability error, whereas adaptive ECE contrasts confidence with empirical accuracy across 15 equal-mass bins. On tolokers-2, substituting feature-kNN for the full context shifts Brier score from 12 .17 to 12 .15 and ECE from 1.60 to 
+
+1.59 . On artnet-exp, the PPR context increases AP from 45 .68 
+
+to 45 .94 , while Brier score declines from 7.06 to 7.03 and ECE from 1.51 to 0.85 . Therefore, in these representative settings, the memory reduction achieved through budgeting yields no apparent calibration penalty. This audit makes no claim of consistent calibration gains across channels or datasets. 
+
+TABLE VIII REPRESENTATIVE POSTERIOR CALIBRATION RESULTS USING FROZEN 
+
+G2T-T AB PFN V2 ( MEAN ±STD ; ADAPTIVE ECE WITH 15 EQUAL -MASS BINS ). L OWER BRIER AND ECE ARE BETTER .                    
+
+> Dataset Context AP Brier ×100 ECE ×100
+> tolokers-2 Full context 60 .04 ±0.07 12 .17 ±0.02 1.60 ±0.01
+> Feature-kNN 60 .10 ±0.10 12 .15 ±0.01 1.59 ±0.20
+> artnet-exp Full context 45 .68 ±0.03 7.06 ±0.00 1.51 ±0.03
+> PPR 45 .94 ±0.04 7.03 ±0.01 0.85 ±0.06 10 median: 2 hops; 0% at ring ≥5
+
+PPR channel       
+
+> context, y= 0 context, y= 1 query cluster
+> median: 3 hops; 1% at ring ≥5
+
+feature-kNN channel   
+
+> median: 3 hops; 1% at ring ≥5
+
+random 
+
+Fig. 3. Retrieved-context geometry for one deterministically selected artnet-exp query cluster at k=4096 . Radius is BFS hop distance from the query cluster; angle is a deterministic node hash used only to separate markers. Color denotes the context label and the central marker denotes the query cluster. 28 29 210 211 212 
+
+> 40 45 50 55 60
+> test performance
+
+tolokers-2 (AP)   
+
+> 28210 212
+> 20 25 30 35 40 45
+
+artnet-exp (AP)   
+
+> 28210 212
+> 20 40 60
+
+artnet-views (R2)     
+
+> 2829210 211 212
+> 30 40 50 60
+
+city-roads-M (R2)      
+
+> 2829210 211 212
+> context budget k
+> 20 30 40 50 60
+> test performance
+
+hm-prices (R2)     
+
+> 28210 212 214
+> context budget k
+> −20 020 40 60 80
+
+twitch-views (R2)     
+
+> 28210 212 214
+> context budget k
+> 55 60 65 70 75
+
+city-reviews (AP)      
+
+> 2829210 211 212
+> context budget k
+> −20
+> −10 010 20
+
+avazu-ctr (R2)   
+
+> feature-kNN PPR coverage/random
+
+Fig. 4. Test performance versus labeled-context budget k for the three LoGIC channels. The first seven panels show budgets available for all three channels. In the avazu-ctr panel, the final displayed budget |L| =7 ,626 is the complete labeled pool; the three channels coincide when the pool is exhausted. 
+
+VI. D ISCUSSION 
+
+A. Deployment Considerations 
+
+Our findings indicate several deployment considerations for PFN-class graph foundation models. The initial choice concerns the labeled budget. When the local full-context protocol is runnable, budgeted contexts with 
+
+k=4096 maintain its performance using bounded memory and comparable or lower latency. For larger labeled pools, they stay competitive with published full-context results. The complete table consequently does not need to serve as the default prompt. Whether extra rows enhance or diminish performance depends on the dataset. Figure 4 demonstrates this behavior: on artnet-exp, the bounded context surpasses the locally re-produced full-context result by 0.26 AP. Budgets beneath the capacity floor ( k0 ≈ 512 rows for current backbones) should not be used because every evaluated selection policy performs weakly in this regime. The second decision involves the retrieval channel. Train-edge label assortativity can be calculated in a single sparse pass and helps guide this decision. When assortativity is distinctly positive, PPR retrieval provides a strong default, with feature-kNN as another candidate when raw attributes are informative. When assortativity is distinctly negative, coverage sampling is typically preferable, since local retrieval may be detrimental at small budgets. When candidates lie within one standard deviation of the highest held-out score, the selection rule in Section IV-D employs measured assortativity to resolve 11 2,048 8,192 16,384 32,768   
+
+> halo cap h(nodes)
+> 47 48 49 50 51 52
+> test AP
+> GraphPFN (full graph)
+> artnet-exp (GraphPFN)
+> Fig. 5. Halo ablation on artnet-exp (GraphPFN): test AP versus the halo cap, with the published GraphPFN full-graph score as a reference.
+
+the tie without superseding a clear score margin. The remaining resource decision relates to structural sup-port. For adapter backbones, enlarging the label budget does not inevitably enhance performance, whereas assigning mem-ory to the unlabeled halo recovers local receptive fields. Figure 5 demonstrates this effect: the resulting subgraph inference matches full-graph inference on tolokers-2, while LoGIC surpasses the published GraphPFN full-graph result by 0.27 AP on artnet-exp. 
+
+B. Scope and Future Work 
+
+The evaluation covers transductive node classification and regression on graphs with tabular node attributes, which is the setting in which the host systems are defined and evaluated. Retrieval uses the graph neighborhood around each query, and the GraphLand benchmarks make that neighborhood available at inference time. Inductive and streaming graphs, whose neighborhoods arrive progressively, together with link- and graph-level tasks, extend the same two-resource formulation and are natural next steps. The reported configuration keeps one retrieval channel and one context budget per dataset through held-out model selec-tion, so no test labels enter the procedure. The three chan-nels are deliberately simple and training-free, and budgeted contexts bound the input presented to the backbone rather than the total workload, since runtime still grows with the number of query clusters. For graph-adapter backbones, the halo restores the 1-hop neighborhoods of query and context tokens within its cap. Learned mixtures of retrieval signals, cluster-adaptive budgets, transfer rules that reuse configu-rations among graphs, and multi-hop halos tied to adapter depth could each strengthen this layer while preserving the inference-only interface of LoGIC. More generally, larger backbones may accommodate larger contexts and render the observed capacity floor less restrictive, but an admissible prompt must still contain a specific selection of rows. We consequently anticipate that context construction will remain pertinent to this model family, together with feature construction and backbone design, and will extend naturally to inductive and dynamically evolving graphs. VII. C ONCLUSION 
+
+This work identifies context construction as a key inference-time design problem for node-level graph ICL with frozen tabular foundation models. We express the problem as alloca-tion across two bounded resources: labeled evidence for the PFN and label-masked structural support for graph adapters. Based on this formulation, LoGIC integrates graph-local query sharing with complementary structural, feature-based, and coverage retrieval channels, and chooses a channel–budget configuration without test labels. The resulting interface keeps the host backbone and its training procedure unchanged while constraining PFN attention and peak input residency, elimi-nating the need to store the entire labeled pool or the whole graph in accelerator memory. Across GraphLand benchmarks and three backbone config-urations drawn from two model families, bounded contexts preserve competitive predictive performance while lowering the computational and memory burden associated with full-context and full-graph inference, including at million-node scale. The experiments further demonstrate that retrieval de-pends on the graph: structural locality, attribute similarity, and global coverage are beneficial under distinct regimes. Context construction should consequently adjust to measurable graph properties rather than depend on one retrieval rule across all datasets. These findings establish context construction as a general modeling and systems layer for graph foundation models. Future research should examine its interaction with fine-tuning, learned mixtures of retrieval signals, inductive and streaming graphs, link- and graph-level ICL, and halo policies matched to adapter receptive fields. REFERENCES [1] Z. Wang et al. , “GFT: Graph foundation model with transferable tree vocabulary,” Advances in Neural Information Processing Systems , 2024. [2] J. Zhao et al. , “Fully-inductive node classification on arbitrary graphs,” in International Conference on Learning Representations , 2025, arXiv:2405.20445. [3] D. Eremeev et al. , “Turning tabular foundation models into graph foundation models,” in NeurIPS 2025 Workshop on New Perspectives in Advancing Graph Machine Learning , 2025, arXiv:2508.20906. [4] N. Hollmann, S. M¨ uller, K. Eggensperger, and F. Hutter, “TabPFN: A transformer that solves small tabular classification problems in a sec-ond,” in International Conference on Learning Representations , 2023. [5] N. Hollmann, S. M¨ uller, L. Purucker et al. , “Accurate predictions on small data with a tabular foundation model,” Nature , vol. 637, pp. 319– 326, 2025. [6] D. Eremeev et al. , “GraphPFN: A prior-data fitted graph founda-tion model,” in International Conference on Machine Learning , 2026, arXiv:2509.21489. [7] O. Platonov, G. Bazhenov, D. Eremeev, and L. Prokhorenkova, “A fair evaluation of graph foundation models for node property prediction,”                  
+
+> ICML Workshop on Graph Foundation Models , 2026, arXiv:2606.24509. [8] A. Hayler, X. Huang, ˙ I. ˙ I. Ceylan, M. Bronstein, and B. Finkelshtein, “Bringing graphs to the table: Zero-shot node classification via tabular foundation models,” arXiv preprint arXiv:2509.07143 , 2025. [9] V. Thomas, J. Ma, R. Hosseinzadeh et al. , “Retrieval & fine-tuning for in-context tabular models,” in Advances in Neural Information Processing Systems , 2024, arXiv:2406.05207. [10] J. Ma, V. Thomas, R. Hosseinzadeh et al. , “TabDPT: Scaling tabular foundation models on real data,” in Advances in Neural Information Processing Systems , 2025, arXiv:2410.18164. [11] D. Xu et al. , “Mixture of in-context prompters for tabular PFNs,” in
+> International Conference on Learning Representations , 2025. 12
+
+[12] Y. Sun, Z. Ma, Y. Fang, J. Ma, and Q. Tan, “GraphICL: Unlocking graph learning potential in LLMs through structured prompt design,” in Findings of the Association for Computational Linguistics: NAACL ,2025, pp. 2440–2459. [13] Z. Hu, Y. Li, Z. Chen, J. Wang, H. Liu, K. Lee, and K. Ding, “Let’s ask GNN: Empowering large language model for graph in-context learning,” in Findings of the Association for Computational Linguistics: EMNLP ,2024, pp. 1396–1409. [14] R. Lv, Z. Zhang, K. Zhang, Q. Liu, W. Gao, J. Liu, J. Yan, L. Yue, and F. Yao, “GraphPrompter: Multi-stage adaptive prompt optimization for graph in-context learning,” in IEEE International Conference on Data Engineering (ICDE) , 2025, pp. 3917–3930. [15] C. Lim, K.-H. Lee, H. J. Jeong, and S. Lim, “GRAIL: Graph retrieval-augmented in-context learning for node classification in real-world textual-attributed graphs,” in International Conference on Extending Database Technology (EDBT) , 2025, pp. 1039–1047. [16] G. Bazhenov, O. Platonov, and L. Prokhorenkova, “GraphLand: Eval-uating graph machine learning models on diverse industrial data,” in 
+
+Advances in Neural Information Processing Systems, Datasets and Benchmarks Track , vol. 38, 2025, arXiv:2409.14500. [17] J. Qu et al. , “TabICL: A tabular foundation model for in-context learning on large data,” in International Conference on Machine Learning , 2025, arXiv:2502.05564. [18] LimiX Team, “LimiX: Unleashing structured-data modeling capability for generalist intelligence,” arXiv preprint arXiv:2509.03505 , 2025. [19] Prior Labs, “TabPFN-3 technical report,” arXiv preprint arXiv:2605.13986 , 2026. [20] R. Sergazinov and S.-A. Yin, “Chunked TabPFN: Exact training-free in-context learning for long-context tabular data,” arXiv preprint arXiv:2509.00326 , 2025. [21] J. Heredge, M. J. Villani, P. Deshpande, A. Seshadri, and N. Kumar, “CRUMB: Efficient prior fitted network inference via distributionally matched context batching,” arXiv preprint arXiv:2606.11473 , 2026. [22] J. Liu, D. Shen, Y. Zhang, B. Dolan, L. Carin, and W. Chen, “What makes good in-context examples for GPT-3?” in Proceedings of Deep Learning Inside Out (DeeLIO): The 3rd Workshop on Knowledge Extraction and Integration for Deep Learning Architectures , 2022. [23] O. Rubin, J. Herzig, and J. Berant, “Learning to retrieve prompts for in-context learning,” in Proceedings of NAACL-HLT , 2022. [24] Q. Dong, L. Li, D. Dai, C. Zheng, J. Ma, R. Li, H. Xia, J. Xu, Z. Wu, B. Chang, X. Sun, L. Li, and Z. Sui, “A survey on in-context learning,” in Proceedings of EMNLP , 2024. [25] Y. Liu, T. He, Y. Liu, C. Yi, H. Jin, and C. Hong, “Tabular foundation models are strong graph anomaly detectors,” in Proceedings of the ACM Web Conference , 2026, arXiv:2601.17301. [26] T. Liao, C. Hu, Y. Sui, X. Zhang, P. Cui, J. Li, and Z. Zhang, “TFMLinker: Universal link predictor by graph in-context learning with tabular foundation models,” in Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining , 2026, arXiv:2602.08592. [27] J. Choi, W. Kang, M. Kim, J. Kim, and N. Park, “Can TabPFN compete with GNNs for node classification via graph tabularization?” arXiv preprint arXiv:2512.08798 , 2025. [28] J. Choi, J. Kim, W. Kang, and N. Park, “Learning posterior pre-dictive distributions for node classification from synthetic graph pri-ors,” in International Conference on Learning Representations , 2026, arXiv:2604.19028. [29] Q. Huang, H. Ren, P. Chen et al. , “PRODIGY: Enabling in-context learning over graphs,” in Advances in Neural Information Processing Systems , 2023. [30] X. Jiang, R. Qiu, Y. Xu, W. Zhang, Y. Zhu, R. Zhang, Y. Fang, X. Chu, J. Zhao, and Y. Wang, “RAGraph: A general retrieval-augmented graph learning framework,” in Advances in Neural Information Processing Systems , 2024, pp. 29 948–29 985. [31] H. Cai, V. W. Zheng, and K. C.-C. Chang, “Active learning for graph embedding,” arXiv preprint arXiv:1705.05085 , 2017. [32] Y. Wu, Y. Xu, A. Singh, Y. Yang, and A. Dubrawski, “Active learning for graph neural networks via node feature propagation,” arXiv preprint arXiv:1910.07567 , 2019. [33] J. Ma, Z. Ma, J. Chai, and Q. Mei, “Partition-based active learning for graph neural networks,” Transactions on Machine Learning Research ,2023. [34] W. Zhang, Z. Yang, Y. Wang, Y. Shen, Y. Li, L. Wang, and B. Cui, “Grain: Improving data efficiency of graph neural networks via diver-sified influence maximization,” Proceedings of the VLDB Endowment ,vol. 14, no. 11, pp. 2473–2482, 2021. [35] W. L. Hamilton, R. Ying, and J. Leskovec, “Inductive representation learning on large graphs,” in Advances in Neural Information Processing Systems , 2017. [36] W.-L. Chiang, X. Liu, S. Si et al. , “Cluster-GCN: An efficient algorithm for training deep and large graph convolutional networks,” in KDD ,2019. [37] H. Zeng, M. Zhang, Y. Xia et al. , “Decoupling the depth and scope of graph neural networks,” in Advances in Neural Information Processing Systems , 2021. [38] W. Jin, L. Zhao, S. Zhang, Y. Liu, J. Tang, and N. Shah, “Graph condensation for graph neural networks,” in International Conference on Learning Representations , 2022. [39] J. Klicpera, A. Bojchevski, and S. G¨ unnemann, “Predict then propagate: Graph neural networks meet personalized PageRank,” in International Conference on Learning Representations , 2019. [40] A. Bojchevski, J. Klicpera et al. , “Scaling graph neural networks with approximate PageRank,” in KDD , 2020. [41] Q. Huang, H. He, A. Singh, S.-N. Lim, and A. Benson, “Combining label propagation and simple models out-performs graph neural networks,” in 
+
+International Conference on Learning Representations , 2021. [42] Y. Shi, Z. Huang, S. Feng et al. , “Masked label prediction: Unified message passing model for semi-supervised classification,” in IJCAI ,2021. [43] E. Cuthill and J. McKee, “Reducing the bandwidth of sparse symmetric matrices,” in Proceedings of the 24th National Conference of the ACM ,1969, pp. 157–172.
