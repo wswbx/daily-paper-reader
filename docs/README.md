@@ -4,17 +4,24 @@
     <a class="dpr-home-notice-tutorial" href="#/tutorial/README">使用教程 <span aria-hidden="true">›</span></a>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-07-20">07.20</time>
+    <time class="dpr-home-notice-date" datetime="2026-09-09">09.09</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">反馈功能上线</strong>
-      <span class="dpr-home-notice-entry-summary">新增反馈功能，欢迎大家踊跃反馈各种建议，我们会第一时间查看并协调处理。</span>
+      <strong class="dpr-home-notice-entry-title">90天/365天 arXiv 专题回溯</strong>
+      <span class="dpr-home-notice-entry-summary">支持分片召回、断点评审与分页查看，核心论文与待复核结果分开展示。DeepSeek 费用按实际用量计算，不下载全量 PDF。</span>
     </div>
   </div>
   <div class="dpr-home-notice-entry">
-    <time class="dpr-home-notice-date" datetime="2026-07-19">07.19</time>
+    <time class="dpr-home-notice-date" datetime="2026-09-09">09.09</time>
     <div>
-      <strong class="dpr-home-notice-entry-title">首页新增社区统计</strong>
-      <span class="dpr-home-notice-entry-summary">现在可以看到今天看论文的人数和项目加入人数。</span>
+      <strong class="dpr-home-notice-entry-title">ECCV 2026 已更新</strong>
+      <span class="dpr-home-notice-entry-summary">已收录 2,834 篇论文，摘要与 PDF 链接齐全，可按会议年份检索。EMNLP 2026 暂待可信官方数据开放。</span>
+    </div>
+  </div>
+  <div class="dpr-home-notice-entry">
+    <time class="dpr-home-notice-date" datetime="2026-09-05">09.05</time>
+    <div>
+      <strong class="dpr-home-notice-entry-title">CVPR 2026 已更新</strong>
+      <span class="dpr-home-notice-entry-summary">已收录 CVPR 2026 官方 Open Access 论文 4,042 篇，可在会议检索中查看。EMNLP 2026 预计于 10 月中下旬更新，具体以官方论文集开放时间为准。</span>
     </div>
   </div>
   <div class="dpr-home-site-stats" data-dpr-site-stats hidden aria-live="polite">
@@ -41,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-09</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-10</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-09 22:01:28 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-10 21:51:27 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -62,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日聚焦大模型在线蒸馏与表格基础模型，共推荐5篇，其中2篇精读、1篇速读。</p>
-<p>最值得看：在线蒸馏论文提出“单个训练示例”即可显著提升效果；表格基础模型引入“结构覆盖”刻画行为差异。</p>
-<p>建议优先精读这两篇9.0分论文，速读可关注图上下文学习的LoGIC。</p>
+<p>今日日报成功精读2篇：9.0分《Rethinking On-Policy Distillation of Large Language Models II》与8.0分《Physical Law Ecology》。</p>
+<p>最值得看的是大模型在线策略蒸馏能否靠“一个训练样本”带来新训练范式，以及用多机制生态图谱作为数据驱动科学发现的“第零步”。</p>
+<p>普通读者可先读9.0分蒸馏文章把握LLM训练前沿，再借8.0分文章理解如何用生态视角开启科学发现。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -73,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Rethinking On-Policy Distillation of Large Language Models II: One Training Example">Rethinking On-Policy Distillation of Large Language Models II: One Training Example</span></li><li><span class="dpr-home-dashboard-paper-title" title="From Synthetic Priors to Model Behavior: Structural Coverage in Tabular Foundation Models">From Synthetic Priors to Model Behavior: Structural Coverage in Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Streaming Hierarchical Inference with Tabular Foundation Models">Streaming Hierarchical Inference with Tabular Foundation Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Rethinking On-Policy Distillation of Large Language Models II: One Training Example">Rethinking On-Policy Distillation of Large Language Models II: One Training Example</span></li><li><span class="dpr-home-dashboard-paper-title" title="Physical Law Ecology: mapping multi-mechanism ecologies as the zeroth step of data-driven scientific discovery">Physical Law Ecology: mapping multi-mechanism ecologies as the zeroth step of data-driven scientific discovery</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span><span class="dpr-home-dashboard-tag">opd <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">opd <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -86,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="LoGIC: Budgeted Context Construction for Node-Level Graph In-Context Learning with Tabular Foundation Models">LoGIC: Budgeted Context Construction for Node-Level Graph In-Context Learning with Tabular Foundation Models</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+
 </section>
 </div>
 
