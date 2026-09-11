@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-10</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-11</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-10 21:51:27 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-11 21:56:55 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日日报成功精读2篇：9.0分《Rethinking On-Policy Distillation of Large Language Models II》与8.0分《Physical Law Ecology》。</p>
-<p>最值得看的是大模型在线策略蒸馏能否靠“一个训练样本”带来新训练范式，以及用多机制生态图谱作为数据驱动科学发现的“第零步”。</p>
-<p>普通读者可先读9.0分蒸馏文章把握LLM训练前沿，再借8.0分文章理解如何用生态视角开启科学发现。</p>
+<p>2026-09-11日报：5篇论文、精读2篇、速读3篇，重点落在大模型蒸馏与AI辅助科学发现。</p>
+<p>最值得看的是两篇9分精读：一篇重思大模型On-Policy Distillation，标题点出“One Training Example”；另一篇让LLM作为符号回归中生理合理性的后验审计者。</p>
+<p>普通读者可先读这两篇精读摘要，再按兴趣选速读里的物理定律生态、Tensor-Train Weak SINDy或EML型算子多样性。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -83,7 +83,7 @@
     <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Rethinking On-Policy Distillation of Large Language Models II: One Training Example">Rethinking On-Policy Distillation of Large Language Models II: One Training Example</span></li><li><span class="dpr-home-dashboard-paper-title" title="Physical Law Ecology: mapping multi-mechanism ecologies as the zeroth step of data-driven scientific discovery">Physical Law Ecology: mapping multi-mechanism ecologies as the zeroth step of data-driven scientific discovery</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Rethinking On-Policy Distillation of Large Language Models II: One Training Example">Rethinking On-Policy Distillation of Large Language Models II: One Training Example</span></li><li><span class="dpr-home-dashboard-paper-title" title="LLMs as Post-hoc Auditors of Physiological Plausibility in Symbolic Regression: A Clinician-Evaluated Case Study">LLMs as Post-hoc Auditors of Physiological Plausibility in Symbolic Regression: A Clinician-Evaluated Case Study</span></li></ul>
   </div>
   <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">opd <strong>1</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
@@ -93,12 +93,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">3 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Physical Law Ecology: mapping multi-mechanism ecologies as the zeroth step of data-driven scientific discovery">Physical Law Ecology: mapping multi-mechanism ecologies as the zeroth step of data-driven scientific discovery</span></li><li><span class="dpr-home-dashboard-paper-title" title="Tensor-Train Weak SINDy: Identifying High-Dimensional Nonlinear Dynamics">Tensor-Train Weak SINDy: Identifying High-Dimensional Nonlinear Dynamics</span></li><li><span class="dpr-home-dashboard-paper-title" title="Diversity of EML-type operators">Diversity of EML-type operators</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>3</strong></span></div>
 </section>
 </div>
 
