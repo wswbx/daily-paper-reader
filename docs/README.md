@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-16</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-17</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 0 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-16 21:58:27 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-17 21:43:23 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日无新推荐，系统未产出可展示论文。</p>
+<p>2026-09-17 日报：5 篇全部精读，其中两篇以 9.0 分并列最高——《Symbolic Ensemble Learning Enables Discovery of Fast Accurate Physics-Based Interatomic Potentials》与《LimiX-2: A Contextual Mechanism Network Towards General Structured-Data Intelligence》。</p>
+<p>最值得关注两个方向：符号集成学习用于快速准确的物理基原子间势，以及面向通用结构化数据智能的上下文机制网络。</p>
+<p>普通读者可先看 LimiX-2 了解结构化数据的通用建模思路，若关心材料/分子模拟则重点读符号集成势函数那篇。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Symbolic Ensemble Learning Enables Discovery of Fast Accurate Physics-Based Interatomic Potentials">Symbolic Ensemble Learning Enables Discovery of Fast Accurate Physics-Based Interatomic Potentials</span></li><li><span class="dpr-home-dashboard-paper-title" title="LimiX-2: A Contextual Mechanism Network Towards General Structured-Data Intelligence">LimiX-2: A Contextual Mechanism Network Towards General Structured-Data Intelligence</span></li><li><span class="dpr-home-dashboard-paper-title" title="TabPFN-3.5: Technical Report">TabPFN-3.5: Technical Report</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>4</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">

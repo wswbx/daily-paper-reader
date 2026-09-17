@@ -1,0 +1,423 @@
+Title: Distilling Foundation Models for Agentic What-If Reasoning:Cost, Latency, and Governance in a Hybrid LLM+SLM Architecture
+
+URL Source: https://arxiv.org/pdf/2609.16091v1
+
+Published Time: Wed, 16 Sep 2026 00:04:24 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# Distilling Foundation Models for Agentic What-If Reasoning: Cost, Latency, and Governance in a Hybrid LLM+SLM Architecture 
+
+Sourish Dey ∗
+
+Machine Learning SumUp, Berlin 
+
+sourish.dey@sumup.com sourish.syntel@gmail.com 
+
+Aditya Kumar 
+
+Institute of Physics Johannes Gutenberg-Universität Mainz 55128 Mainz, Germany 
+
+kuaditya@uni-mainz.de 
+
+## Abstract 
+
+Tabular foundation models deliver strong zero-training predictive performance via in-context learning, but their high inference latency makes them impractical as hot-path decision backends in interactive agentic loops. We distill a TabPFN teacher into a compact feed-forward student across a business-decision simulation on UCI Adult and five OpenML benchmarks: the classification head compresses 53.2M parameters to 8,546 (6,220 ×); the deployed two-head loan pipeline compresses 111.4M parameters to 17,059 (6,532 ×). The student retains 95.4–100.5% accu-racy and 96.8–100.0% AUC (Table 3 point estimates from the same checkpoints as Table 9; lowest accuracy retention is credit-g at 95.4%), with an α = 0 hard-label control showing the teacher’s soft targets provide a 2.1–7.0 AUC point gain. Embedding the distilled student in a hybrid LangGraph architecture (restricting the cloud LLM to tool selection and schema parsing while serving prediction and response formatting locally) reduces end-to-end latency by 3.8–4.8 × across CPU and GPU profiles (22.91s vs. 87.95s on CPU; 1.53s vs. 5.86s on GPU; 4.96s vs. 23.94s on Apple M5 Pro). Span-level attribution shows that this wall-clock gain is almost entirely from removing in-context TabPFN from the hot path; fewer cloud round-trips cut token cost (2.1 ×) rather than latency. Tool-call accuracy improves (0.98 vs. 0.90). Raw 14-column feature rows stay on-premises, but free-text queries and customer_id still cross the cloud API. Cloud token cost drops 2.1 ×,though hardware amortization requires multi-million-query scale. Both pipelines are fully instrumented with LangSmith tracing, and all artefacts are open-source. 
+
+Keywords: knowledge distillation, tabular foundation models, agentic workflows, LangGraph, hy-brid LLM/SLM architecture, tool calling, data governance, LLM-as-judge evaluation 
+
+## 1 Introduction 
+
+Foundation models have made few-shot, near-zero-training-cost prediction practical even for struc-tured (tabular) data. Tabular foundation models such as TabPFN [14, 15, 29] perform in-context learning: they ingest the entire training set as context at inference time and require no gradient-based fitting on the target dataset. This makes them attractive teachers for business-decision tasks where labelled data is scarce. However, their inference cost scales with context size; we measure 
+
+> ∗
+
+Code, data, and evaluation artefacts: https://github.com/nitsourish/Model-Distillation-Age ntic-Workflow arXiv:2609.16091v1 [cs.LG] 14 Sep 2026 single-call tabular foundation-model latencies of 12.6s (CPU) and 0.84s (GPU) per prediction (Sec-tion 6), creating an unacceptable bottleneck inside interactive, multi-step agentic loops. Concurrently, the dominant deployment pattern delegates both tool orchestration and final response generation to a cloud LLM (e.g., GPT-4o-mini). In decision systems, this repeatedly transmits sen-sitive attributes (age, income, marital status) to external APIs, incurring unnecessary token latency and data-governance risks. We evaluate whether knowledge distillation of the tabular predictor , combined with an asymmet-ric hybrid orchestration split that reserves the cloud LLM for tool selection and parsing while hosting prediction and response generation on-premises, can retain task quality while reducing la-tency, operational cost, and sensitive-data exposure. We make three contributions: 1. TabPFN →MLP distillation with α controls. We compress a 53.2M-parameter TabPFN classifier into an 8,546-parameter student (6,220 ×; 111.4M →17,059 / 6,532 × for the two-head loan pipeline) across UCI Adult and OpenML benchmarks, with hard-label-only ( α =0) controls showing a 2.1–7.0 AUC point gain from teacher soft targets (Sections 5 and 5.6). 2. Hybrid agentic split, cost, and latency. We evaluate a LangGraph pipeline against a full-LLM baseline on 50 what-if queries. End-to-end latency falls 3.8–4.8 × (driven by removing TabPFN from the hot path; Section 6), tool-call accuracy rises from 0.90 to 0.98, and cloud token cost falls 2.1 ×.3. Governance and subgroup fairness. We audit data minimization under GDPR and evalu-ate subgroup fairness, showing that aggregate retention can hide race equalized-odds gaps that widen under compression (Section 7). A recap of distillation versus fine-tuning and the implemented KD losses appears in Section 3 as background, not as a theoretical contribution. LangSmith tracing (Section 4.1) is an implementation detail of the evaluated pipelines. 
+
+## 2 Related Work 
+
+Knowledge distillation. Hinton et al. [12] introduced the canonical teacher-student framework matching softened output distributions alongside hard labels, building on model-compression foun-dations [4, 1, 10]. While widely applied to vision and language encoders (e.g., DistilBERT [30], TinyBERT [19]), tabular foundation model distillation is less explored. Recent efforts condense TabPFN context representations [24, 7]. Our work focuses on compressing a fitted TabPFN teacher into an independent, lightweight MLP, comparing against plain MLP baselines [9] and evaluating subgroup compression bias [16]. 
+
+Tabular foundation models and adaptation. TabPFN [14, 15, 29] reframes tabular learning as in-context transformer inference. In contrast to fine-tuning (ULMFiT [17], instruction tuning [28]) or parameter-efficient adapters like LoRA [18] which preserve model architecture and inference compute, distillation drastically alters the operational footprint. 
+
+Agentic workflows and evaluation. ReAct [37], Toolformer [31], and frameworks like AutoGen [36] and LangGraph [22] formalize multi-step tool orchestration. We assess small-model parsing capabilities zero-shot (Section D.4) and employ the RAGAS faithfulness/relevance triad [5] via an LLM judge. 
+
+## 3 Background: Distillation versus Fine-Tuning 
+
+This section recaps a standard distinction and records the losses used in our scripts. Fine-tuning and distillation both adapt learned knowledge to a target task, but they differ in what is optimized and what capacity constraint is imposed on the result. 2Dimension Fine-tuning Distillation                          
+
+> Primary objective Specialize general model to narrower task distribu-tion Compress large model into smaller, faster architec-ture Target architecture Unchanged (full FT) or near-identical (LoRA, adapters) Student architecture unconstrained; typically ≪
+> teacher Inference cost Unchanged ( ≈same latency, memory, compute) Substantially reduced ( ∝student parameter count) Label requirements Requires task-specific ground-truth labels DCan use soft targets from unlabelled transfer sets Representational fi-delity Preserves internal representations of the base model Transfers functional input-output mapping; inter-nals differ Cold-start latency High (must load large model into memory) Low (compact student fits in lightweight environ-ments) Production role Not deployed (explored zero-shot in Section D.4) Core tabular prediction engine (Sections 5 and 4)
+
+Table 1: Fine-tuning vs. distillation: architectural and operational dimensions. 
+
+3.1 Fine-tuning 
+
+Fine-tuning starts from a pretrained parameter vector θ0 of a fixed architecture fθ and continues optimization on a target-task dataset Dtgt = {(xi, y i)}Ni=1 :
+
+θ⋆ = arg min  
+
+> θ
+
+E(x,y )∼D tgt 
+
+h
+
+Ltask 
+
+ fθ (x), y i
+
+, θ initialized at θ0. (1) In this setting, the adapted model retains the architecture of the pretrained checkpoint. In parameter-efficient variants such as LoRA [18], weight updates are parameterized via low-rank decomposition 
+
+∆W = BA with B ∈ Rd×r , A ∈ Rr×k, r ≪ min( d, k ), leaving the original weights W frozen. Fine-tuning adjusts the learned representations of a fixed-capacity architecture without substantially altering inference compute or memory requirements. 
+
+3.2 Distillation 
+
+Distillation trains a separate, compact student architecture gϕ to reproduce the behavior of a fixed teacher fθT with frozen weights, using the teacher’s output distribution as an additional supervisory signal alongside ground-truth labels: 
+
+ϕ⋆ = arg min  
+
+> ϕ
+
+Ex∼D 
+
+h
+
+LKD 
+
+ gϕ(x), f θT (x), y i
+
+. (2) Because gϕ and fθT need not share architectural families or internal representations, distillation en-ables replacing a ∼53–111M-parameter transformer with an 8.5K-parameter feed-forward network (Section 5), achieving compression that architectural preservation during fine-tuning precludes. 
+
+Classification loss (as implemented, run_distillation.py ). For classification we use the canonical Hinton et al. [12] soft-target objective. Let zS , z T ∈ RC be student and teacher logits, 
+
+T > 0 a softening temperature, y the hard label, and α ∈ [0 , 1] the soft/hard mixing weight: 
+
+Lsoft = T 2 · DKL 
+
+
+
+softmax( zT /T ) softmax( zS /T )
+
+
+
+(3) 
+
+Lhard = CrossEntropy( zS , y ) (4) 
+
+Lcls (zS , z T , y ) = α Lsoft + (1 − α) Lhard (5) In our experiments, T = 2 .0 and α = 0 .7, training the student primarily to match the teacher’s softened class probabilities (which encode inter-class confidence structures in addition to the arg-max prediction) and secondarily to match ground-truth labels. The T 2 multiplier compensates for gradient magnitude scaling from logit division by T [12]. 
+
+Regression loss (as implemented). For the continuous regression head there is no softmax to soften, so the analogous soft/hard split uses mean-squared error against the teacher’s point prediction 
+
+ˆyT = fθT (x) and against the true label y:
+
+Lreg (ˆ yS , ˆyT , y ) = α · MSE(ˆ yS , ˆyT ) + (1 − α) · MSE(ˆ yS , y ), α = 0 .7. (6) 3Local trust boundary (on-premises)     
+
+> Natural-language what-if query Cloud LLM orchestrator (gpt-4o-mini )tool + parsing Tool execution: distilled student MLP (17K params) Local SLM Qwen2.5-3B generation Final natural-language answer Experimentation data (local features)
+> query tool call JSON cloud API boundary raw feature rows stay local; query and customer_id still cross the API
+
+Figure 1: Hybrid architecture: a single cloud-LLM call performs tool selection and schema-constrained scenario parsing; the distilled student MLP runs the tabular prediction and a local Qwen2.5-3B-Instruct SLM generates the final answer on-premises. Raw 14-column feature rows do not reach third-party APIs; free-text queries and customer_id still do. 
+
+## 4 System Architecture 
+
+The two agentic pipelines evaluated end-to-end in Section 6 (see repository scripts/hy-brid_architecture.py ) are as follows. • Full-LLM baseline ( FullLLMAgent ). A single cloud model ( gpt-4o-mini ) receives the system prompt, the user query, and the tool schemas; it decides which tool to call, extracts parameters (including free-text what-if modifications, e.g. “what if customer 123 had a Master’s degree” → {"education": "Masters"} ), the tool executes a prediction using the tabular foundation-model teacher , and the same model consumes the raw tool output to produce the final natural-language answer (requiring up to three cloud LLM calls per query). • Hybrid architecture ( HybridAgent ). The cloud model is restricted to a single call: tool selection plus structured scenario parsing via OpenAI function-calling schemas (field names and types are declared in the schema, constraining what the model can emit). The selected tool executes a prediction using the distilled student MLP. A local Qwen2.5-3B-Instruct SLM then formats the raw tool JSON and the user’s question into the final answer, entirely on-premises. The two pipelines are held identical in tool schema, system-prompt intent, and evaluation query set; the only manipulated variables are (a) which model performs the tabular prediction (teacher vs. distilled student) and (b) which model performs response generation (cloud LLM multi-turn vs. local SLM single-pass). This isolates the cost/latency/quality effect of the distillation-plus-hybrid-split design from confounds like prompt engineering differences. Figure 1 illustrates the hybrid architecture’s data flow: the cloud LLM processes only the user’s free-text query and tool schemas, while the distilled student and local SLM, along with the underlying customer records, reside within the local trust boundary. 
+
+Motivation for the Asymmetric Split. Section D.4 shows that using the local SLM (Qwen2.5-3B-Instruct) zero-shot for scenario-to-JSON extraction caps tool-call accuracy at 58%, compared to 98% when using schema-constrained function calling with the cloud model (Section 6). The architecture therefore maintains an asymmetric division of labor: the cloud LLM handles structured decision-making and extraction where small open models remain unreliable, whereas numeric prediction and text formatting are hosted on-premises. 
+
+4.1 Observability 
+
+A production deployment requires auditing why a given decision was reached without re-running offline evaluations. We instrument both pipelines with LangSmith [23] tracing (scripts/observability.py ) as an implementation layer, using a lightweight decorator that adds zero overhead when disabled. Root spans capture orchestrator LLM token usage, prediction laten-cies (for both foundation teacher and student MLP), and local SLM generation. Offline evaluation metrics (tool-call accuracy, parsing recall, LLM-judge triad scores) are written back onto each live 4Setting Value                          
+
+> Classification α/T/ epochs 0.7/2.0/10
+> Hint-loss weight none (not implemented) Optimizer / batch / seed Adam, 10 −3; batch 64; seed 42 Primary regression (Section 5.7) α= 0 .7,T= 1 .0, 10 epochs OpenML regression (Appendix B) α= 0 .9,T= 1 .0, 200 epochs
+> α-sweep (Table 11) T= 3 .0(kr-vs-kp: T= 2 .0, 5-fold CV)
+
+Table 2: Canonical training configuration used for the reported tables. The α-sweep in Table 11 varies only the mixing weight around this protocol. trace via Client.create_feedback , enabling bidirectional debugging: operators can filter pro-duction runs by evaluation scores, and auditors can inspect end-to-end trace spans for any query. Tracing payload schemas and governance implications (span-level redaction for on-premises com-pliance) are detailed in Appendix C. 
+
+## 5 Distillation Benchmarking on Structured Data 
+
+5.1 Datasets Primary experimentation data. data/loan_data_with_max_loan.csv is built by script-s/prepare_business_data.py from the UCI Adult census dataset [20] (48,842 rows, 23.9% positive rate). The binary decision label is the real Adult income label ( >50K → 1), so classifi-cation metrics are directly comparable to published Adult-benchmark numbers. max_loan is a synthetic, business-rule-simulated regression target (multiplicative factors on age, workclass, edu-cation, occupation, net capital gain/loss, and hours worked) assigned only to rows with a positive outcome (11,687 rows, range $90K-$300K); it has no external ground truth and serves as a syn-thetic experimental benchmark target. Training used a stratified 10,000-row subsample (the tabular foundation-model teacher’s pretrained context window is optimized for ≤10K rows) with an 80/20 train/test split (8,000/2,000). 
+
+OpenML benchmark datasets. To test generalization beyond the single business simulation, we ran the identical distillation protocol ( scripts/run_classification_benchmark.py , reusing the same student architecture, loss, and seed as above) across five diverse OpenML classifica-tion benchmarks: three from the OpenML-CC18 [3] suite ( credit-g , German Credit, 1,000 rows, 800/200 split [13]; bank-marketing , Bank Marketing, 45,211 rows, stratified-subsampled to 10,000, 8,000/2,000 split [25]; and kr-vs-kp , Chess King-Rook vs. King-Pawn, 3,196 rows, 2,556/640 split [32]) alongside two high-dimensional or imbalanced sets ( internet-ads , 3,279 rows, 1,558 features [21]; and speeddating , 8,378 rows, 118 features [8]). Full dataset characteristics are detailed in Table 8 (Appendix A). 
+
+5.2 Training protocol 
+
+Unless a caption names an exception, every classification result in Tables 3 and 9 uses the defaults of 
+
+scripts/run_distillation.py and scripts/run_classification_benchmark.py . There is no hint or embedding loss in those scripts. 
+
+5.3 Teacher and student architectures 
+
+The teacher is TabPFNClassifier / TabPFNRegressor (tabpfn==8.2.0 , in-context learning, no gradient fitting on the target dataset beyond context conditioning). The student is a compact feed-forward network, identical in shape across every dataset and task, with only the input width varying by the one-hot-encoded feature count: 
+
+gϕ(x) = W3 σ2
+
+  Dropout 0.2(W2 σ1(Dropout 0.2(W1x + b1)) + b2) + b3 (7) with W1 ∈ R64 ×din , W2 ∈ R32 ×64 , W3 ∈ RC×32 (σ1 = ReLU ; σ2 = sigmoid for the classifier head, ReLU for the regressor head; C = 2 for classification, C = 1 for regression). Both teacher and student are trained/evaluated with seed 42 against teacher-produced soft logits precomputed 5Dataset Teacher acc. Student acc. Acc. retention Teacher AUC Student AUC AUC retention                                     
+
+> Loan approval 0.8495 0.8450 99.5% 0.9175 0.9125 99.5% credit-g 0.7650 0.7300 95.4% 0.7857 0.7714 98.2% bank-marketing 0.9070 0.8965 98.8% 0.9263 0.8970 96.8% internet-ads 0.9604 0.9649 100.5% 0.9858 0.9845 99.9% speeddating 0.8586 0.8598 100.1% 0.8653 0.8653 100.0% kr-vs-kp 0.9969 0.9672 97.0% 0.9999 0.9948 99.5%
+
+Table 3: Teacher vs. student classification quality (same checkpoints as Table 9; protocol in Table 2: 
+
+α = 0 .7, T = 2 .0, 10 epochs, no hint-loss, seed 42). Retention is student/teacher. Precision, recall, and F1 for these runs are in Table 9. once per training run (remaining hyperparameters in Table 2). A layer-by-layer accounting of all student MLP weights is detailed in Appendix C. 
+
+5.4 Parameter-count accounting 
+
+Parameter counts were measured directly from the loaded PyTorch modules (teacher: 
+
+sum(p.numel() for p in model.parameters()) on the fitted tabpfn model; student: from saved checkpoints). Table 10 (Appendix A) reports full parameter counts and compression ratios; Figure 2 visualizes them on a log scale. On the primary loan task, the combined predictor achieves a 6,532 × parameter reduction (111,428,088 teacher parameters to 17,059 student parameters: 8,546 for classification, 8,513 for regression). Across OpenML-CC18 classification benchmarks, compres-sion reaches 10,063 × (credit-g, 5,282 parameters), 10,852 × (bank-marketing, 4,898 parameters), and 11,611 × (kr-vs-kp, 4,578 parameters). Smaller-input datasets exhibit higher compression ratios because the student’s first layer scales linearly with one-hot feature dimension ( 64 din + 2 ,210 ) while the teacher’s stored parameter count remains fixed. 
+
+5.5 Accuracy and AUC retention 
+
+Table 3 reports teacher and student test-set metrics (visualized in Figure 3, Appendix A). Retention is defined as student metric /teacher metric. Because some held-out test sets are small, sampling noise can make the student’s measured metric nominally exceed the teacher’s; we therefore report reten-tion uncapped. Across all six datasets, accuracy retention ranges 95.4–100.5% and AUC retention ranges 96.8–100.0%, at a 6,220 × (business-simulation classifier) to 11 ,611 × (kr-vs-kp) parameter reduction (Table 10). Extended classification sweeps covering precision, recall, and F1 on the same checkpoints are in Appendix A. These retention figures are evaluated against hard-label baselines in Section 5.6 to isolate the contribution of teacher soft targets. 
+
+5.6 Hard-Label-Only Control Ablation 
+
+To isolate the supervisory contribution of teacher soft targets from the baseline inductive capacity of the MLP architecture, we evaluate an identical student architecture trained solely on ground-truth hard labels ( α = 0 ). Hyperparameters, training epochs, and random seeds are held fixed to Table 2. We evaluate test ROC-AUC across all six datasets (Table 11, Appendix A). Across all six datasets, the hard-label baseline ( α = 0 ) achieves the lowest performance, with ROC-AUC increasing as α increases toward 0.7. At the canonical α = 0 .7, teacher soft targets yield gains over hard labels alone of 0.0210 (loan approval), 0.0589 (credit-g), 0.0702 (bank-marketing), 0.0423 (internet-ads), 0.0254 (speeddating), and 0.0296 (kr-vs-kp, 5-fold CV), i.e. 2.1–7.0 AUC points. This confirms that teacher soft targets transmit inductive bias beyond what is captured by ground-truth labels. 
+
+5.7 Regression Head Evaluation and Soft-Target Control 
+
+For the regression head on the primary experimentation data, the teacher achieves RMSE $75,737 (WMAPE 0.712) on the test set. Evaluated conditionally on its own approval decisions (the deployed operational setting; scripts/prediction_utils.py ), the student achieves RMSE $88,115 and WMAPE 0.873 (424 predicted approvals out of 2,000 test rows; unconditional evaluation yields 6Metric Hybrid Full-LLM Diff.                
+
+> Tool-call accuracy 0.98 0.90 +0.08 Parameter accuracy 0.98 0.90 +0.08 Scenario parsing recall 0.894 0.717 +0.177 Scenario parsing precision 0.906 0.717 +0.189 Errored queries (of 50) 00–
+
+Table 4: Structured extraction quality (50 queries).         
+
+> Metric (mean) Hybrid Full-LLM
+> Faithfulness 0.750 0.830 Context relevance 0.780 1.000 Answer relevance 0.940 1.000
+> Zero errors on either pipeline.
+
+Table 5: LLM-as-judge answer scores. RMSE $84,717, WMAPE 1.213). Evaluating the teacher regressor on the student’s approved subset yields WMAPE 0.570 and RMSE $105,422. We report both metrics to reflect typical-loan error (WMAPE) alongside sensitivity to large-balance deviations (RMSE). Sweeping α ∈ { 0, 0.3, 0.7, 1.0} (Eq. 6, T = 1 .0) on the unconditional test set yields WMAPE values of 1.266 → 1.226 → 1.160 → 1.107 , showing that pure soft-target regression ( α = 1 .0)achieves the lowest error, consistent with the classification findings (see Figure 4 in Appendix A). Together with Section 5.6, this confirms that teacher supervision benefits both task heads. Extended evaluations across five additional OpenML regression benchmarks are presented in Appendix B. 
+
+## 6 Hybrid Architecture: Token Cost, Latency, and Quality 
+
+We evaluate the full-LLM and hybrid pipelines of Section 4 on the same 50-query natural-language what-if benchmark ( data/hybrid_scenario_eval_50.jsonl ; 30 of the 50 queries carry an ex-plicit scenario-modification ground truth) on three hardware profiles (full list in Appendix D): (a) a shared 32GB x86_64 CPU host (PyTorch CPU); (b) the same class of shared host with an NVIDIA RTX 4060 Ti 16GB ( bfloat16 for local Qwen; TabPFN also on GPU); (c) a dedicated Apple M5 Pro (48GB, CPU backend only; Table 15). Profiles (a) and (c) are both CPU execution, not the same machine: (a) is a contended development host and (c) is a clean-room check. All three use the same cloud endpoint ( gpt-4o-mini ) for orchestration, so token cost and tool-call/judge accu-racy are hardware-invariant up to run-to-run token noise. Wall-clock latency is not: local TabPFN, local Qwen, and host/network contention change with the box. The student forward pass remains sub-millisecond even on CPU. 
+
+6.1 Tool-call and parsing accuracy Reliability accounting. Both pipelines answer all 50 benchmark queries without error (defined as unhandled exceptions post-selection returning no response); evaluations in this section are computed over the full 50-query set for both pipelines. Tool-call accuracy, parsing quality, and LLM-judge scores are hardware-independent. Table 4 and Table 16 are not interchangeable. Table 4 scores the end-to-end hybrid and full-LLM agents on the 50-query benchmark when the cloud model uses OpenAI function calling with named parameters ( customer_id , modifications , and declared field types) bound in the tool schema; that is the production interface, and it is why hybrid tool-call accuracy reaches 0.98 versus 0.90 for unconstrained multi-turn extraction in the full-LLM baseline. Table 16 is a standalone parser ablation ( scripts/run_parse_accuracy_eval.py ) that gives both gpt-4o-mini and Qwen2.5-3B the same generic JSON schema without those named declarations, decoded locally via Outlines. Under that weaker interface the cloud model drops to 0.38 exact-match accuracy and the local SLM reaches only 0.58—which is why the deployed hybrid architecture keeps schema-constrained cloud function calling for parsing rather than replacing it with the 3B SLM. 
+
+6.2 LLM-judge answer quality 
+
+Final answers are scored by an LLM judge ( gpt-4o-mini , structured output) on the RAGAS-style faithfulness / context-relevance / answer-relevance triad [5] against the tool output consumed and the user’s question (Table 5). Faithfulness favors the full-LLM pipeline (0.83 vs. 0.75); context- and answer-relevance are lower for the hybrid pipeline, because the local Qwen2.5-3B formatter occa-sionally surfaces raw feature keys (e.g., "educationserie" , malformed unicode in occupation )7Hybrid (CPU) Full-LLM (CPU) Hybrid (GPU) Full-LLM (GPU)                         
+
+> Mean cost / query $9.59 ×10 −5$2.02 ×10 −4$9.59 ×10 −5$2.02 ×10 −4
+> Mean orchestrator latency †12.75s 5.91s 0.85s 0.39s Mean formatter/gen. latency 10.15s 1.57s 0.68s 0.10s Mean ML predict latency 5.67ms 12,578ms 0.38ms 838.6ms Unaccounted (tool-exec. wall time) *≈0.00s 67.88s ≈0.00s 4.53s Mean total latency (measured) 22.91s 87.95s 1.53s 5.86s
+
+Table 6: Cost and latency, 50-query benchmark on two shared development hosts: 32GB x86_64 CPU vs. RTX 4060 Ti 16GB. Cloud token cost is identical across these columns (same gpt-4o-mini run). “ML predict latency” is the tabular-model call only (student MLP for hybrid, TabPFN teacher for full-LLM). Mean total latency is measured wall-clock per query. †Orchestrator is the same cloud API on every profile; 12.75s vs. 0.85s is wait time on a loaded CPU host (queueing/net-work), not a different model. *For the full-LLM pipeline, the three instrumented spans do not exhaust the wall-clock window; the residual tracks host contention during teacher in-context inference. A dedicated third profile (Apple M5 Pro) is Table 15. without fully synthesizing the user’s specific query, a known limitation of small, generic language models without task-specific fine-tuning. 
+
+6.3 Cost and latency 
+
+Total cost across all 50 queries is $0.00479 for the hybrid pipeline versus $0.01011 for the full-LLM pipeline, representing a 2.11 × reduction. This difference is driven by cloud LLM call frequency (a single constrained call in the hybrid architecture versus up to three unconstrained calls in the baseline), not by CPU vs. GPU. Table 6 therefore repeats the same per-query dollars under the GPU headers. The M5 Pro run (Table 15) is an independent 50-query pass, so its pair ($0.00475 vs. $0.01021, 2.15 ×) differs only by token-count noise. 
+
+Hardware amortization and total cost. This 2.11 × saving reflects marginal cloud API token spend ($0.106 saved per 1,000 queries). Amortizing a dedicated $500 GPU (RTX 4060 Ti) requires 
+
+≈4.71M queries before breaking even against cloud savings alone (excluding power and mainte-nance). Thus, marginal cost savings apply at enterprise scale or on existing infrastructure, while latency and governance benefits apply unconditionally from query one. The hybrid pipeline is 3.84 × faster end-to-end on the shared 32GB CPU host (22.91s vs. 87.95s), 
+
+3.83 × faster on the RTX 4060 Ti (1.53s vs. 5.86s), and 4.82 × faster on the dedicated Apple M5 Pro CPU (4.96s vs. 23.94s, Table 15). Absolute seconds are not comparable across the two CPU columns: the M5 Pro is a different, unloaded machine, not a faster run of the 32GB host. 
+
+Latency attribution (existing spans; no new runs). The hybrid vs. full-LLM comparison changes two factors at once: the tabular backend (TabPFN teacher vs. student MLP) and the generation path (up to three cloud LLM calls vs. one schema-constrained cloud call plus local Qwen). Table 7 regroups the already-instrumented rows of Tables 6 and 15. On every hardware profile, TabPFN inference plus the unaccounted residual—which we attribute to host contention during in-context teacher calls—accounts for 90–92% of full-LLM wall-clock time (80.46s of 87.95s on CPU; 5.37s of 5.86s on GPU; 21.55s of 23.94s on M5 Pro). Replacing that backend with the student drops the same bucket to milliseconds. By contrast, orchestrator plus formatter time is higher in the hybrid pipeline (22.90s vs. 7.48s on CPU; 1.53s vs. 0.49s on GPU; 4.96s vs. 2.40s on M5 Pro), because local Qwen formatting is slower than the baseline’s cloud generation even though cloud round-trips are fewer. The 2.1 × token-cost reduction is therefore the right quantity to attribute to the fewer-LLM-call split; the 3.8–4.8 × latency reduction is not. A crossed 2 ×2 (student with cloud formatter; teacher with local formatter) was not run; the decomposition above is additive over measured spans, not a factorial experiment. The largest instrumented single-call gap remains the tabular prediction: the distilled student (17,059 parameters total) answers in 5.67ms (CPU host), 0.38ms (GPU), and 6.09ms (M5 Pro), while the teacher takes 12,578ms, 838.6ms, and 19,579ms (2,219 ×, 2,207 ×, and 3,213 ×; Figure 8, Ap-pendix D). On dedicated hardware (Apple M5 Pro), the full-LLM residual shrinks from 67.88s to 1.97s (8% of total), corroborating the contention hypothesis. Real wall-clock latency that full-LLM 8Shared CPU Shared GPU Dedicated M5 Mean seconds / query Hybrid Full-LLM Hybrid Full-LLM Hybrid Full-LLM Tabular predict + residual 0.01 80.46 0.00 5.37 0.02 21.55 share of full-LLM total – 91.5% – 91.6% – 90.0% Orchestrator + formatter 22.90 7.48 1.53 0.49 4.96 2.40 Measured total 22.91 87.95 1.53 5.86 4.96 23.94 
+
+Table 7: Additive latency attribution from instrumented spans in Tables 6 and 15 (no additional evaluation runs). “Tabular predict + residual” is student MLP + ≈0 in the hybrid columns and TabPFN + unaccounted wall time in the full-LLM columns. Hybrid orchestrator+formatter exceeds the full-LLM LLM path on all three profiles. deployments pay on shared infrastructure reinforces the necessity of removing in-context foundation models from the per-query hot path. 
+
+## 7 Discussion: Production Hardening and Data Governance 
+
+Distillation Versus Architectural Downscaling. The latency of tabular foundation models stems fundamentally from in-context attention over exemplars. Reducing exemplar volume directly de-grades inductive accuracy on the target distribution. In contrast, distilling into a feed-forward student eliminates attention overhead during serving, providing a ≥2,200 × per-query inference speedup following an offline training step of under two minutes. As established in Section 5, the student matches teacher accuracy while improving upon hard-label training by 2.1–7.0 AUC points (Ta-ble 11), demonstrating inductive transfer from teacher soft probabilities. 
+
+Response Formatting Fidelity. Context- and answer-relevance scores are lower for the hybrid pipeline (Table 5: 0.78/0.94 vs. 1.00/1.00) because the local Qwen2.5-3B formatter is not task-fine-tuned, occasionally surfacing raw feature keys in final answers. Constraining the formatter’s output schema or applying parameter-efficient fine-tuning can address this disparity. Both pipelines achieved 100% execution reliability across all 50 benchmark queries (Table 4). 
+
+Subgroup Fairness Under Compression. Soft-target compression does not guarantee preservation of group-conditional error rates even when aggregate metrics are maintained [16]. Auditing demo-graphic parity and equalized-odds differences on the Adult test set reveals that while sex disparities remain stable (demographic parity 0.180 →0.176; equalized odds 0.093 →0.080), race disparities widen under distillation: demographic parity increases 0.240 →0.256 and equalized-odds difference widens 0.431 →0.490 (+14% relative). Although true-positive rates improve across individual racial subgroups under the student (e.g., Black applicants: 0.474 →0.632), non-uniform improvement rates widen the disparate-impact gap. Because aggregate retention metrics can mask disparate subgroup effects, fairness audits are essential when deploying compressed models in regulated domains (de-tailed protocol in Appendix E). 
+
+Data Governance. In the full-LLM baseline, intermediate tool outputs (including demographic and financial attributes) enter the cloud LLM prompt context across multiple turns. In the hybrid archi-tecture, raw 14-column feature rows and model predictions remain inside the local trust boundary. This is data minimization, not elimination of personal data from the cloud path: the orchestrator still receives the user’s free-text query and the integer customer_id required to select a tool. Both are personal data under GDPR Art. 4(1) [6, 35] if they identify or are linkable to a natural person. Localizing the feature row therefore reduces, but does not remove, Art. 5(1)(c) exposure. Extended compliance accounting is detailed in Appendix E. 
+
+Observability and Auditability. Regulated decision-making requires operational auditability along-side offline benchmark evaluations. As established in Section 4.1, attaching evaluative scores di-rectly to LangSmith trace trees provides bidirectional verification: compliance auditors can inspect intermediate tool parameters, student/teacher prediction differences, and formatter generation di-rectly from production spans (Appendix C). 97.1 Limitations 
+
+The following constraints bound how far the reported numbers should be generalized; Appendix E expands each item. 1. Orchestrator tier. gpt-4o-mini is a proxy for a cheaper gpt-4o-nano production tier. Schema adherence should transfer; absolute token prices and orchestrator latency will not. 2. What-if sample size. The 50-query benchmark separates pipelines on latency and tool-call accuracy, but it is underpowered for subtle natural-language or LLM-judge differences. 3. Synthetic regression label. max_loan is a rule-simulated target with no external ground truth; classification labels are the real Adult income indicator. 4. Hardware and tracing residual. The 32GB CPU and RTX 4060 Ti sweeps were col-lected on shared development machines; the M5 Pro is a dedicated reproduction. Orches-trator latency of 12.75s (shared CPU) vs. ≈0.85s (GPU and M5) is the same gpt-4o-mini 
+
+endpoint under host/network contention, not a different model. The large unaccounted full-LLM residual (67.88s CPU) shrinks to 1.97s on M5 Pro, consistent with contention during TabPFN in-context inference. Latency attribution in Table 7 uses these spans additively; a factorial 2 ×2 (student with cloud formatter; teacher with local formatter) was not run. 5. Single seed. Distillation tables use seed 42. Multi-seed weight-initialization sweeps are future work. 6. Fairness scope. Subgroup audits cover sex and race on Adult groups with ≥ 20 test rows only. 
+
+## 8 Conclusion 
+
+We distilled a TabPFN teacher into a feed-forward student, retaining 95.4–100.5% accuracy and 96.8–100.0% AUC on the Table 3 checkpoints (6,220 × for the 8,546-parameter classifier; 6,532 ×
+
+for the 17,059-parameter two-head loan pipeline). Hard-label controls ( α = 0 ) confirm that teacher soft targets yield a 2.1–7.0 AUC point gain alongside monotonic regression improvements, demon-strating that the teacher provides supervisory signal beyond architecture capacity. Embedding the distilled student in a hybrid LangGraph architecture (restricting cloud LLM calls to tool selection while serving tabular prediction and response formatting locally) reduces end-to-end latency by 3.8– 4.8 ×, almost entirely by removing TabPFN from the hot path; fewer cloud calls cut token cost 2.1 × rather than wall-clock time. Tool-call accuracy improves (0.98 vs. 0.90). Raw feature rows stay on-premises while free-text queries and customer_id still leave the local boundary. Hard-ware amortization of a dedicated GPU still requires multi-million-query scale. Standalone ablations demonstrate that local SLMs achieve 58% parsing accuracy zero-shot under a generic schema, sup-porting the asymmetric division of labor. Subgroup fairness audits reveal that while sex disparities remain stable, equalized-odds differences by race widen by 14% under compression despite individ-ual TPR gains, highlighting the necessity of subgroup evaluations in model distillation workflows. Future work includes fine-tuning the local formatter, scaling to unlabelled transfer sets, and deploy-ing span-level redaction for hybrid observability. 
+
+## References 
+
+[1] Jimmy Ba and Rich Caruana. Do deep nets really need to be deep? Advances in Neural Information Processing Systems (NeurIPS) , 27, 2014. [2] Sarah Bird, Miroslav Dudík, Richard Edgar, Brandon Horn, Roman Lutz, Vanessa Milan, Mehrnoosh Sameki, Hanna Wallach, and Kathleen Walker. Fairlearn: Assessing and improv-ing fairness of AI systems. Technical Report MSR-TR-2020-32, Microsoft, 2020. [3] Bernd Bischl, Giuseppe Casalicchio, Matthias Feurer, Pieter Gijsbers, Frank Hutter, Michel Lang, Rafael G. Mantovani, Jan N. van Rijn, and Joaquin Vanschoren. OpenML benchmarking suites. Advances in Neural Information Processing Systems (NeurIPS), Datasets and Bench-marks Track , 1, 2021. 10 [4] Cristian Bucil˘ a, Rich Caruana, and Alexandru Niculescu-Mizil. Model compression. In Pro-ceedings of the 12th ACM SIGKDD International Conference on Knowledge Discovery and Data Mining , pages 535–541, 2006. [5] Shahul Es, Jithin James, Luis Espinosa Anke, and Steven Schockaert. RAGAS: Automated evaluation of retrieval augmented generation. In Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics: System Demonstrations ,pages 150–158, 2024. doi: 10.18653/v1/2024.eacl-demo.16. [6] European Parliament and Council. Regulation (EU) 2016/679 of the European Parliament and of the Council (General Data Protection Regulation). Official Journal of the European Union ,2016. [7] Benjamin Feuer, Robin Tibor Schirrmeister, Valeriia Cherepanova, Chinmay Hegde, Frank Hutter, Micah Goldblum, Niv Cohen, and Colin White. TuneTables: Context optimization for scalable prior-data fitted networks. Advances in Neural Information Processing Systems (NeurIPS) , 37:83430–83464, 2024. doi: 10.52202/079017-2654. [8] Raymond Fisman, Sheena S. Iyengar, Emir Kamenica, and Itamar Simonson. Gender differ-ences in mate selection: Evidence from a speed dating experiment. The Quarterly Journal of Economics , 121(2):673–697, 2006. doi: 10.1162/qjec.2006.121.2.673. [9] Yury Gorishniy, Ivan Rubachev, Valentin Khrulkov, and Artem Babenko. Revisiting deep learn-ing models for tabular data. Advances in Neural Information Processing Systems (NeurIPS) ,34:18932–18943, 2021. [10] Jianping Gou, Baosheng Yu, Stephen J. Maybank, and Dacheng Tao. Knowledge distillation: A survey. International Journal of Computer Vision , 129(6):1789–1819, 2021. doi: 10.1007/ s11263-021-01453-z. [11] Simon Heid, Jonas Kornowicz, Jonas Hanselle, Kirsten Thommes, and Eyke Hüllermeier. MSL: Multi-class scoring lists for interpretable incremental decision-making. In 3rd World Conference on Explainable Artificial Intelligence (xAI 2025) , pages 117–139, 2025. doi: 10.1007/978-3-032-08327-2_6. Regression variant used here: OpenML dataset id 46763, 
+
+https://www.openml.org/d/46763 .[12] Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. 
+
+arXiv preprint arXiv:1503.02531 , 2015. [13] Hans Hofmann. Statlog (German Credit Data) data set. UCI Machine Learning Repository, 
+
+https://archive.ics.uci.edu/dataset/144/statlog+german+credit+data , 1994. [14] Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. TabPFN: A trans-former that solves small tabular classification problems in a second. In International Confer-ence on Learning Representations (ICLR) , 2023. [15] Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo, Robin Tibor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular foundation model. Nature , 637(8045):319–326, 2025. doi: 10.1038/s41586-024-083 28-6. [16] Sara Hooker, Nyalleng Moorosi, Gregory Clark, Samy Bengio, and Emily Denton. Character-ising bias in compressed models. arXiv preprint arXiv:2010.03058 , 2020. [17] Jeremy Howard and Sebastian Ruder. Universal language model fine-tuning for text classi-fication. In Proceedings of the 56th Annual Meeting of the Association for Computational Linguistics , pages 328–339, 2018. doi: 10.18653/v1/p18-1031. [18] Edward J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean Wang, Lu Wang, and Weizhu Chen. LoRA: Low-rank adaptation of large language models. In In-ternational Conference on Learning Representations (ICLR) , 2022. 11 [19] Xiaoqi Jiao, Yichun Yin, Lifeng Shang, Xin Jiang, Xiao Chen, Linlin Li, Fang Wang, and Qun Liu. TinyBERT: Distilling BERT for natural language understanding. Findings of EMNLP ,pages 4163–4174, 2020. doi: 10.18653/v1/2020.findings-emnlp.372. [20] Ron Kohavi and Barry Becker. Census income (adult) data set. UCI Machine Learning Repos-itory, https://archive.ics.uci.edu/ml/datasets/adult , 1996. [21] Nicholas Kushmerick. Learning to remove Internet advertisements. In Proceedings of the Third Annual Conference on Autonomous Agents (AGENTS ’99) , pages 175–181, 1999. doi: 10.1145/301136.301186. [22] LangChain AI. LangGraph: Building language agents as graphs. https://github.com/l angchain-ai/langgraph , 2024. [23] LangChain AI. LangSmith: A platform for LLM application observability, evaluation, and monitoring. https://docs.smith.langchain.com , 2024. [24] Junwei Ma, Valentin Thomas, Guangwei Yu, and Anthony Caterini. In-context data distillation with TabPFN. arXiv preprint arXiv:2402.06971 , 2024. [25] Sérgio Moro, Paulo Cortez, and Paulo Rita. A data-driven approach to predict the success of bank telemarketing. Decision Support Systems , 62:22–31, 2014. doi: 10.1016/j.dss.2014.03. 001. [26] Sameer A. Nene, Shree K. Nayar, and Hiroshi Murase. Columbia Object Image Library (COIL-20). Technical Report CUCS-005-96, Columbia University, 1996. Regression variant used here (pixel features → turntable angle): OpenML dataset id 46783, https://www.openml.org/d /46783 .[27] OpenML. topo_2_1 (drug-design topological descriptors). OpenML dataset id 422, https: //www.openml.org/d/422 ; OpenML lists the original author, source, and date as unknown (uploaded 2014-09-28); one of a collection of QSAR/drug-design regression sets, 2014. [28] Long Ouyang, Jeff Wu, Xu Jiang, Diogo Almeida, Carroll L. Wainwright, Pamela Mishkin, Chong Zhang, Sandhini Agarwal, Katarina Slama, Alex Ray, et al. Training language models to follow instructions with human feedback. Advances in Neural Information Processing Systems (NeurIPS) , 35:27730–27744, 2022. [29] Prior Labs GmbH. Prior Labs: The tabular foundation model company. https://priorlab s.ai , 2024. [30] Victor Sanh, Lysandre Debut, Julien Chaumond, and Thomas Wolf. DistilBERT, a distilled version of BERT: smaller, faster, cheaper and lighter. arXiv preprint arXiv:1910.01108 , 2019. [31] Timo Schick, Jane Dwivedi-Yu, Roberto Dessì, Roberta Raileanu, Maria Lomeli, Eric Hambro, Luke Zettlemoyer, Nicola Cancedda, and Thomas Scialom. Toolformer: Language models can teach themselves to use tools. Advances in Neural Information Processing Systems (NeurIPS) ,36:68539–68551, 2023. doi: 10.52202/075280-2997. [32] Alen Shapiro. Chess (King-Rook vs. King-Pawn). UCI Machine Learning Repository, https: //archive.ics.uci.edu/dataset/22/chess+king+rook+vs+king+pawn , DOI: 
+
+https://doi.org/10.24432/C5DK5C , 1983. [33] Kevin Tierney and Yuri Malitsky. An algorithm selection benchmark of the container pre-marshalling problem. In Learning and Intelligent Optimization (LION 9) , pages 17–22, 2015. doi: 10.1007/978-3-319-19084-6_2. Regression variant used here: OpenML dataset id 41928, 
+
+CPMP-2015-runtime-regression , https://www.openml.org/d/41928 .[34] Luis Torgo. Computer Activity Databases ( cpu_small ). OpenML dataset id 227, https: //www.openml.org/d/227 , contributed by Luis Torgo from the DELVE repository; original author/source unrecorded (OpenML lists it as “Unknown”), 1996. [35] Paul Voigt and Axel Von dem Bussche. The EU General Data Protection Regulation (GDPR): A Practical Guide . Springer International Publishing, 1st edition, 2017. doi: 10.1007/978-3-3 19-57959-7. 12 [36] Qingyun Wu, Gagan Bansal, Jieyu Zhang, Yiran Wu, Beibin Li, Erkang Zhu, Li Jiang, Xiaoyun Zhang, Shaokun Zhang, Jiale Liu, et al. AutoGen: Enabling next-gen LLM applications via multi-agent conversation. arXiv preprint arXiv:2308.08155 , 2023. [37] Shunyu Yao, Jeffrey Zhao, Dian Yu, Nan Du, Izhak Shafran, Karthik Narasimhan, and Yuan Cao. ReAct: Synergizing reasoning and acting in language models. International Conference on Learning Representations (ICLR) , 2023. 13 Dataset Source OpenML id Instances Raw features Positive rate                               
+
+> Loan approval UCI Adult census [20] 1590 48,842 (10,000 used) 14 23.9% credit-g German Credit [13] 31 1,000 20 30.0% bank-marketing Bank Marketing [25] 1461 45,211 (10,000 used) 16 11.7% internet-ads Internet Advertisements [21] 1554 3,279 1,558 14.0% speeddating Speed Dating Experiment [8] 40536 8,378 118 *16.5% kr-vs-kp †Chess (King-Rook vs. King-Pawn) [32] 33,196 36 52.2%
+
+Table 8: Data sources and dimensions for the extended comparison. “Raw features” counts columns before one-hot encoding. Datasets exceeding the teacher’s ≤10K-row pretrained context window (loan, bank-marketing) are stratified-subsampled to 10,000 rows before the 80/20 split, consistent with Table 3. *speeddating’s raw OpenML export has 123 attributes; we removed decision and 
+
+decision_o (each participant’s individual yes/no), whose logical AND reconstructs the match tar-get with 100% agreement, constituting a direct label leak, alongside a free-text field column (260 categories) and an expected_num_interested_in_me column that is 78.5% missing; the remain-ing 118 columns’ missing values ( ∼1.5% of cells) were median/mode-imputed. †kr-vs-kp is a sixth, harder-dataset check evaluated via scripts/run_classification_benchmark.py under its de-fault benchmark configuration; its 36 raw features are all Boolean chess-board predicates (no miss-ing values, no subsampling needed since it fits under the 10K-row context cap), and “positive rate” is the won (White-can-win) class share.                                                                        
+
+> Teacher Student Dataset Acc. AUC Prec. Rec. F1 Acc. AUC Prec. Rec. F1 Loan approval 0.8495 0.9175 0.7181 0.6117 0.6607 0.8450 0.9125 0.7107 0.5950 0.6477 credit-g 0.7650 0.7857 0.8121 0.8643 0.8374 0.7300 0.7714 0.7756 0.8643 0.8176 bank-marketing 0.9070 0.9263 0.6263 0.5085 0.5613 0.8965 0.8970 0.5931 0.3675 0.4538 internet-ads 0.9604 0.9858 0.9559 1.0000 0.9775 0.9649 0.9845 0.9608 1.0000 0.9800 speeddating 0.8586 0.8653 0.6291 0.3442 0.4450 0.8598 0.8653 0.6614 0.3043 0.4169 kr-vs-kp †0.9969 0.9999 0.9970 0.9970 0.9970 0.9672 0.9948 0.9728 0.9641 0.9684
+
+Table 9: Teacher vs. student classification quality on the same checkpoints as Table 3 (protocol in Table 2). Precision/recall/F1 are reported for the positive class (loan approval, credit-g “good” credit, bank-marketing “yes” subscription, internet-ads “ad”, speeddating “match”, kr-vs-kp “won”). On the two most imbalanced sets (bank-marketing 11.7% positive, speeddating 16.5% positive), both teacher and student show lower recall/F1 than accuracy/AUC indicates. The student is within 1–3 F1 points of the teacher on four of six datasets and behind on bank-marketing (F1 0.454 vs. 0.561). 
+
+## A Extended Classification Benchmark Sweeps 
+
+To broaden coverage beyond the datasets reported in Table 3 and probe class-imbalanced and harder settings, we report precision, recall, and F1 for the same 1-fold checkpoints (scripts/run_classification_benchmark.py , Table 2: seed 42, 80/20 split, α = 0 .7, T =2.0, 10 epochs, no hint-loss). Table 8 reports each dataset’s origin and raw dimensions; Table 9 reports the full metric set. 
+
+## B Extended Regression Benchmark Sweeps 
+
+Section 5.7’s α control is a single-dataset finding (the primary business-simulation regressor only). To evaluate whether monotonic benefits from teacher soft targets generalize, we ran the identical dis-tillation protocol ( scripts/run_regression_benchmark.py : TabPFNRegressor teacher, the same SmallRegressor architecture and loss as Eq. 6, α = 0 .9, T = 1 .0, 200 epochs, seed 42) on five further OpenML regression datasets spanning raw feature counts from 11 to 1,024 and di-verse target scales: cpu-small (Computer Activity, did 227) [34], cpmp-runtime (Container Pre-Marshalling Problem algorithm runtime, did 41928) [33], topo-2-1 (drug-design topological de-scriptors, did 422) [27], coil-20 (Columbia Object Image Library, pixel features → turntable angle, did 46783) [26], and football-player-position (player attributes → position score, did 46763) [11]. Unlike the classification datasets of Table 8, all five are used at ≤10,000 rows by design (Table 12), with the two highest-dimensional sets (topo-2-1: 266 features; coil-20: 1,024 features) additionally row-capped below their full size to keep TabPFN’s CPU in-context inference tractable. 14 Dataset Input dim. Teacher params Student params Compression                         
+
+> Loan approval (classifier) 99 53,153,144 8,546 6,220 ×
+> Loan amount (regressor) 99 58,274,944 8,513 6,844 ×
+> Loan task, combined –111,428,088 17,059 6,532 ×
+> credit-g (classifier) 48 53,153,144 5,282 10,063 ×
+> bank-marketing (classifier) 42 53,153,144 4,898 10,852 ×
+> kr-vs-kp (classifier) 37 53,153,144 4,578 11,611 ×
+
+Table 10: Parameter counts (measured directly from loaded models) and compression ratios. The teacher’s classifier architecture and parameter count are identical across datasets because the tab-ular foundation model performs in-context learning with fixed pretrained weights; only the in-put projection’s effective receptive field over columns varies while the module’s stored param-eter count remains constant. “Input dim.” is the student’s actual input width din (where nu-meric columns pass through StandardScaler and categorical columns pass through OneHotEn-coder(drop='first') , in contrast to raw column counts in Table 8), since it is din that sets the student’s first-layer width W1 ∈ R64 ×din and hence its total parameter count ( 64 din + 2 ,210 for the two-class classifier head): e.g. credit-g’s 20 raw columns one-hot-encode to 48 dimensions, while kr-vs-kp’s 36 raw Boolean columns encode to 37. Visualized on log scale in Figure 2.                                           
+
+> Dataset Teacher α=0 α=0 .3α=0 .7α=0 .85 α=1 .0
+> Loan approval 0.9117 0.8883 0.9007 0.9093 0.9098 0.9103 credit-g 0.7857 0.7181 0.7765 0.7770 0.7777 0.7777 bank-marketing 0.9263 0.8274 0.8881 0.8976 0.8975 0.8974 internet-ads 0.9858 0.9434 0.9670 0.9857 0.9863 0.9853 speeddating 0.8653 0.8353 0.8562 0.8607 0.8624 0.8621 kr-vs-kp †0.9999 0.9652 0.9834 0.9948 0.9994 0.9989
+
+Table 11: Test AUC sweep over KD loss mixing weight α (T = 3 .0, seed 42; reported Tables 3 and 9 use α = 0 .7, T = 2 .0). α = 0 denotes the hard-label-only control (no teacher signal). †kr-vs-kp reports mean test AUC from 5-fold cross-validation ( T = 2 .0). 
+
+Figure 2: Teacher (tabular foundation model) vs. student (distilled MLP) parameter count, log scale, across the primary business-decision simulation and three OpenML-CC18 datasets. 15 Figure 3: Teacher vs. student accuracy (left) and ROC-AUC (right) across six datasets. 
+
+Figure 4: Student classification (KD, T = 2 .0) and regression distillation loss over 10 training epochs.                                                 
+
+> Dataset ntrain ntest Teacher RMSE Student RMSE RMSE ret. Teacher WMAPE Student WMAPE WMAPE ret.
+> cpu-small 6,553 1,639 2.4542 3.4243 71.7% 0.0200 0.0313 63.9% cpmp-runtime 1,686 422 431.16 526.32 81.9% 0.1134 0.1849 61.3% topo-2-1 1,600 400 0.0265 0.0263 100.0% *0.0204 0.0203 100.0% *
+> coil-20 1,152 288 0.0357 0.1493 23.9% 0.0017 0.0069 24.4% football-player-position 2,888 723 0.7870 0.7932 99.2% 0.2689 0.2879 93.4%
+
+Table 12: Extended regression benchmark: teacher (TabPFNRegressor) vs. distilled student (with teacher signal, α = 0 .9, T = 1 .0, 200 epochs, seed 42; cpu-small and coil-20’s student values are 5-fold cross-validated means, cpmp-runtime/topo-2-1/football-player-position a single 80/20 split) on five further OpenML regression datasets. “Student” throughout is the distilled (with-teacher-signal) student. Against the hard-label-only ( α = 0 ) control student (evaluated under an identical protocol), the teacher signal shows a positive WMAPE-retention gap on every one of the five datasets: cpu-small (63.9% vs. 47.2%, +16.7pp), cpmp-runtime (61.3% vs. 59.0%, +2.3pp), topo-2-1 (100.0% *
+
+vs. 89.7%, +10.3pp), coil-20 (24.4% vs. 2.5%, +21.9pp), and football-player-position (93.4% vs. 90.2%, +3.2pp), exhibiting the same monotonic benefit from soft targets as Section 5.7’s primary finding. *Retention is defined as RMSE teacher /RMSE student (capped at 100% as lower error indicates superior performance); topo-2-1’s uncapped ratio is 100.8% RMSE / 100.4% WMAPE, confirming parity with the teacher within test-set noise. coil-20 remains the weakest of the five (24.4% WMAPE retention): a compact 67,713-parameter student compressing a 1,024-raw-pixel-feature regression target represents a severe compression challenge for this architecture. 16 Figure 5: Extended regression benchmark (Table 12): RMSE (left, log scale) and WMAPE (right, log scale) for teacher, distilled student, and hard-label-only student across the five further OpenML regression datasets. Two patterns emerge. First, RMSE and WMAPE retention diverge across datasets: cpu-small’s WMAPE retention (63.9%) sits below its RMSE retention (71.7%) because WMAPE weights pro-portional error on smaller-magnitude instances more heavily, while cpmp-runtime shows the same direction (61.3% vs. 81.9%), mirroring the RMSE/WMAPE divergence observed in Section 5.7. Second, input dimensionality correlates more strongly with student performance than dataset size: topo-2-1 (266 features, 1,600 rows) reaches parity with its teacher, while coil-20 (1,024 features, 1,152 rows) exhibits lower retention (24.4% WMAPE retention), consistent with capacity limits of the fixed 64–32 hidden layer width for 1,024-dimensional inputs. Evaluated against the hard-label baseline, teacher supervision improves retention across all five datasets, corroborating the monotonic benefit of soft targets identified in Section 5.7. 
+
+## C Prompt Templates, Schemas, and Parameter Accounting 
+
+C.1 Prompt Templates and Function-Calling Schemas Scenario Verbalization Prompt ( scripts/build_scenario_eval_set.py ). The 50-example what-if evaluation set was generated by sampling realistic customer attribute changes and verbaliz-ing them into natural-language questions using gpt-4o-mini with the following system instruction:                                                   
+
+> You write asingle short , natural sentence describing ahypothetical change to aloan applicant ’ s profile , for ahuman loan officer . You MUST explicitly state every new value given to you , exactly as given ( same spelling / number ) , so the sentence is unambiguous . Do not mention JSON , field names verbatim , or add any values not given .
+
+Cloud LLM Orchestrator System Prompt ( scripts/hybrid_architecture.py ). The cloud orchestrator ( gpt-4o-mini ) performs tool selection and scenario parsing via the following system prompt:                                                                  
+
+> You are aloan analysis tool orchestrator . Your job : 1. Decide which tool to call 2. Extract ALL parameters including scenario modifications 3. For whatif queries , parse the natural language scenario into structured fields When user asks " what if age is 35 and education is Masters ": -Call : l o a d _ p r e d i c t _ l o a n _ a p p r o v a l _ w h a t i f -Extract : customer_id AND modifications ={" age ": 35 , " education ": " Masters "} Extract ALL mentioned fields accurately . Valid fields : -age ( number ) -education ( Doctorate , Masters , Bachelors , Some - college , HS - grad , 11 th , etc .)
+
+17 - education - num (1 -16) - workclass ( Private , Self - emp - inc , Federal - gov , etc .) - occupation ( Tech - support , Sales , Exec - managerial , etc .) - marital - status ( Married - civ - spouse , Divorced , Never - married , etc .) - relationship ( Wife , Husband , Own - child , etc .) - race ( White , Black , Asian - Pac - Islander , Amer - Indian - Eskimo , Other ) - sex ( Male , Female ) - capital - gain ( number ) - capital - loss ( number ) - hours - per - week ( number ) - native - country ( United - States , Mexico , etc .) DO NOT call tools without required parameters . 
+
+OpenAI Function Calling Schemas. The tool interfaces are strictly constrained using JSON schemas bound to gpt-4o-mini . For what-if scenario prediction, the schema declares parameter extraction explicitly: 
+
+{" type ": " function " , " function ": {" name ": " l o a d _ p r e d i c t _ l o a n _ a p p r o v a l _ w h a t i f " , " description ": " Predict loan approval for a what - if scenario with feature modifications " , " parameters ": {" type ": " object " , " properties ": {" customer_id ": {" type ": " integer " , " description ": " Customer ID " } , " modifications ": {" type ": " object " , " description ": " Structured feature modifications extracted from scenario . Keys are feature names ( age , education , workclass , etc .) , values are new values ." , " a dditio nalPr opert ies ": true }} , " required ": [" customer_id "] }}}
+
+Local SLM Response Formatter Prompt ( scripts/response_formatter.py ). On-premises response generation is executed by Qwen2.5-3B-Instruct without cloud API egress, converting raw tool output and the user query into a clean JSON response: 
+
+You are a response formatter for a loan analysis system . Your job : Convert raw tool output and user query into a clean , natural JSON response . RULES : 1. Return ONLY valid JSON - no explanations , no tool mentions 2. Structure the response to directly answer the user ’ s question 3. Use clear , business - friendly language 4. Include all relevant data from the tool output 5. Do NOT mention " tool " , " execution " , or technical details EXAMPLES : User Query : " Get information for customer 123" Tool Output : [{" customer_id ": 123 , " age ": 45 , " education ": " Bachelors " , " loan_status ": 1}] Response : {" customer_id ": 123 , " age ": 45 , " education ": " Bachelors " , " current_loan_status ": " Approved " }User Query : " What if customer 456 has a masters degree ?" Tool Output : {" customer_id ": 456 , " mod if ic ati on s_ app li ed ": {" education ": " Masters "} , " b a s e l i n e _ l o a n _ a p p r o v a l _ p r o b a b i l i t y ": 0.32 , " m o d i f i e d _ l o a n _ a p p r o v a l _ p r o b a b i l i t y ": 0.78 , " probability_change ": "+46.0%"} Response : {
+
+18 Span Captures Instrumentation 
+
+hybrid_agent.chat / full_-llm_agent.chat 
+
+Full turn: query, tool selected, extracted args, final answer, end-to-end latency Explicit (@traceable )Orchestrator LLM call (gpt-4o-mini )Prompt, completion, token usage, cost Automatic (LangChain runnable) 
+
+tabpfn_teacher.predict_-{approval,amount} 
+
+Input row, predicted probability/amount, call la-tency Explicit 
+
+student_mlp.predict_-{approval,amount} 
+
+Input row, predicted probability/amount, call la-tency Explicit 
+
+qwen3b_formatter Prompt, raw tool JSON, formatted answer, latency Explicit Eval-time feedback (tool-call ac-curacy, parsing recall/precision, faithfulness, context/answer rel-evance) Attached post-hoc onto the matching run via 
+
+Client.create_feedback 
+
+Explicit, from 
+
+scripts/run_hybrid_eval.py 
+
+Table 13: What each traced span captures in the LangSmith-instrumented pipeline, and whether the capture is automatic (a consequence of using LangChain runnables) or required an explicit @trace-able annotation.                                   
+
+> " customer_id ": 456 , " scenario ": " Education changed to Masters " , " b a s e l i n e _ a p p r o v a l _ p r o b a b i l i t y ": "32%" , " n e w _ a p p r o v a l _ p r o b a b i l i t y ": "78%" , " change ": "+46%" , " recommendation ": " Significant improvement in approval probability " }User Query : " What is the maximum loan amount for customer 100?" Tool Output : {" customer_id ": 100 , " max_loan_amount ": 150000.0} Response : {" customer_id ": 100 , " maximum_loan_amount ": " $150 ,000" }Now format the response .
+
+C.2 Observability Instrumentation and Trace Schema 
+
+Table 13 details the complete OpenTelemetry-compatible span instrumentation for both the hybrid and full-LLM agentic pipelines managed via LangSmith. 
+
+C.3 Detailed PyTorch Layer-by-Layer Parameter Accounting 
+
+Table 14 reports the exact layer-by-layer parameter accounting for the student MLP architectures (SmallClassifier and SmallRegressor ) evaluated on the primary business-decision dataset (din = 99 ). Both architectures use identical hidden layer dimensions ( 64 and 32 ) with Dropout (p = 0 .2) and differ only in output dimension and activation functions. 
+
+## D Reproducibility and Environment Details 
+
+D.1 Code, Data, and Artefacts 
+
+Code, data, and evaluation artefacts are available at https://github.com/nitsourish/Mode l-Distillation-Agentic-Workflow . All numbers in this paper are computed directly from arte-facts checked into that repository: artefacts/distillation_metrics.json , artefacts/hy-brid_eval_50_results.json , artefacts/hybrid_eval_50_results_rtx4060ti.json ,
+
+artefacts/corrected_rerun/hybrid_eval_50_results_rerun.json , artefacts/-parse_accuracy_eval_results*.json , and parameter counts measured from artefact-s/student_classifier.pth , artefacts/student_regressor.pth and a live-loaded 
+
+tabpfn==8.2.0 model. The extended CC18 and regression-benchmark datasets (Appen-dices A and B) are reproducible via scripts/run_classification_benchmark.py , script-
+
+19 Model Layer Shape Weights + Biases Total Params SmallClassifier                                                    
+
+> fc1 (Linear + ReLU + Dropout) 99 →64 (64 ×99) + 64 6,400
+> fc2 (Linear + Sigmoid + Dropout) 64 →32 (32 ×64) + 32 2,080
+> fc3 (Linear, 2-class logits) 32 →2(2 ×32) + 2 66
+> Total Classifier Parameters 8,546 SmallRegressor
+> fc1 (Linear + ReLU + Dropout) 99 →64 (64 ×99) + 64 6,400
+> fc2 (Linear + ReLU + Dropout) 64 →32 (32 ×64) + 32 2,080
+> fc3 (Linear, continuous scalar) 32 →1(1 ×32) + 1 33
+> Total Regressor Parameters 8,513 Combined Deployed Pipeline Parameters (Classifier + Regressor) 17,059
+
+Table 14: Layer-by-layer parameter breakdown for the feed-forward student networks on the primary loan dataset ( din = 99 one-hot encoded features). Parameter counts match the values reported in Table 10 exactly. 
+
+s/run_regression_benchmark.py , and scripts/download_openml_cc18.py against each dataset’s public OpenML source; their raw result artefacts and source CSVs are not checked in, since the paper’s own tables are the recorded snapshot. 
+
+D.2 Environment and Dependencies 
+
+The software environment is managed using uv with Python ≥ 3.11 . Key library versions include: • torch>=2.13.0 and transformers>=4.57.0 (student training and local SLM inference) • tabpfn==8.2.0 (Prior Labs TabPFN foundation model) • langchain-openai>=1.0.1 and langgraph>=1.0.2 (agentic orchestration) • langsmith>=0.10.13 (observability tracing and evaluation feedback) • fairlearn>=0.13.0 (subgroup fairness metrics) • openml>=0.15.1 and scikit-learn>=1.9.0 (dataset fetching, preprocessing, and con-trols) • outlines>=0.1.11 (constrained JSON generation for SLM ablation) 
+
+D.3 Hardware Profiles and Extended Latency Measurements 
+
+Three hardware configurations were evaluated. The first two are shared development machines; the third is a dedicated check. They are not interchangeable “CPU” measurements. 1. Shared CPU host : 32GB RAM x86_64, PyTorch CPU execution (subject to OS con-tention). 2. Shared consumer GPU : NVIDIA GeForce RTX 4060 Ti 16GB VRAM, CUDA 12.x; 
+
+bfloat16 for local Qwen; TabPFN teacher also on GPU in the full-LLM columns of Ta-ble 6. 3. Dedicated M5 Pro CPU : Apple M5 Pro, 48GB unified RAM, CPU backend only. Abso-lute latencies are lower than item 1 because the host is unloaded and the SoC differs, not because the protocol changed. Table 15 reports the detailed performance profile measured on the Apple M5 Pro CPU. Figure 6 plots total query latency across all three hardware profiles, Figure 7 visualizes the per-query cloud API cost comparison, and Figure 8 plots the tabular prediction latency on a log scale. 
+
+D.4 Standalone SLM-as-Parser Ablation 
+
+To evaluate whether the cloud LLM step can itself be eliminated by having the local SLM perform scenario parsing directly, closing the loop entirely on-premises, we ran a standalone 50-example 20 Hybrid Full-LLM             
+
+> Mean cost / query $9.51 ×10 −5/ $2.04 ×10 −4
+> Mean orchestrator latency 0.86s 0.89s Mean formatter/gen. latency 4.10s 1.51s Mean ML predict latency 6.09ms 19,579ms Unaccounted (tool-exec. wall time) ≈0.01s 1.97s Mean total latency (measured) 4.96s 23.94s
+
+Table 15: Cost and latency, 50-query benchmark on a dedicated Apple M5 Pro (CPU backend, 48GB). Measured independently from Table 6; the small cost difference ($9.51 ×10 −5 / $2.04 ×10 −4
+
+vs. $9.59 ×10 −5 / $2.02 ×10 −4) is token-count noise on a new gpt-4o-mini pass, not a hardware effect. Hybrid-vs-full-LLM ratios remain similar (4.82 × latency, 2.15 × cost). Orchestrator times here (0.86s / 0.89s) match the GPU profile, supporting the claim that 12.75s on the shared CPU host is contention. The full-LLM residual shrinks from 67.88s to 1.97s. 
+
+Figure 6: End-to-end mean query latency, hybrid vs. full-LLM, on three machines: shared 32GB CPU host, shared RTX 4060 Ti (Table 6), and dedicated Apple M5 Pro CPU (Table 15). Ordering and ∼4× ratio hold; absolute seconds on the two CPU machines are not the same experiment. 
+
+Figure 7: Mean cloud API cost per 1,000 queries, hybrid vs. full-LLM. Token spend does not depend on local CPU/GPU; M5 Pro dollars in Table 15 differ only by a separate API pass. 21 Figure 8: Tabular-model inference latency only (student MLP vs. tabular foundation-model teacher), log scale.                 
+
+> Configuration Tool-call acc. Mean F1 Mean cycle latency Cost / call
+> Cloud LLM (gpt-4o-mini) 0.38 0.565 28.18s $2.79 ×10 −4
+> Local SLM, zero-shot (run 1) 0.58 0.801 2.13s $0 Local SLM, zero-shot (run 2) 0.58 0.776 2.03s $0
+
+Table 16: Standalone SLM-as-parser ablation, zero-shot only. Exact-match tool-call accuracy on extracted modification sets; mean F1 is the harmonic mean of precision/recall. benchmark ( scripts/run_parse_accuracy_eval.py ) comparing gpt-4o-mini against base 
+
+Qwen2.5-3B-Instruct (without task-specific fine-tuning) executing constrained JSON decoding via Outlines in a zero-shot setting. Table 16 reports two independent runs. The zero-shot 3B SLM achieves 0.58 exact-match accuracy consistently across both runs. While higher than gpt-4o-mini ’s 0.38 under this identical, generic schema (which penalizes the cloud model by omitting named parameter declarations), it remains far below the 98% accuracy achieved by the hybrid pipeline using genuine schema-constrained function calling (Table 4). Small open models are not reliably instruction-tuned for OpenAI-style function calling, making constrained JSON decoding via Outlines their best available local interface. Qualitative failure analysis shows that the small model frequently copies unmentioned fields from the applicant context into the mod-ification JSON, failing to isolate user-specified diffs. This empirically justifies why the production hybrid architecture retains the cloud LLM for tool selection and scenario parsing, while offloading numeric prediction and natural-language formatting to local modules. 
+
+## E Extended Discussion, Subgroup Fairness, and Threats to Validity 
+
+E.1 Detailed Subgroup Fairness Protocol 
+
+As noted in Section 7, soft-target compression is not guaranteed to preserve a teacher’s group-conditional error rates even when aggregate accuracy/AUC is maintained. To audit fairness, we evaluated demographic parity difference (max-min predicted positive rate) and equalized-odds dif-ference (max-min of true-positive and false-positive rates) across protected groups on the UCI Adult test set using Fairlearn [2]. For sex, the groups comprised 679 female and 1,321 male applicants. Demographic parity difference was 0.180 (teacher) vs. 0.176 (distilled student); equalized odds difference was 0.093 (teacher) vs. 
+
+0.080 (student). For race, evaluating four groups with ≥ 20 test rows (White, Black, Asian-Pac-Islander, Other), demographic parity difference widened from 0.240 (teacher) to 0.256 (student), and equalized odds difference widened from 0.431 to 0.490 (+14% relative). While true-positive rates 22 increased across all racial groups under student predictions, the non-uniform rate of change across groups widened the disparate-impact gap. This demonstrates empirically why aggregate accuracy retention alone cannot validate compression safety in sensitive domains. 
+
+E.2 Detailed Accounting of Threats to Validity 
+
+The six items in Section 7.1 are restated here with additional operational detail. 1. Orchestrator Tier Representation : gpt-4o-mini served as an accessible proxy for the target gpt-4o-nano production tier. While functional capabilities and schema adherence are expected to align, absolute token pricing and inference latency will differ when de-ployed against smaller nano-tier APIs. 2. Evaluation Benchmark Size : The 50-query what-if evaluation set establishes clear, sta-tistically significant separation in latency, tool-call accuracy, and parameter accuracy. However, small sample counts constrain statistical power when evaluating subtle natural-language variations across LLM judges. 3. Synthetic Regression Label : The regression target max_loan was generated via a syn-thetic heuristic simulation for what-if exploration. While suitable for evaluating continuous distillation dynamics, it serves purely as an experimental simulation target. 4. Hardware Concurrency and Execution Environments : Sweeps across the 32GB CPU host and RTX 4060 Ti GPU were collected on shared development machines subject to transient OS contention. Orchestrator wall-clock of 12.75s on that CPU host vs. ≈0.85s on GPU/M5 is the same gpt-4o-mini API under load. The clean-room reproduction on the Apple M5 Pro host verified that the measured speedup ratio is robust; absolute CPU seconds are not. 5. Single-Seed Protocols : Primary training and evaluation sweeps were executed with fixed seed 42 to enable direct paired comparisons. Test-set variance was accounted for via boot-strap confidence intervals, but multi-seed weight-initialization sweeps remain future work. 6. Fairness Audit Scope : Subgroup evaluations were focused on the two well-represented protected attributes in the Adult dataset (sex and race). Attributes with small sample sizes were excluded to prevent deceptive small-sample statistics. 23
