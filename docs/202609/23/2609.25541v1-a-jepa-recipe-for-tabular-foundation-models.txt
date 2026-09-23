@@ -1,0 +1,342 @@
+Title: A JEPA Recipe for Tabular Foundation Models
+
+URL Source: https://arxiv.org/pdf/2609.25541v1
+
+Published Time: Wed, 23 Sep 2026 00:30:19 GMT
+
+Number of Pages: 16
+
+Markdown Content:
+# A JEPA Recipe for Tabular Foundation Models 
+
+Mingyu Jeon jkmcoma7@gmail.com Modulabs, Seoul, Republic of Korea 
+
+Suwan Cho cho.suwan96@gmail.com Modulabs, Seoul, Republic of Korea 
+
+Jae Young Suh tjwodud04@gmail.com Modulabs, Seoul, Republic of Korea 
+
+## Abstract 
+
+Tabular foundation models learn to predict cell values in context, whereas world-model self-supervision asks for prediction in representation space (LeCun, 2022; Assran et al., 2023). On a tabular foundation-model prior, the latent term of a joint-embedding predictive ar-chitecture (JEPA) collapsed in our earlier runs and took the encoder with it to a constant map. We report a recipe under which the latent term survives to convergence beside the value objective: the value head reads the encoder field rather than the predictor, and the target is an exponential moving average (EMA) difference. To bound its cost against the value-only arm, both arms train until a plateau rule stops them, with no fixed step budget. A fixed horizon had confounded a slowdown with a ceiling, since the value-only arm was still improving well past the usual budget. At convergence, in one run per arm, the JEPA arm trails the value-only arm across 147 real datasets, 32:70 wins to losses on classification (29:63 with one entry per dataset name) and 8:24 on regression, the margin small on clas-sification and wider on regression, and the count leans the same way in each stratum and each benchmark. The JEPA arm ( jepa ) needs 1.42 times as many steps as the value-only arm ( ds ), and 1.66 times its wall-clock, to reach its plateau. 
+
+## 1 Introduction 
+
+Tabular foundation models such as TabPFN and TabICL learn in-context prediction from synthetic tables drawn from a prior, with no per-dataset training (Hollmann et al., 2023; 2025; Qu et al., 2025). Their training objective predicts the value of a hidden cell from the visible rows, so the representation is shaped by a data-space loss alone (Müller et al., 2022). The world-model prescription for self-supervised learning is the opposite: predict the representation of the missing part, never its pixels or values (LeCun, 2022; Assran et al., 2023). The two objectives pull the representation in different directions, since a value loss rewards whatever predicts the cell and a latent loss whatever predicts its representation (LeCun, 2022), and on a synthetic prior nothing guarantees that the two agree. A synthetic prior also makes such a comparison unusually clean, since the data are unlimited and drawn from one distribution for both objectives (§3). A difference between two arms is then a property of the objectives and their wiring rather than of a dataset (§3). Whether such a latent objective can be trained on a tabular foundation-model prior at all, and what it costs, is the question we answer. In our earlier runs a joint-embedding predictive architecture (JEPA) latent term collapsed the encoder to a constant map on this prior, and the encoder ended at a constant map on every other prior we trained it on, on one of them never having left it (§3, §A.2). The collapse took the value head with it, because the head read a predictor output the latent term had already flattened. The recipe below is what removed that failure. We make three contributions. First, a recipe that trains a JEPA term beside the value objective on a tabular foundation-model prior without collapse: the value head reads the encoder field, the latent target 1arXiv:2609.25541v1 [cs.LG] 22 Sep 2026 is an exponential moving average (EMA) difference, and hidden cells enter the predictor as mask tokens, of which the runs isolate the first, with the other two held fixed (§3). Second, an open-horizon protocol that stops each arm at a plateau, which showed that the fixed budget of our earlier comparisons had stopped the value-only arm short of its plateau (§4.2). Third, a converged comparison against the value-only arm on 147 real datasets, stratified by number of classes, whose sign test carries a noise floor from a second run of the value-only arm (§4.1, §4.3). The recipe does not beat the value-only arm at convergence, and we do not claim that it does (§4.3). The claim is narrower, that the latent term trains on this prior (§4.2) and that what the recipe costs at convergence is bounded from above by one run per arm, on the premise that no other difference between the arms helps the one with the term (§4.3). 
+
+## 2 Related work 
+
+Prior-fitted networks (PFNs) cast tabular prediction as amortised Bayesian inference over a synthetic prior, and TabPFN and TabICL scaled the idea to thousands of context rows (Müller et al., 2022; Hollmann et al., 2025; Qu et al., 2025). Follow-up work attributes much of the family’s behaviour to the prior rather than to the architecture (Bouadi et al., 2026). The family has since been trained on real tables, with in-context retrieval and self-supervision (Ma et al., 2025), and on curated mixtures of synthetic priors (Zhang et al., 2025). Against that line, we keep the family’s architecture, prior and value objective fixed and add one latent term, so that the comparison bounds what that term costs (§5.1). A JEPA predicts the representation of masked content from the visible context through a predictor, and avoids collapse with an EMA target encoder or an explicit regulariser (Assran et al., 2023; Grill et al., 2020; Bardes et al., 2022; Balestriero & LeCun, 2025). Its ancestors avoided collapse by a momentum target (Grill et al., 2020), self-distillation from a masked view (Baevski et al., 2022b), a stop-gradient (Chen & He, 2020) or a redundancy penalty (Zbontar et al., 2021; Bardes et al., 2022). On video, feature prediction alone, with no reconstruction and no pretrained encoder, has since been shown to carry representation learning (Bardes et al., 2024). Collapse to a constant or, in its partial form, to a low-dimensional subspace is the documented failure of that line (Jing et al., 2021), tracked by rank-based diagnostics (Garrido et al., 2023; Thilak et al., 2023; Littwin et al., 2024). This paper reports that same failure on a tabular foundation-model prior and a wiring that removes it, rather than a new regulariser. Tabular self-supervision has used corruption and reconstruction of rows (Yoon et al., 2020; Bahri et al., 2022; Ucar et al., 2021; Somepalli et al., 2021), and JEPA variants have been trained on single datasets (Thimonier et al., 2025). Self-supervision has also come from few-shot tasks generated by treating columns of an unlabeled table as labels (Nam et al., 2023), and pre-training has crossed tables without matched columns through a graph representation of table entries with string embeddings of entries and column names (Kim et al., 2024). Cross-table pre-training transfers a backbone across tables whose columns differ, with self-supervised (Zhu et al., 2023) or mixed supervised and self-supervised objectives (Wang & Sun, 2022). LaT-PFN moved PFN prediction into a latent space with a decoder (Verdenius et al., 2024). Unlike those lines, we train the latent term on the prior itself, at 128 to 1,024 rows of context, and score the result on the family’s real-data suite. 
+
+## 3 Method 
+
+We write ds for the value-only arm and jepa for the JEPA arm. Both arms share one cell-level transformer with 6 layers, 8 heads and width 256, which encodes every cell of a table and reads the value of a hidden cell through a multi-layer perceptron (MLP) head over 32 bins. The value objective is the cross-entropy of that head against the binned value of each hidden cell: 
+
+Lds = 1
+
+|T |
+
+∑
+
+> (i,j )∈T
+
+CE (ψ(hij ), b (xij )). (1) 
+
+ds trains on this objective alone, with hidden cells drawn independently across the table. Everything the two arms share is in this backbone and this head, and the recipe changes only what the head reads and what else the encoder is trained to predict (Figure 1). 2Shared backbone  Two arms 
+
+ds 
+
+jepa       
+
+> [MASK]
+> [MASK]
+> [MASK]
+> hidden
+> cells
+> table (rows × columns)
+> cell embedding
+> attention across columns
+> attention across rows
+> cell MLP
+> × L
+> hidden cells:
+> the encoder's own in-fi ll
+> encoder fi eld
+> same encoder, same value head, both arms
+> value head
+> (bar distribution over bins) value loss
+> input: the encoder fi eld,
+> not the predictor output
+> value head
+> (bar distribution over bins) value loss
+> hidden cells
+> swapped for
+> the mask token
+> predictor latent
+> loss
+> same weights,
+> two passes
+> full table
+> masked table
+> EMA
+> target
+> encoder
+> z(full)
+> z(masked)
+> di ff erence
+> −LayerNorm
+> stop-gradient
+> forward
+> stop-gradient / EMA target
+
+Figure 1: One backbone, two arms. Both arms share the cell-level encoder and the value head that reads its field. The jepa arm adds a predictor that reads the encoder field with hidden cells swapped for the mask token, and a latent loss against the stop-gradient difference of an EMA target encoder’s full-table and masked-table embeddings. 
+
+jepa adds a latent term and changes where the value head reads. The value head reads the encoder field, where every hidden cell carries the encoder’s own in-fill, instead of the predictor output that the latent term shapes (Figure 1). This wiring kept the latent term alive to the plateau, whereas the predictor-read head had collapsed early in our earlier runs (Figure 2c). That failure is shown by a pair of runs of the same recipe to the fixed budget of 20,000 steps, which differ in one configuration key, where the value head reads (§A.1). With the head on the predictor the value error fell to .7499 by step 7,250 and rose back to .9364 by the budget, against a constant map of .949. Target cosine is the mean pairwise cosine between the latent targets of the held-out cells and target effective rank the entropy rank of their 256-dimensional matrix, whose ceiling is 256 and which a collapsed target drives toward one (Figure 2c). Its target effective rank ended at 1.5 and its latent loss at .0083, a target that has collapsed rather than been learned. That wiring ended at the constant map of its own held-out set on the two other priors it was trained on as well (§A.2). The same run with its head on the encoder field reached .5513 at the budget, with a target effective rank of 98.1 (Figure 2c). The latent target of a hidden cell is the EMA target encoder’s embedding of the full table minus its embedding of the masked table, layer-normalised and detached. The difference carries what the hidden cells contributed to the field rather than a copy of the context, so that the predictor cannot satisfy the target from the visible cells alone. The targets of data2vec and I-JEPA are the target encoder’s representation of the full input at the hidden positions (Baevski et al., 2022b; Assran et al., 2023), made cheap to build by the successor of data2vec (Baevski et al., 2022a), and the difference target departs from them by subtracting the masked-table embedding. The predictor, a 4-block transformer, reads the encoder field with hidden cells replaced by a mask token, so that hidden cells are invisible to each other, as in the image JEPA of Assran et al. (2023). The context split is that second pass, in which the encoder of jepa reads the visible cells only and the predictor fills the hidden ones from its mask token, while the value head reads the first pass over the masked table as in ds (Figure 1). The objective of jepa sums the latent loss, a mean over the |M | hidden 3cells and the d = 256 dimensions of their targets, and the value loss with weights 1.0 and 1.0: 
+
+Ljepa = λjepa 
+
+1
+
+d |M |
+
+∑
+
+> (i,j )∈M
+
+∥∥g(¯h)ij − sg [LN (˜zfull  
+
+> ij
+
+− ˜zmask 
+
+> ij
+
+)]∥ ∥22 + λds Lds (h). (2) The prescription’s own protocol is two-stage, a latent-only pretraining followed by a probe or a fine-tune on the task (Assran et al., 2023; Bardes et al., 2024). We test its objective in one stage beside the value loss instead, at one weight each, carried over rather than swept for this pair, since the family’s task is value prediction on the same prior and there is no second task to adapt to. The two-stage form needs a value read-out of its own, a probe on the frozen field, and is left to §5.2. Hidden cells are drawn under a mixed policy chosen per batch, as independent cells, as column blocks or as rectangular blocks, after a warm-up of 4,000 steps on target-column masking. The target encoder follows the online encoder with decay .996. Both arms train on tables from the graph structural causal model (SCM) generator of TabICL (Qu et al., 2025), the second version of its prior, with 128 to 1,024 rows and up to 100 features per table. The generator is the public TabICL code at commit 8f1aa20 of its repository, vendored with two edits, to its import paths and to one set-to-sorted call that had made the table stream differ between processes. Both of its dataset filters are on, the one that rejects graphs whose feature nodes share no ancestor with the label and the one that rejects tables an extra-trees model cannot predict. Each batch is a classification task with probability .7, with up to 10 classes, and a regression task otherwise, and a fraction .3 of the tables carry missing feature cells. Both dimensions sit under a budget of 65,536 cells per table, which bounds memory, so rows and features trade off within it. Both arms draw the same stream of tables from the same seed, so the tables they train on are the same and differ only in how each arm splits and masks them (§5). Instead of a fixed step budget, each arm trains until its best validation MSE has failed to improve by more than .002 for 80 consecutive validations, one every 250 steps, under a safety cap of 1,000,000 steps. The optimiser is schedule-free AdamW at learning rate 5 × 10 −4, so that no learning-rate schedule is tied to the step cap. The rule is the same for both arms and reads only the value error, so the arm with the latent term earns no budget beyond what its own value curve justifies (§4.2). Along that open horizon, a checkpoint is kept every 5,000 steps and one every 20,000 steps is scored on the real-data suite, so that the comparison is available along the whole trajectory. 
+
+## 4 Experiments 
+
+We compare the two arms at their plateaus and along the way. The experiments ask whether the latent term trains to a plateau under the same stop rule as ds (§4.2), what the recipe costs once both arms have converged (§4.3), and where each arm stands against classical baselines along the way (§4.4). Every number comes from one seed per arm, with the noise floor of the sign test taken from a repeat of ds (§4.1). 
+
+4.1 Setup 
+
+The real-data suite holds 115 classification and 32 regression datasets from OpenML-CC18, the Grinsztajn benchmark and TabArena (Bischl et al., 2021; Grinsztajn et al., 2022; Erickson et al., 2025). The three benchmarks overlap, since 12 classification names and 2 regression names appear under two or three of them as distinct OpenML datasets, curations of one source (Table 5). Grinsztajn itself lists 9 names under two of its suites; the evaluation keys its records by benchmark, name and task and, before any scoring, kept the later entry of each pair, the one with the higher OpenML id, so within a benchmark every count below has one entry per name. Across benchmarks both entries of a shared name are scored, and the count with one entry per name keeps the earliest benchmark’s (§4.3); 2 names, diamonds and electricity, fall under both rules, the higher id within Grinsztajn and then the earliest benchmark across them. Each dataset is scored in context with up to 1,024 context rows and 64 features, by accuracy for classification and R2 for regression, with no per-dataset training. Each score is the mean over 3 random halves of the dataset, with at most 512 test rows scored per half and the 64 features chosen by an F-test on the whole dataset before the split, the same for every model (§A.3). On those scores two checkpoints are compared by per-dataset wins and losses, written wins:losses, with an exact two-sided sign test, overall, by class stratum and by benchmark. 40 100 200      
+
+> training step (thousands)
+> 0.4 0.5 0.6 0.7 0.8 0.9
+> held-out value MSE
+> stop 178.5k stop 253.8k constant map 20k budget
+> (a)
+> ds jepa
+> 0.00 0.25 0.50 0.75 1.00
+> loss / cosine
+> (b)
+> latent loss target cosine
+> 0100 200
+> training step (thousands)
+> 050 100
+> target eff ective rank
+> 0.6 0.8
+> value MSE  constant map
+> (c)
+> head on predictor head on encoder fi eld
+> 010 20
+> step (thousands)
+> 050 100
+> target eff ective rank
+
+Figure 2: Held-out curves to the plateau. (a) Value MSE of both arms on the held-out prior tables at every validation, up to each arm’s plateau stop; the dotted line is the constant map and the dashed line the fixed budget of our earlier comparisons. (b) The jepa arm’s latent loss and target cosine (top) and target effective rank (bottom) on the same tables. (c) The fixed-budget pair behind the earlier collapse, the same recipe with the value head on the predictor or on the encoder field, one configuration key apart: value MSE (top) and target effective rank (bottom) on the same held-out tables as (b). Exact ties are dropped from the count and from the test, so the two numbers need not sum to the number of datasets, and the final classification pair has 13 of them while regression has none. The sign test weighs every dataset equally, so a large margin on one dataset counts no more than a small one, and the mean scores beside each count carry the magnitude the count discards (Table 4). Such a count has a floor, measured against a second run of ds with the same recipe and the same seed, whose configuration differs only in the step cap and the stop rule, neither of which acts before the step compared, so the two diverge only through run-to-run non-determinism, not a new seed (§A.1). Scored against its original at the same step it gives 51:49 on classification and 17:15 on regression, a floor that another seed could only widen; a win count inside it says nothing, and one outside it clears at least the noise of a re-run. Gradient-boosted trees (HistGB in the tables and figures) and the linear model of each task, logistic regression on classification and ridge regression on regression, are fitted per dataset on its full training half, which on large datasets holds many times the 1,024 rows either arm reads, and serve as reference points. Together these choices make every comparison below a paired one, in which each dataset is scored once per checkpoint under the same budget and a difference counts only when it clears at least the floor of a same-seed re-run (§4.3). 
+
+4.2 Convergence under the plateau rule 
+
+Each arm was stopped by one number, the squared error of the value head on the hidden cells of held-out prior tables (Figure 2a). That error is taken between the head’s point prediction and the cell value clamped to the head’s support, averaged over the hidden cells of tables drawn from a fixed seed disjoint from the training stream. The held-out set holds 32 tables for ds and 64 for jepa , the former being the first half of the latter, since both trainers draw the same stream from the same seed and each validates on its own default number of batches (§A.1). The rule therefore never saw the real-data suite, and every suite score below is of a checkpoint chosen without it (§4.1). For jepa the rule read that same value MSE, so the latent loss and the collapse diagnostics in Figure 2b were recorded at every validation but never stopped a run. Converged therefore means converged in the value error, and the latent loss of jepa had stopped falling by then, changing by +.0094 over the final patience window of 20,000 steps (Figure 2b). The latent loss could not have served as the stop signal, since a collapsed encoder drives it down as surely as a trained one, which is the failure §2 describes and Figure 2c shows. The value curve, by contrast, shows a collapse plainly: no 5Table 1: Final checkpoints by benchmark. Mean score of both arms, of the linear model of each task and of gradient-boosted trees on the datasets of each benchmark and over all of them: accuracy for classification, 
+
+R2 for regression. Counts and sign tests are in Table 4, per-dataset scores in Table 5.                                     
+
+> classification (accuracy) regression ( R2)model OpenML-CC18 Grinsztajn TabArena all Grinsztajn TabArena all
+> ds .819 .738 .847 .815 .649 .696 .665
+> jepa .809 .739 .845 .809 .639 .628 .635 logistic / ridge .803 .708 .828 .795 .534 .578 .549 HistGB .849 .783 .863 .842 .714 .780 .737
+
+constant output of the head can score below the variance of the held-out cells, .949 on the jepa set, so the dotted line in Figure 2a is what a collapsed encoder would score. The stop records and the trajectory together separate a slowdown from a ceiling, since jepa reaches a plateau of its own, later, and its deficit against the final ds checkpoint shrinks along the way (Figure 2, Table 3). ds 
+
+stopped at 178,500 steps after 24.8 hours, with a final validation MSE of .4179 (Figure 2a). jepa stopped at 253,750 steps after 41.3 hours, at .4360, which is 1.42 times the steps and 1.66 times the wall-clock of 
+
+ds . Both stop steps include the 20,000 steps of patience after each arm’s last improvement by more than .002, so the ratio of the steps at which jepa and ds last improved is 1.47. Those stop points sit far past the step budget of our earlier comparisons, where the validation MSE of ds stood at .5041 against .4179 at its plateau. A fixed horizon had therefore scored an unconverged model, and any deficit measured there mixed a slowdown with whatever ceiling exists (the dashed line in Figure 2a). The latent term of jepa 
+
+survived to the plateau (Figure 2b). The validation latent loss of jepa ended at .2209, with target cosine .4398 and target effective rank 104.5. The value curve of jepa sat below the constant map from the first validation at step 250 and never returned above it (Figure 2a). Scored against ds at the same step, jepa 
+
+trailed throughout, from 22:80 at step 20,000 to 17:79 at step 160,000 (Table 3 in the appendix). Against the final ds checkpoint instead, the deficit of jepa narrowed from 9:96 at step 20,000 to 31:69 at step 240,000 without closing. So the deficit at any fixed step reads mostly as lag, jepa reaching at a later step what 
+
+ds had at an earlier one, and only what remains at both plateaus bounds the cost of the term from above (§4.3). 
+
+4.3 Converged comparison 
+
+On all 115 classification datasets the final jepa checkpoint wins 32:70 against the final ds checkpoint ( p
+
+.00021), with mean accuracy .809 against .815 (Table 4 in the appendix). On AUROC, stored beside accuracy for every classification dataset, the same pair gives 31:82 with 2 ties, the same direction as the accuracy count. With one entry kept per dataset name, the earliest benchmark’s, the pool falls to 102 classification and 30 regression datasets and the counts become 29:63 (p .00051) and 8:22 (p .01612), the same direction at every stratum (Table 4). Keeping the latest benchmark’s entry instead moves no count by more than 1 (§4.1). The strata are ordered by what the head must resolve, from two classes through a few and many to a continuous target (Table 4). On binary tasks the count is 24:44 ( p .02053), significant, with a mean gap of .003 accuracy. On tasks with three to five classes it is 6:11 ( p .33231), the one class stratum where the count is not significant. The deficit is largest on the many-class stratum, six to ten classes, 2:15 ( p .00235), and on regression, 8:24 ( p .007), with mean gaps of .017 accuracy and .030 R2. Across all strata, the mean gap at convergence is .006 accuracy, so the deficit is small even where it is significant. Table 1 and Figure 3 break the means down by benchmark, and on every block both arms score above the linear model and below the trees. The largest gap between the arms is .068 R2 on TabArena regression, against at most .010 accuracy on any classification block (Table 1). That gap is concentrated rather than spread, since two datasets, concrete compressive strength and airfoil self noise, carry 68 % of it with gaps of .347 and .156 R2 (Table 5). The median gap over the 32 regression datasets is .011 R2, and jepa scores below ridge on 7 of them against 5 for ds . By benchmark the classification count is significant only on OpenML-CC18, 13:42 ( p .00011), while the regression counts on Grinsztajn, 6:15 ( p .07835), and TabArena, 2:9 ( p .06543), fall short of significance 6OpenML CC18 Grinsztajn TabArena all 
+
+> 0.725 0.750 0.775 0.800 0.825 0.850
+> mean accuracy
+
+(a)   
+
+> Grinsztajn TabArena all
+> 0.55 0.60 0.65 0.70 0.75
+> mean  R 2
+
+(b)    
+
+> ds jepa logistic / ridge HistGB
+
+Figure 3: Benchmark means as points. The entries of Table 1, one marker per model: (a) accuracy on the classification sets of each benchmark and over all of them, (b) R2 on the regression sets. at their sizes (Table 4). Every block leans the same way, so the deficit is a property of the arm rather than of one benchmark’s datasets, and only the largest block has the size to make it significant (Table 4). The stratum and benchmark counts are several tests on one pair of checkpoints, reported uncorrected as a breakdown of the overall count rather than as independent findings (Table 4). A stratum near the threshold is therefore read as a direction and not as a result (Table 4). 
+
+4.4 Suite score along training 
+
+Neither arm beats gradient-boosted trees, with ds at 28:84 on classification and 4:28 on regression and jepa 
+
+at 27:87 and 3:29 (Figure 4). Both arms beat the linear models, ds at 71:39 and 27:5 and jepa at 66:44 and 25:7, the classification win rate of jepa being the lowest of the four. The distance to the trees, .842 mean accuracy against .815 for ds , is several times the distance between the two arms. That distance is not a like-for-like one, since the trees and the linear model read the full training half of each dataset while both arms read at most 1,024 of its rows, so it bounds nothing about what an objective could buy (§4.1). Along training, the mean of ds passes the logistic model by step 60,000 and that of jepa by step 140,000, and on regression the two arms stand above ridge from steps 20,000 and 60,000 on (Figure 4). So jepa arrives later at each crossing while both arms end between the same two baselines: what differs is when the arm arrives, not where (Figure 4). 
+
+## 5 Discussion 
+
+The recipe trains, since with the head on the encoder field the latent term neither collapsed nor drifted back toward the constant map over the whole run (§4.2). Yet it buys no accuracy on the real-data suite, since at convergence jepa trails ds on every stratum and benchmark where the count is significant and never leads the count where it is not (§4.3). Most of that deficit, as reported at a fixed budget, was a slowdown, and what remains at the plateau is small (§4.2). For the prescription this means that latent prediction beside the value loss on a tabular prior is no longer blocked by collapse, and that its case must now be made on something other than in-context accuracy (§5.2). Three features of the two arms can explain the deficit that remains. The gradient of the latent term reaches the encoder through the predictor, so the encoder field that the value head reads is shaped by both losses 750 100 150 200 250 
+
+training step (thousands) 
+
+> 0.74 0.76 0.78 0.80 0.82 0.84
+> mean accuracy, classi fi cation sets
+> HistGB logistic
+
+(a)     
+
+> ds jepa
+> 50 100 150 200 250
+
+training step (thousands) 
+
+> 0.50 0.55 0.60 0.65 0.70
+> mean  R 2, regression sets  HistGB ridge
+
+(b) Figure 4: Real-data suite along training. Mean score of every scored snapshot of both arms on the real-data suite, (a) accuracy over the classification sets and (b) R2 over the regression sets, with the final checkpoints marked by a cross; the dotted line is gradient-boosted trees and the dashed line the linear model of each task, both fitted per dataset. (§3). Beyond that shared field, the two arms differ in masking policy, in the context split and in the warm-up, so the measured deficit bounds the cost of the latent term from above rather than estimating it, on the premise that none of the three helps the arm that carries the term, which this study does not test (§3). Where the deficit is largest, on many-class and regression tasks, the value head must resolve finer targets, which is consistent with a representation budget shared with the latent term (§4.3). Of the three, only the shared field belongs to the recipe itself, while the other two are choices of this study (§5.1). 
+
+5.1 Threats to validity 
+
+One seed per arm is the sharpest limit on every claim, because the sign test spans datasets rather than seeds and the noise floor comes from a second run of the same seed, which a second seed would be expected to widen (§4.1). What one seed does allow is the paired reading above, since both arms saw the same prior stream and the same suite, so the count compares two training runs and not yet two recipes (§4.1). Next, no matched control with the latent weight set to zero was trained, so the deficit cannot be attributed to the latent term alone (§3). Three lesser limits remain. One model size was trained, so the gap to gradient-boosted trees may be a size ceiling, a prior ceiling or the 1,024-row context that caps what either arm reads of a dataset, three causes this study cannot separate (§4.4). The two arms share a learning rate, and jepa adds a masking warm-up, an EMA decay and one weight per loss, all carried over from earlier runs rather than tuned for this pair, so the bound of §4.3 holds under that setting rather than under each arm’s best (§3). The suite likewise scores every dataset at one context and feature budget, so behaviour at other budgets is not measured (§4.1). 
+
+5.2 Future work 
+
+A matched control with the latent weight at zero would turn the upper bound into an estimate (§5.1). Without new training, whether the latent term buys robustness rather than accuracy, at short contexts or under noise, is testable on the same checkpoints with the same suite (§4.1). That question is the one the prescription itself raises, since a latent target may discard what a value target must reproduce, and noise is where such a difference would show (§1). A probe on the frozen jepa field would test the prescription’s two-stage form on these checkpoints as well (§3). Further out, the predictor allows filling hidden cells in 8latent space and chaining such fills, a use the value-only arm lacks and the present evaluation does not exercise (§3). 
+
+## 6 Conclusion 
+
+We asked whether the latent-prediction prescription can be followed on a tabular foundation-model prior. Its objective can be trained beside the value loss, once the head is moved off the predictor onto the encoder field, with the target and the mask tokens held fixed, and the term then reaches a plateau without collapse. Yet it does not pay in real-data accuracy at convergence, trailing ds in this run by a small margin on binary tasks and by more on many-class and regression tasks. The lesson for comparisons of this kind is to stop each arm at its plateau rather than at a step count, since a fixed budget scores a slowdown as a ceiling. The next step is the matched control that turns the measured bound into an estimate. 
+
+## References 
+
+Mahmoud Assran, Quentin Duval, Ishan Misra, Piotr Bojanowski, Pascal Vincent, Michael Rabbat, Yann LeCun, and Nicolas Ballas. Self-supervised learning from images with a joint-embedding predictive ar-chitecture. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) , 2023. Alexei Baevski, Arun Babu, Wei-Ning Hsu, and Michael Auli. Efficient self-supervised learning with contex-tualized target representations for vision, speech and language. arXiv preprint arXiv:2212.07525 , 2022a. Alexei Baevski, Wei-Ning Hsu, Qiantong Xu, Arun Babu, Jiatao Gu, and Michael Auli. data2vec: Ageneral framework for self-supervised learning in speech, vision and language. In Proceedings of the 39th International Conference on Machine Learning (ICML) . PMLR, 2022b. Dara Bahri, Heinrich Jiang, Yi Tay, and Donald Metzler. SCARF: Self-supervised contrastive learning using random feature corruption. In International Conference on Learning Representations (ICLR) , 2022. Spotlight. Randall Balestriero and Yann LeCun. LeJEPA: Provable and scalable self-supervised learning without the heuristics. arXiv preprint arXiv:2511.08544 , 2025. Adrien Bardes, Jean Ponce, and Yann LeCun. VICReg: Variance-invariance-covariance regularization for self-supervised learning. In International Conference on Learning Representations (ICLR) , 2022. Adrien Bardes, Quentin Garrido, Jean Ponce, Xinlei Chen, Michael Rabbat, Yann LeCun, Mahmoud Assran, and Nicolas Ballas. Revisiting feature prediction for learning visual representations from video. arXiv preprint arXiv:2404.08471 , 2024. Bernd Bischl, Giuseppe Casalicchio, Matthias Feurer, Frank Hutter, Michel Lang, Rafael G. Mantovani, Jan N. van Rijn, and Joaquin Vanschoren. OpenML benchmarking suites. In Advances in Neural Infor-mation Processing Systems (NeurIPS) Datasets and Benchmarks Track , 2021. Mohamed Bouadi, Nassim Bouarour, Varun Kulkarni, Shivam Dubey, Aditya Tanna, and Vinay Kumar Sankarapu. Shaping the prior: How synthetic task distributions determine tabular foundation model quality. arXiv preprint arXiv:2605.18971 , 2026. Xinlei Chen and Kaiming He. Exploring simple siamese representation learning, 2020. Nick Erickson, Lennart Purucker, Andrej Tschalzev, David Holzmüller, Prateek Mutalik Desai, David Salinas, and Frank Hutter. TabArena: A living benchmark for machine learning on tabular data. arXiv preprint arXiv:2506.16791 , 2025. Quentin Garrido, Randall Balestriero, Laurent Najman, and Yann LeCun. RankMe: Assessing the down-stream performance of pretrained self-supervised representations by their rank. In Proceedings of the 40th International Conference on Machine Learning (ICML) . PMLR, 2023. 9Jean-Bastien Grill, Florian Strub, Florent Altché, Corentin Tallec, Pierre H. Richemond, Elena Buchatskaya, Carl Doersch, Bernardo Avila Pires, Zhaohan Daniel Guo, Mohammad Gheshlaghi Azar, Bilal Piot, Koray Kavukcuoglu, Rémi Munos, and Michal Valko. Bootstrap your own latent: A new approach to self-supervised learning. In Advances in Neural Information Processing Systems 33 (NeurIPS) , 2020. Léo Grinsztajn, Edouard Oyallon, and Gaël Varoquaux. Why do tree-based models still outperform deep learning on typical tabular data? In Advances in Neural Information Processing Systems (NeurIPS) Datasets and Benchmarks Track , 2022. Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. TabPFN: A transformer that solves small tabular classification problems in a second. In International Conference on Learning Representations (ICLR) , 2023. Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo, Robin Tibor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular founda-tion model. Nature , 637(8045):319–326, 2025. doi: 10.1038/s41586-024-08328-6. Li Jing, Pascal Vincent, Yann LeCun, and Yuandong Tian. Understanding dimensional collapse in contrastive self-supervised learning. arXiv preprint arXiv:2110.09348 , 2021. Myung Jun Kim, Léo Grinsztajn, and Gaël Varoquaux. CARTE: Pretraining and transfer for tabular learning. arXiv preprint arXiv:2402.16785 , 2024. Yann LeCun. A path towards autonomous machine intelligence, 2022. Version 0.9.2, 2022-06-27. OpenReview position paper, https://openreview.net/forum?id=BZ5a1r-kVsf .Etai Littwin, Omid Saremi, Madhu Advani, Vimal Thilak, Preetum Nakkiran, Chen Huang, and Joshua Susskind. How JEPA avoids noisy features: The implicit bias of deep linear self distillation networks, 2024. Junwei Ma, Valentin Thomas, Rasa Hosseinzadeh, Hamidreza Kamkari, Alex Labach, Jesse C. Cresswell, Keyvan Golestan, Guangwei Yu, Anthony L. Caterini, and Maksims Volkovs. TabDPT: Scaling tabular foundation models on real data. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. Samuel Müller, Noah Hollmann, Sebastian Pineda Arango, Josif Grabocka, and Frank Hutter. Transformers can do bayesian inference. In International Conference on Learning Representations (ICLR) , 2022. Jaehyun Nam, Jihoon Tack, Kyungmin Lee, Hankook Lee, and Jinwoo Shin. STUNT: Few-shot tabular learning with self-generated tasks from unlabeled tables. arXiv preprint arXiv:2303.00918 , 2023. Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. TabICL: A tabular foundation model for in-context learning on large data. In Proceedings of the 42nd International Conference on Machine Learning (ICML) . PMLR, 2025. Gowthami Somepalli, Micah Goldblum, Avi Schwarzschild, C. Bayan Bruss, and Tom Goldstein. SAINT: Improved neural networks for tabular data via row attention and contrastive pre-training, 2021. Vimal Thilak, Chen Huang, Omid Saremi, Laurent Dinh, Hanlin Goh, Preetum Nakkiran, Joshua M. Susskind, and Etai Littwin. LiDAR: Sensing linear probing performance in joint embedding SSL ar-chitectures, 2023. Hugo Thimonier, José Lucas De Melo Costa, Fabrice Popineau, Arpad Rimmel, and Bich-Liên Doan. T-JEPA: Augmentation-free self-supervised learning for tabular data. In International Conference on Learn-ing Representations (ICLR) , 2025. Talip Ucar, Ehsan Hajiramezanali, and Lindsay Edwards. SubTab: Subsetting features of tabular data for self-supervised representation learning. In Advances in Neural Information Processing Systems 34 (NeurIPS) , 2021. 10 Stijn Verdenius, Andrea Zerio, and Roy L.M. Wang. LaT-PFN: A joint embedding predictive architecture for in-context time-series forecasting, 2024. Zifeng Wang and Jimeng Sun. TransTab: Learning transferable tabular transformers across tables. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , 2022. Jinsung Yoon, Yao Zhang, James Jordon, and Mihaela van der Schaar. VIME: Extending the success of self-and semi-supervised learning to tabular domain. In Advances in Neural Information Processing Systems 33 (NeurIPS) , 2020. Jure Zbontar, Li Jing, Ishan Misra, Yann LeCun, and Stéphane Deny. Barlow Twins: Self-supervised learning via redundancy reduction. In Proceedings of the 38th International Conference on Machine Learning (ICML) . PMLR, 2021. Xiyuan Zhang, Danielle C. Maddix, Junming Yin, Nick Erickson, Abdul Fatir Ansari, Boran Han, Shuai Zhang, Leman Akoglu, Christos Faloutsos, Michael W. Mahoney, Cuixiong Hu, Huzefa Rangwala, George Karypis, and Bernie Wang. Mitra: Mixed synthetic priors for enhancing tabular foundation models. In 
+
+Advances in Neural Information Processing Systems (NeurIPS) , 2025. Bingzhao Zhu, Xingjian Shi, Nick Erickson, Mu Li, George Karypis, and Mahsa Shoaran. XTab: Cross-table pretraining for tabular transformers. In Proceedings of the 40th International Conference on Machine Learning (ICML) . PMLR, 2023. 
+
+## A Additional material 
+
+A.1 Configurations 
+
+The two arms differ in the configuration keys of the two configurations that name the latent term and its target, the context split, the masking policy and the warm-up, and in the number of held-out batches each trainer validates on by default, 32 tables for ds against 64 for jepa (§4.2). The plateau rule is one function shared by both trainers, so the two arms stopped under the same criterion. 
+
+A.2 Collapse across priors 
+
+Table 2 lists the three fixed-budget runs with the value head on the predictor, one per prior, beside the encoder-read run of Figure 2c. The three priors are our own SCM sampler, the first TabICL generator, which mixes MLP and tree SCM engines, and the graph SCM generator of TabICL v2 that the main runs use (§3). On every prior the predictor-read run ended within 1.3 % of its constant map with a target rank of at most 26.7, and scored .570 to .585 mean accuracy and at most -.003 mean R2 on the suite, an R2 no better than a constant prediction, against .750 and .490 for the encoder-read run at the same budget. Those three configurations differ only in the prior, and the encoder-read run differs from the one on this prior in the single key that moves the head, so what the runs separate is the wiring, not the generator (§A.1). Figure 5 draws the same runs at every validation: the value error over the constant map, the mean pairwise cosine of the predictor output and of the target field, and the effective rank of the target field and of the predictor output. On the two priors where the value head learned at all, the predictor output flattened first, its cosine crossing .9 at steps 2,750 and 8,750, after the value error’s minimum at 2,250 and 7,250 and before its return to .98 of the constant map at 3,250 and 12,250. The target field lost rank only afterwards, its effective rank falling below 10 at steps 5,500 and 13,500. On TabICL v1 the value error never left the constant map, its minimum being 1.000 of the map, while the predictor output kept an effective rank of at most 15.4 throughout. So the head lost the value task while reading an output that had already gone flat, in the order §1 gives, and the target field followed rather than led. 11 0.6 0.8 1.0                
+
+> value MSE / constant map  constant map
+> (a) own SCM sampler (b) TabICL v1 (mixed SCM)
+> head on predictor head on encoder fi eld
+> (c) TabICL v2 (graph SCM)
+> 0.00 0.25 0.50 0.75 1.00
+> mean pairwise cosine
+> target cosine predictor cosine
+> 0510 15 20
+> step (thousands)
+> 025 50 75 100
+> eff ective rank
+> 0510 15 20
+> step (thousands)
+> target rank predictor rank
+> 0510 15 20
+> step (thousands)
+
+Figure 5: When and how the predictor-read wiring failed. The runs of Table 2, one column per prior, at every validation: value MSE over the run’s own constant map (top), the target field (solid) and the predictor output (dashed), for the mean pairwise cosine over the held-out cells (middle) and for the effective rank (bottom). In (c) the encoder-read run on the same prior is overlaid in the colour of Figure 2c. Late in (c) the predictor-read run’s target field is nearly constant and its rank is not stable, while the encoder-read overlay’s rank keeps rising. Table 2: The predictor-read wiring across priors. Fixed-budget runs of 20,000 steps, one per prior, with the value head on the predictor, and for reference the run on the paper’s prior whose head reads the encoder field (Figure 2c). Value MSE is the held-out value error at the end of the run; the constant map is the variance of that run’s own held-out target cells, the score of a collapsed encoder; the minimum is the lowest held-out value error along the run and its step; rank is the target effective rank at the end (ceiling 256); suite means are accuracy over the 115 classification and R2 over the 32 regression datasets. 
+
+prior head reads value MSE constant map minimum (step) rank suite acc. suite R2
+
+own SCM sampler predictor .971 .971 .757 (2,250) 4.4 .585 -.003 TabICL v1 (mixed SCM) predictor 1.014 1.014 1.014 (1,750) 26.7 .582 -.003 TabICL v2 (graph SCM) predictor .936 .949 .750 (7,250) 1.5 .570 -.003 TabICL v2 (graph SCM) encoder .551 .949 .551 (20,000) 98.1 .750 .490 
+
+A.3 Evaluation protocol 
+
+The suite is scored by the evaluation scripts, which draw the three OpenML suites, give each model at most 1,024 rows of context and 64 features picked by an F-test ahead of the split, average 3 random halves scoring no more than 512 test rows in each, and apply an exact two-sided sign test with ties dropped, as §4.1 states. 12 Table 3: Snapshots of jepa along its trajectory. Per-dataset wins against ds at the same step and against its final checkpoint, as wins and losses for all classification sets, the many-class stratum and regression; a dash marks a step past the stop of ds .
+
+step vs. ds at the same step vs. ds final all 6–10 reg all 6–10 reg 20,000 22:80 1:18 7:25 9:96 0:19 0:32 40,000 23:81 3:16 3:29 6:96 1:17 0:32 60,000 26:79 3:16 2:30 15:87 2:17 0:32 80,000 20:86 1:18 3:28 11:91 1:18 1:31 100,000 16:86 2:17 4:28 17:89 1:18 3:29 120,000 15:89 1:17 2:30 18:87 1:18 2:30 140,000 19:83 2:17 4:28 19:81 1:17 3:29 160,000 17:79 1:18 4:28 22:81 1:18 4:28 180,000 – – – 21:82 1:18 2:29 200,000 – – – 24:78 2:16 1:30 220,000 – – – 36:68 2:16 5:27 240,000 – – – 31:69 2:16 6:26 
+
+A.4 Snapshots along the trajectory 
+
+Table 3 lists, for every scored snapshot of jepa , the two counts of §4.2, one against the ds snapshot of the same step and one against the final ds checkpoint, of which the section quotes the first and the last. 
+
+A.5 Sign tests by stratum and benchmark 
+
+Every count behind §4.3 is listed in Table 4 with its p value, first by class stratum and then by benchmark. Table 4: Sign tests by stratum and benchmark. Per-dataset wins and losses of jepa against ds at their final checkpoints, with the exact two-sided sign-test p, by class stratum and by benchmark. Means are accuracy (classification) and R2 (regression). The last block repeats the class strata and the regression count with one entry kept per dataset name. 
+
+stratum n jepa W:L ties p jepa mean ds mean all classification 115 32:70 13 .00021 .809 .815 binary 78 24:44 10 .02053 .823 .826 3–5 classes 18 6:11 1 .33231 .795 .802 6–10 classes 19 2:15 2 .00235 .765 .782 OpenML-CC18 59 13:42 4 .00011 .809 .819 Grinsztajn 19 7:11 1 .48068 .739 .738 TabArena 37 12:17 8 .45826 .845 .847 all regression 32 8:24 0 .007 .635 .665 Grinsztajn 21 6:15 0 .07835 .639 .649 TabArena 11 2:9 0 .06543 .628 .696 
+
+one entry per dataset name, the earliest benchmark’s (§4.1) 
+
+all classification 102 29:63 10 .00051 .812 .818 binary 67 21:38 8 .03634 .827 .830 3–5 classes 17 6:10 1 .4545 .792 .797 6–10 classes 18 2:15 1 .00235 .777 .796 all regression 30 8:22 0 .01612 .626 .654 
+
+13 A.6 Per-dataset scores 
+
+Every number behind Table 4 and every entry of Table 1 except the tree means is listed in Table 5, one row per dataset, grouped by benchmark, with the linear model of each task beside the two arms. 
+
+Table 5: Per-dataset scores by benchmark. Final checkpoints of both arms and the linear baseline of each task on every dataset of the suite, grouped by benchmark, each with its OpenML dataset id: accuracy with the number of classes k for classification, R2 for regression. The better of the two arms is in bold; each block ends with its mean and the count of datasets won by each arm. dataset id k ds jepa logistic / ridge 
+
+OpenML-CC18, classification (59 datasets) 
+
+adult 1590 2 .830 .816 .789 analcatdata_authorship 458 4 .990 .990 .988 analcatdata_dmft 469 6 .196 .211 .204 balance-scale 11 3 .837 .842 .873 bank-marketing 1461 2 .897 .891 .902 banknote-authentication 1462 2 .998 .997 .992 blood-transfusion-service-center 1464 2 .772 .772 .774 breast-w 15 2 .972 .971 .966 car 40975 4 .841 .835 .821 churn 40701 2 .883 .889 .856 climate-model-simulation-crashes 40994 2 .915 .915 .923 cmc 23 3 .522 .524 .499 connect-4 40668 3 .659 .658 .686 credit-approval 29 2 .873 .883 .867 credit-g 31 2 .726 .713 .738 cylinder-bands 6332 2 .722 .728 .696 diabetes 37 2 .779 .768 .773 dna 40670 3 .926 .935 .960 dresses-sales 23381 2 .601 .591 .555 electricity 151 2 .786 .785 .769 eucalyptus 188 5 .601 .609 .555 first-order-theorem-proving 1475 6 .503 .487 .484 GesturePhaseSegmentationProcessed 4538 5 .531 .518 .464 ilpd 1480 2 .702 .688 .714 jm1 1053 2 .805 .805 .799 jungle_chess_2pcs_raw_endgame_complete 41027 3 .725 .723 .682 kc1 1067 2 .855 .860 .856 kc2 1063 2 .839 .838 .831 kr-vs-kp 3 2 .941 .820 .953 mfeat-factors 12 10 .935 .912 .953 mfeat-fourier 14 10 .824 .795 .801 mfeat-karhunen 16 10 .935 .911 .952 mfeat-morphological 18 10 .750 .731 .676 mfeat-pixel 40979 10 .870 .813 .909 mfeat-zernike 22 10 .777 .722 .792 MiceProtein 40966 8 .946 .935 .831 nomao 1486 2 .917 .924 .934 numerai28.6 23517 2 .503 .500 .523 optdigits 28 10 .866 .818 .971 ozone-level-8hr 1487 2 .930 .926 .929 pc1 1068 2 .930 .932 .917 pc3 1050 2 .889 .887 .887 pc4 1049 2 .892 .889 .902 pendigits 32 10 .951 .934 .951 PhishingWebsites 4534 2 .936 .938 .894 phoneme 1489 2 .842 .844 .751 qsar-biodeg 1494 2 .855 .850 .858 satimage 182 6 .883 .876 .845 segment 40984 7 .924 .918 .869 semeion 1501 10 .796 .788 .791 sick 38 2 .973 .972 .967 spambase 44 2 .938 .926 .921 splice 46 3 .926 .904 .916 
+
+14 Table 5: Per-dataset scores by benchmark (continued). dataset id k ds jepa logistic / ridge steel-plates-fault 40982 7 .763 .754 .521 tic-tac-toe 50 2 .745 .734 .704 vehicle 54 4 .748 .733 .799 wall-robot-navigation 1497 4 .922 .894 .702 wdbc 1510 2 .959 .943 .957 wilt 40983 2 .979 .975 .969 
+
+mean .819 .809 .803 
+
+datasets won 42 13 
+
+Grinsztajn, classification (19 datasets) 
+
+albert 45035 2 .626 .614 .631 analcatdata_supreme 44055 10 .975 .975 .676 bank-marketing 44126 2 .758 .768 .743 Bioresponse 45019 2 .702 .699 .693 california 45028 2 .847 .846 .838 compas-two-years 45039 2 .648 .679 .684 credit 44089 2 .747 .760 .717 default-of-credit-card-clients 45036 2 .727 .721 .693 Diabetes130US 45022 2 .555 .573 .588 electricity 44156 2 .774 .766 .740 eye_movements 44157 2 .519 .544 .551 heloc 45026 2 .697 .693 .697 house_16H 44123 2 .859 .851 .791 jannis 45021 2 .713 .690 .744 MagicTelescope 44125 2 .841 .842 .770 MiniBooNE 44128 2 .896 .893 .896 pol 44122 2 .932 .927 .872 road-safety 45038 2 .670 .687 .597 wine_quality 44136 7 .544 .518 .534 
+
+mean .738 .739 .708 
+
+datasets won 11 7
+
+Grinsztajn, regression (21 datasets) 
+
+abalone 45042 – .527 .516 .490 Ailerons 44137 – .657 .671 .809 Allstate_Claims_Severity 45046 – .388 .399 .419 Bike_Sharing_Demand 44142 – .627 .630 .341 Brazilian_houses 44141 – .997 .995 .821 cpu_act 44132 – .873 .863 .767 diamonds 44140 – .942 .940 .933 elevators 44134 – .499 .473 .238 house_16H 44139 – .641 .624 .348 house_sales 44144 – .851 .812 .764 houses 44138 – .768 .683 .639 medical_charges 45048 – .977 .977 .826 Mercedes_Benz_Greener_Manufacturing 44061 – .497 .490 .483 MiamiHousing2016 44147 – .891 .873 .728 pol 44133 – .894 .901 .469 seattlecrime6 45043 – .163 .157 .129 sulfur 44145 – .536 .533 .368 superconduct 44148 – .835 .828 .724 topo_2_1 45041 – .023 .005 .037 visualizing_soil 44056 – .997 .997 .837 yprop_4_1 45032 – .038 .041 .046 
+
+mean .649 .639 .534 
+
+datasets won 15 6
+
+TabArena, classification (37 datasets) 
+
+Amazon_employee_access 46905 2 .948 .948 .948 anneal 46906 5 .978 .973 .939 APSFailure 46908 2 .982 .982 .980 bank-marketing 46910 2 .883 .884 .891 Bank_Customer_Churn 46911 2 .835 .840 .801 blood-transfusion-service-center 46913 2 .764 .774 .774 churn 46915 2 .889 .887 .878 coil2000_insurance_policies 46916 2 .945 .945 .944 
+
+15 Table 5: Per-dataset scores by benchmark (continued). dataset id k ds jepa logistic / ridge credit-g 46918 2 .719 .710 .725 credit_card_clients_default 46919 2 .803 .812 .811 customer_satisfaction_in_airline 46920 2 .883 .848 .759 diabetes 46921 2 .760 .759 .766 Diabetes130US 46922 2 .903 .903 .902 E-CommereShippingData 46924 2 .648 .659 .649 Fitness_Club 46927 2 .776 .767 .771 GiveMeSomeCredit 46929 2 .935 .934 .936 hazelnut-spread-contaminant-detection 46930 2 .881 .857 .704 heloc 46932 2 .701 .701 .711 HR_Analytics_Job_Change_of_Data_Scientists 46935 2 .768 .757 .756 in_vehicle_coupon_recommendation 46937 2 .626 .646 .644 Is-this-a-good-customer 46938 2 .893 .892 .891 jm1 46979 2 .805 .805 .796 kddcup09_appetency 46939 2 .982 .982 .982 Marketing_Campaign 46940 2 .872 .869 .864 maternal_health_risk 46941 3 .776 .755 .613 MIC 46980 8 .887 .893 .868 NATICUSdroid 46969 2 .915 .917 .923 online_shoppers_intention 46947 2 .901 .908 .892 polish_companies_bankruptcy 46950 2 .935 .938 .937 qsar-biodeg 46952 2 .850 .846 .860 SDSS17 46955 3 .967 .961 .872 seismic-bumps 46956 2 .935 .935 .935 splice 46958 3 .882 .840 .844 students_dropout_and_academic_success 46960 3 .737 .749 .768 taiwanese_bankruptcy_prediction 46962 2 .969 .968 .963 website_phishing 46963 3 .869 .871 .816 wine_quality 46964 7 .539 .539 .519 
+
+mean .847 .845 .828 
+
+datasets won 17 12 
+
+TabArena, regression (11 datasets) 
+
+airfoil_self_noise 46904 – .789 .633 .282 Another-Dataset-on-used-Fiat-500 46907 – .840 .841 .842 concrete_compressive_strength 46917 – .792 .446 .571 diamonds 46923 – .883 .862 .854 Food_Delivery_Time 46928 – .238 .225 .202 healthcare_insurance_expenses 46931 – .765 .718 .741 houses 46934 – .774 .680 .638 miami_housing 46942 – .796 .778 .690 physiochemical_protein 46949 – .388 .356 .278 QSAR_fish_toxicity 46954 – .584 .564 .555 superconductivity 46961 – .804 .807 .701 
+
+mean .696 .628 .578 
+
+datasets won 9 2
+
+16
