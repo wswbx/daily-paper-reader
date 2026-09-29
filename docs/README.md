@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-09-28</span>
+      <span class="dpr-home-dashboard-kicker">2026-09-29</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 12 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-09-28 23:38:01 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-09-29 22:57:11 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天精读1篇、速读0篇，唯一入选的是9.0分的《Benchmarking Attention for Tabular Foundation Models》，聚焦表格基础模型的注意力机制基准评测。</p>
-<p>最值得看的方向是：这篇论文系统比较了表格基础模型中不同注意力设计的表现，适合想了解&quot;注意力在表格任务上到底该怎么选&quot;的读者。</p>
-<p>建议普通读者先看它的基准结论和实验设置，再按自己关心的表格场景决定是否深入细节。</p>
+<p>2026-09-29 日报：从12</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Benchmarking Attention for Tabular Foundation Models">Benchmarking Attention for Tabular Foundation Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="SymbolicArena: A Unified Infrastructure for Benchmark Distillation and Dynamic Evaluation in Symbolic Regression">SymbolicArena: A Unified Infrastructure for Benchmark Distillation and Dynamic Evaluation in Symbolic Regression</span></li><li><span class="dpr-home-dashboard-paper-title" title="SNIP++: Fine-Grained Symbolic-Numerical Alignment for Symbolic Regression">SNIP++: Fine-Grained Symbolic-Numerical Alignment for Symbolic Regression</span></li><li><span class="dpr-home-dashboard-paper-title" title="Not Every Term Adds New Structure: Sobolev Novelty for Symbolic Regression">Not Every Term Adds New Structure: Sobolev Novelty for Symbolic Regression</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>6</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Recovery-Directed Symbolic Distillation of Neural Likelihoods">Recovery-Directed Symbolic Distillation of Neural Likelihoods</span></li><li><span class="dpr-home-dashboard-paper-title" title="When Less Compute Is More: Adaptive Early Exit Improves Pretrained Outlier Detection">When Less Compute Is More: Adaptive Early Exit Improves Pretrained Outlier Detection</span></li><li><span class="dpr-home-dashboard-paper-title" title="Conformal Prediction and Conditional Coverage for Tabular Foundation Models">Conformal Prediction and Conditional Coverage for Tabular Foundation Models</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>3</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span></div>
 </section>
 </div>
 
