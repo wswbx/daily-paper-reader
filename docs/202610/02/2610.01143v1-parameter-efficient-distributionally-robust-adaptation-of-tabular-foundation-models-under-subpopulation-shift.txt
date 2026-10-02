@@ -1,0 +1,2128 @@
+Title: Parameter-Efficient Distributionally Robust Adaptation of Tabular Foundation Models under Subpopulation Shift
+
+URL Source: https://arxiv.org/pdf/2610.01143v1
+
+Published Time: Fri, 02 Oct 2026 01:31:46 GMT
+
+Number of Pages: 45
+
+Markdown Content:
+# Parameter-Efficient Distributionally Robust Adaptation of Tabular Foundation Models under Subpopulation Shift 
+
+Seonghwi Kim Sung Ho Jo Minwoo Chae *
+
+Pohang University of Science and Technology 
+
+{kshwi,tjdgh1813,mchae}@postech.ac.kr 
+
+Abstract 
+
+Despite strong mean accuracy, tabular foundation models (TFMs) can perform poorly on under-represented groups under subpopulation shift, where group proportions change between training and deployment. We propose DR-TFM, a parameter-efficient distributionally robust adaptation framework that requires no true group annotations. DR-TFM adjusts attention to labeled context examples by fine-tuning an existing query scaling network or adding and training one, while keeping all other parameters fixed. We instantiate the framework with two robust objectives using estimated groups or source conditional distributions derived from training data. For TabPFN-3, adaptation updates only 0.016% of the pretrained model’s parameters. Across five tabular benchmarks, DR-TFM achieves substantially higher average worst-group accuracy than pretrained TFMs and the compared robust baselines without true group annota-tions, while maintaining competitive mean group accuracy. DR-TFM also improves average worst-group accuracy on ACS Income and across four additional TFMs. 
+
+## 1 Introduction 
+
+Tabular foundation models (TFMs), such as the TabPFN 1, have emerged as a promising approach to general-purpose prediction on tabular data (Hollmann et al., 2025; Qu et al., 2025; Jiang et al., 2026). They have demonstrated strong predictive performance, while recent advances have further improved their scalability and computational efficiency (Grinsztajn et al., 2026). However, strong predictive performance does not necessarily imply robustness to distribution shift, where the training and test distributions differ. We focus on subpopulation shift, a practically important form of distribution shift in which the training and test distributions consist of the same underlying subpopulations, which we also refer to as groups, but differ in their mixture proportions (Duchi and Namkoong, 2021; Sagawa et al., 2020; Yang et al., 2023). For example, the relative frequencies of demographic groups may vary across data collection sites or deployment environments. When some groups are underrepresented in the training data, predictive methods optimized for average performance can exhibit substantial variation in performance across groups, with particularly poor performance on underrepresented groups. As the training mixture becomes more imbalanced, these disparities can become more pronounced, while aggregate performance may obscure degradation in the worst-performing group. Figure 1 illustrates this challenge. It shows TabPFN’s mean group and worst-group accuracies as the combined proportion of the majority groups in the training data increases, while test groups remain balanced. When the majority groups together account for 90% of the training data, the worst-group accuracy falls to approximately 31% , despite a mean group accuracy of approximately 66% .
+
+> *Corresponding author.
+> 1Unless otherwise specified, TabPFN refers to version 3.
+
+1arXiv:2610.01143v1 [cs.LG] 1 Oct 2026 Figure 1: Classification results under subpopulation shift with balanced test groups. TabPFN’s worst-group accuracy deteriorates more sharply than its mean group accuracy, whereas DR-TFM (GR) mitigates this degradation without true group labels. Curves show averages over 50 runs. To address this challenge, we propose Distributionally Robust Tabular Foundation Models (DR-TFM), a framework that adapts TFMs to subpopulation shift by updating only a small set of model parameters using distributionally robust optimization (DRO) objectives. We instantiate this framework with two objectives. DR-TFM (GR) uses GroupDRO (Sagawa et al., 2020). For DR-TFM (MS), we adopt the multi-source DRO objective of Kim et al. (2026), motivated by the empirical gains reported on spurious-correlation benchmarks. Both objectives rely on auxiliary group or source structure, which we infer or construct from the training data. Specifically, we estimate groups by clustering pretrained TFM embeddings and form source subsets through clustering or resampling, enabling adaptation without true group annotations. To the best of our knowledge, DR-TFM is the first adaptation framework for TFMs that explicitly targets subpopulation shift. The central idea of DR-TFM is to improve robustness by adapting how pretrained representations are used for prediction, rather than modifying the representations themselves. For classification, we implement this idea through query scaling: a lightweight neural network learns coordinate-wise rescalings of query vectors, thereby adjusting how each query attends to labeled context examples. Both DRO instantiations optimize this query scaling network while keeping all remaining model parameters fixed, concentrating robust adaptation on how the context contributes to predictions. This targeted adaptation offers computational and memory efficiency, scalability, and applicability across TFMs. First, restricting adaptation to the scaling network reduces the computational and memory costs of parameter updates. For example, adapting TabPFN-3 updates only 8,320 parameters, approximately 0.016% 
+
+of the model. Second, sharing the network across attention heads allows larger encoders and more heads without increasing the trainable parameter count, provided that the head dimension and scaling network architecture remain fixed. Third, the mechanism does not depend on query scaling being part of the pretrained architecture. We fine-tune the existing query scaling network in TabPFN’s classification decoder; for TFMs without this component, we add and train one in the final attention layer that attends to the context. We evaluate DR-TFM through simulations and experiments on five tabular benchmarks and ACS Income. Across these benchmarks, both instantiations achieve substantially higher average worst-group accuracy than pretrained TabPFN while maintaining competitive mean group accuracy. Both also require substantially less time than TabPFN fine-tuning. We further apply DR-TFM (GR) to four additional TFMs and observe consistent improvements in average worst-group accuracy. Our main contributions can be summarized as follows. • We propose DR-TFM, a parameter-efficient distributionally robust adaptation framework for TFMs under subpopulation shift, instantiated with two robust objectives without requiring true group annotations. 2• We develop an efficient and scalable adaptation strategy that reweights attention through a small, shared query scaling network while keeping pretrained representations fixed. • Through extensive simulations and real-world experiments, we demonstrate that both instantiations of DR-TFM improve robustness to subpopulation shift, achieving higher average worst-group accuracy than the compared baselines that do not use true group annotations, while maintaining competitive mean group accuracy. • We demonstrate the applicability of our robust adaptation across multiple TFMs, with consistent improve-ments in average worst-group accuracy. 
+
+## 2 Related Work 
+
+Tabular foundation models and their adaptation. Tabular foundation models (TFMs) transfer knowledge across datasets through pretraining and in-context learning. TabPFN (Hollmann et al., 2025; Grinsztajn et al., 2026) and TabICL (Qu et al., 2025) are pretrained on synthetic datasets, whereas TabDPT (Ma et al., 2025) uses real tabular datasets. TFM adaptation methods modify the context, model parameters, or prediction outputs. TuneTables (Feuer et al., 2024) compresses the training data into a compact learned context through prompt tuning. Thomas et al. (2024) propose TabPFN-kNN, which constructs query-specific contexts through nearest-neighbor retrieval, and LoCalPFN, which further combines this retrieval with task-specific fine-tuning. MixturePFN (Xu et al., 2025) clusters the training data and fine-tunes cluster-specific experts, while BETA (Liu and Ye, 2025) adapts lightweight input encoders while keeping the pretrained TabPFN transformer fixed. DistPFN (Lee, 2026) targets label shift through test-time posterior adjustment without updating model parameters. We address the distinct challenge of subpopulation shift through parameter-efficient decoder-side adaptation: we keep the pretrained representations fixed and update only a small query-scaling network that modifies how each query attends to labeled context examples. Beyond generic adaptation, recent work has also examined fairness in TFMs. FairPFN (Robertson et al., 2025) incorporates causal fairness into pretraining using synthetically generated causal data, while Kenfack et al. (2026) study fairness in tabular in-context learning through context selection that either balances groups or ranks examples by the uncertainty in predicting sensitive attributes. These methods target fairness with respect to explicitly observed sensitive attributes, whereas we address robustness to changes in latent subpopulation proportions without access to true group annotations during adaptation or model selection. 
+
+Robust learning under subpopulation shift. A broad line of work seeks to improve robustness to subpop-ulation shifts, where changes in group proportions can disproportionately degrade performance on particular subpopulations (Yang et al., 2023). In settings where group annotations are available, GroupDRO (Sagawa et al., 2020) is a representative approach that minimizes the worst-group loss over predefined groups. The ambiguity set determines which distribution shifts are considered. Subsequent work has expanded these sets. Krueger et al. (2021) allow mixture weights outside the probability simplex, while Jo et al. (2026) introduce hierarchical ambiguity sets that account for both inter- and intra-group uncertainty. Without group annotations, existing approaches instead rely on proxy signals or latent structure inferred from the data. JTT (Liu et al., 2021) upweights examples misclassified by an initial model. Among latent-group approaches, GEORGE (Sohoni et al., 2020) clusters learned representations within each class and applies GroupDRO to the resulting pseudo-groups. BPA (Seo et al., 2022) and SPARE (Yang et al., 2024) similarly reweight or resample groups inferred from learned representations or early-training outputs. In a related direction, Kim et al. (2026) construct pseudo-sources through subsampling and optimize over mixtures of their estimated conditional label distributions. Much of this literature has focused on vision-based 3benchmarks, while comparatively less attention has been given to tabular data. A recent tabular-specific approach is LSR (Tong et al., 2025), which reweights samples using score-based density estimates in a learned latent space. Unlike our approach, however, LSR learns its latent representation and predictor from the training data rather than building on a pretrained TFM. Despite growing work on both TFM adaptation and subpopulation robustness, their intersection remains largely unexplored. To our knowledge, no prior method explicitly adapts TabPFN to subpopulation shift without true group annotations. 
+
+## 3 Preliminaries 
+
+Setup and notation. Let X ∈ X ⊆ Rd and Y ∈ Y denote the input and response variables. Let P tr 
+
+and P te denote the training and test joint distributions of (X, Y ), respectively. For any joint distribution 
+
+P of (X, Y ), let PX denote its marginal distribution of X, PY |X its conditional distribution of Y given 
+
+X, and EP [·] the corresponding expectation. Let D = {(xi, y i)}ni=1 be the labeled training dataset and 
+
+D′ 
+
+> X
+
+= {x′ 
+
+> j
+
+}mj=1 be the unlabeled test dataset. For a parametrized predictor fθ, let ℓ(fθ(X), Y ) denote its loss. For a positive integer K, let [K] = {1, . . . , K } and let ∆K−1 denote the (K − 1) -dimensional probability simplex. 
+
+Subpopulation shift. We consider training and test distributions that share the same K subpopulation distributions P1, . . . , P K but differ in their mixture proportions. Specifically, P tr = PKk=1 πtr  
+
+> k
+
+Pk and 
+
+P te = PKk=1 πte  
+
+> k
+
+Pk, where πtr , π te ∈ ∆K−1 denote the training and test mixture weight vectors, respectively, with πtr ̸ = πte . Standard empirical risk minimization (ERM) does not explicitly account for such changes in mixture proportions and can therefore be vulnerable to subpopulation shift. A detailed theoretical discussion is provided in Appendix A.1. 
+
+Distributionally robust optimization. DRO is a promising approach to addressing such distributional shifts (Mohajerin Esfahani and Kuhn, 2018; Duchi and Namkoong, 2021). A standard DRO problem solves 
+
+min  
+
+> θ
+
+sup 
+
+> Q∈B
+
+EQ [ℓ(fθ(X), Y )] , (1) where B is an ambiguity set specifying the collection of distributions over which robustness is sought, often defined as a suitable neighborhood of the empirical distribution. 
+
+Fine-tuning TFM. Given the training dataset D and a test input x, a pretrained TFM with parameters 
+
+θ0 produces a prediction fθ0 (x; D), where the labeled dataset D serves as the context and x serves as the 
+
+query . A pretrained TFM can be further adapted to D through fine-tuning (Grinsztajn et al., 2026; Liu and Ye, 2025). For this purpose, we split D into a context set D(c) and a loss-evaluation set D(e). Let nc = |D (c)|
+
+and ne = |D (e)|, and let bP (e) denote the empirical distribution of D(e). We partition the model parameters as 
+
+θ = ( θF , θ L), where θF and θL denote the frozen and learnable parameters, respectively. Standard fine-tuning initializes both components from their corresponding pretrained values in θ0, keeps θF fixed, and solves 
+
+min 
+
+> θL
+
+E bP (e)
+
+h
+
+ℓ
+
+
+
+fθ(X; D(c)), Y 
+
+i 
+
+. (2) 44 Proposed Method 
+
+4.1 Distributionally Robust Formulation 
+
+General formulation. Combining the fine-tuning objective in (2) with the standard DRO formulation in (1), we formulate DR-TFM as 
+
+min 
+
+> θL
+
+sup 
+
+> Q∈B
+
+EQ
+
+h
+
+ℓ
+
+
+
+fθ(X; D(c)), Y 
+
+i 
+
+. (3) A key ingredient is the choice of an ambiguity set B that captures uncertainty arising from subpopulation shift. Drawing on established formulations in distributionally robust learning, we consider two ambiguity-set constructions tailored to subpopulation shift. Both rely on auxiliary structure, such as group assignments or source subsets, but this structure is derived from the observed training data rather than supplied as group annotations. Consequently, DR-TFM does not require true group labels for training. We present the key ideas below; detailed optimization formulations and algorithms are provided in Appendix A.2. 
+
+DR-TFM (GR). To motivate the construction, suppose first that each observation i in the training dataset 
+
+D is associated with a group index gi ∈ [G]. Following the GroupDRO framework (Sagawa et al., 2020), we instantiate (3) with the ambiguity set 
+
+BGR =
+
+(
+
+Q =
+
+> G
+
+X
+
+> k=1
+
+qk bP (e) 
+
+> k
+
+: q ∈ ∆G−1
+
+)
+
+, (4) where bP (e) 
+
+> k
+
+is the empirical distribution of the samples (xi, y i) ∈ D (e) with gi = k. In practice, however, we do not assume that these group indices are observed. Instead, we estimate them from pretrained TFM representations. Specifically, we first obtain an embedding from the frozen pretrained TFM for each training observation and then cluster the embeddings within each response class using a simple method such as 
+
+k-means or a Gaussian mixture model. The resulting class–cluster pairs define the estimated group indices. In (4), we use these estimated assignments in place of the unobserved gi.
+
+DR-TFM (MS). Motivated by the strong empirical performance of the multi-source DRO formulation of Kim et al. (2026) under subpopulation shift, we construct an ambiguity set from multiple source-conditioned predictive distributions. We first form source subsets S1, . . . , SM ⊆ D (c) using either resampling or clustering. Using each Sk as context, the pretrained TFM with fixed parameters θ0 defines a source-conditioned predictive distribution bP (k)  
+
+> Y|X
+
+(· | x) = fθ0 (x; Sk). For radii ϵ1, ϵ 2 ≥ 0, we define 
+
+BMS =
+
+Q = QX QY |X : QY |X =
+
+> M
+
+X
+
+> k=1
+
+βk bP (k)  
+
+> Y|X
+
+, β ∈ ∆M −1,W∞(QX , bP (e) 
+
+> X
+
+) ≤ ϵ1, ∥β − ¯β∥2 ≤ ϵ2
+
+ , (5) where W∞ denotes the infinite-order Wasserstein distance and ¯β is the uniform probability vector. The radii 
+
+ϵ1 and ϵ2 control the uncertainty in the input marginal and the source-mixture weights, respectively. 
+
+4.2 Parameter-Efficient Adaptation 
+
+We now describe a parameter-efficient adaptation procedure for both DRO instantiations defined by (4) and (5), focusing on TabPFN. We optimize the objective in (3) by fine-tuning only the query scaling function 
+
+sθL , parameterized by a small neural network within the classification decoder (Figure 2). The function produces scaling factors that multiply the query vector element-wise, thereby reweighting attention to context examples. 51. Training context                       
+
+> D(c)
+> (x1, y 1)(x2, y 2)(x3, y 3)
+> ...
+> (xnc, y nc)
+> ncsamples Query
+> x
+> TabPFN feature map 2. Embeddings
+> z1
+> z2
+> z3
+> znc
+> ...Query embedding
+> z
+> Key projection
+> Wk
+> Query projection
+> Wq
+> 3. Keys (context)
+> k1
+> k2
+> k3
+> knc
+> ...
+> u
+> 4. Learnable query scaling function (MLP)
+> sθL(u)
+> θL:learnable parameters
+> 5. Scaled dot-product attention ˜︁
+> uθL=u⊙sθL(u)
+> αθL
+> i(x)∝ek⊤
+> i˜︁ uθL
+> sθL(u)reweights the query 6. Predicted class probability prob.
+> 12
+> · · · · · · |Y|
+> fθ(x;D(c))=
+> nc∑︂
+> i=1
+> αθL
+> i(x)vi
+> vi: one-hot encoding of yi
+
+Figure 2: Query scaling for classification during adaptation. A query is predicted from the labeled training context. The scaling function sθL adjusts the attention weights used to aggregate context labels. Only θL is updated; θF remains fixed. The key idea is to improve robustness by adapting how pretrained representations are used for prediction while preserving the representations themselves. TabPFN’s pretrained embeddings have been shown to capture useful latent structure in tabular data (Ye et al., 2025; Grinsztajn et al., 2026). However, these informative embeddings alone do not ensure accurate predictions for underrepresented subpopulations. We implement this idea through query scaling, which adjusts how each query attends to labeled context examples. We fine-tune only the scaling function under either DRO objective while keeping all remaining model parameters fixed, concentrating adaptation on how the context contributes to predictions. This adaptation strategy offers three advantages: computational and memory efficiency, scalability, and applicability across TFMs. First, we update only 8,320 parameters ( 0.016% of TabPFN), compared with nearly all parameters in full-model fine-tuning. This effectively reduces the computational and memory costs of parameter updates. Second, the query scaling network is shared across attention heads. The number of trainable parameters does not increase with encoder size or the number of heads, provided that the head dimension and scaling network architecture remain fixed. Third, the same mechanism can be applied to other TFMs: we fine-tune an existing query scaling network when available, or add and train one to scale queries before attention weights are computed. We next describe how query scaling reweights attention to context examples. Specifically, we consider a single query x from a sample (x, y ) ∈ D (e), given the context set D(c). Let z denote the query embedding and z1, . . . , z nc the context embeddings, all obtained from the pretrained TabPFN feature map. For a single attention head, the fixed projections Wk and Wq map these embeddings to context keys ki ∈ Rr and a query vector u ∈ Rr, where r is the dimension of the key and query vectors in each attention head. Query scaling is applied as follows: 
+
+ki = Wkzi, u = Wqz, euθL = u ⊙ sθL (u). (6) Here sθL : Rr → Rr assigns a scaling factor to each coordinate of u, and ⊙ denotes element-wise multiplication. Then, we compute the attention weights and class probabilities as 
+
+αθL 
+
+> i
+
+(x) = exp( k⊤ 
+
+> i
+
+euθL )
+
+Pnc 
+
+> j=1
+
+exp( k⊤ 
+
+> j
+
+euθL ) , fθ(x; D(c)) = 
+
+> nc
+
+X
+
+> i=1
+
+αθL 
+
+> i
+
+(x)vi,
+
+where vi ∈ { 0, 1}|Y| is the one-hot vector corresponding to the context label yi. The probability assigned to each class is the total attention weight on context samples with that label. 6DR-TFM (GR) Figure 3: Histograms of the sum of attention weights assigned to each test sample’s own true group, for majority (left) and minority (right) test samples. Gray and red denote TabPFN and DR-TFM (GR), respectively; dashed lines mark medians. For adaptation, DR-TFM estimates groups using a Gaussian mixture model (GMM). To see how scaling changes the relative contribution of two context samples, note that 
+
+log αθL 
+
+> i
+
+(x)
+
+αθL 
+
+> j
+
+(x) = ( ki − kj )⊤ u ⊙ sθL (u).
+
+A positive right-hand side indicates that context example i receives more attention than example j; a negative value indicates the reverse. Query scaling can change this attention ratio by rescaling individual dimensions of the query vector. Appendix A.2.4 specifies the scaling network and its adapted parameters, while Appendix A.2.6 discusses the regression setting. 
+
+## 5 Experiments 
+
+5.1 Simulation 
+
+In this section, we analyze changes in attention weights before and after adaptation. We use the same data-generating model as in Figure 1. Specifically, the training distribution assigns probability 45% to each of two majority groups and 5% to each of two minority groups. At test time, all four groups have probability 
+
+25% . Only group proportions change; the distribution within each group remains fixed. Appendix A.3.1 provides the simulation details. For each test input x′ ∈ D ′ 
+
+> X
+
+with true group g′, we first compute the decoder attention weights αi(x′)
+
+over the context samples. We then sum these weights over context samples in the same true group to obtain Aown (x′) = P  
+
+> i:gi=g′
+
+αi(x′). Figure 3 shows histograms of Aown (x′) separately for majority- and minority-group test samples. Since the attention weights sum to one, the remaining weight is assigned to context samples in the other three groups. Before adaptation, the median own-group attention weight is 0.97 
+
+for majority test samples and 0.23 for minority test samples. Thus, majority test samples predominantly attend to their own group, whereas minority test samples predominantly attend to other groups. Updating only the query scaling function under our DRO objective changes the attention weights assigned to context samples. After adaptation, the median attention weights on the own group and all other groups change from (0 .97 , 0.03) to (0 .64 , 0.36) for majority test samples. For minority test samples, they change from (0 .23 , 0.77) to (0 .56 , 0.44) . After adaptation, minority test samples assign a much larger share of their attention to context samples in their own group. 7Table 1: Classification results on five tabular benchmarks for methods without true group labels. Throughout the tables, Avg. denotes the average of each metric across the datasets or settings in its block. Bold and underlined values indicate the best and second-best results in each column. †: accuracy results from Tong et al. (2025).                                                                                                                                                                                                                                          
+
+> Methods Adult Bank Default Shoppers Taxi Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst
+> Standard methods
+> ERM-MLP 73.45 45.29 71.86 42.03 63.70 28.52 76.44 50.11 75.27 57.37 72.14 44.67 XGBoost 77.09 52.58 68.69 33.87 64.78 30.72 78.03 55.42 75.81 57.57 72.88 46.03 CatBoost 76.50 51.33 68.94 34.43 64.75 31.03 77.50 54.24 76.04 58.71 72.75 45.95
+> TFMs
+> TabICL 76.40 51.17 71.90 40.38 64.70 31.48 78.71 56.70 76.07 57.86 73.56 47.52 BETA 74.70 47.36 66.26 30.51 64.46 30.93 78.44 56.84 75.03 57.14 71.78 44.56 DistPFN 75.02 48.37 72.63 42.04 64.61 30.71 78.00 54.63 75.76 57.26 73.20 46.60 EXAONE 77.47 53.46 72.67 42.35 64.74 31.10 77.74 53.72 75.99 57.77 73.72 47.68 TabFM 77.39 52.88 73.75 44.42 65.02 31.91 78.28 54.96 76.34 58.11 74.15 48.46 Causilo 77.25 52.89 72.95 43.27 64.70 31.27 78.60 56.44 76.28 58.98 73.95 48.57
+> Robust methods
+> EIIL †69.37 38.97 61.85 21.69 65.05 28.91 74.82 46.18 69.52 58.00 68.12 38.75 LSR †74.33 54.79 69.50 41.28 62.62 38.78 79.68 60.73 67.85 63.14 70.80 51.74 GEORGE 77.48 60.18 81.72 73.32 62.73 56.60 77.47 71.56 64.03 52.82 72.69 62.89 BPA 64.21 54.34 65.52 54.04 57.45 51.97 62.88 50.18 59.96 50.19 62.00 52.14 SPARE 69.81 46.64 76.34 57.52 57.68 34.70 79.93 69.67 66.08 51.24 69.97 51.95
+> TabPFN adaptation
+> TabPFN 75.33 49.17 73.07 42.96 64.77 31.09 79.59 58.29 76.01 58.19 73.75 47.94 TabPFN (fine-tuned) 76.33 50.80 73.10 42.99 65.03 31.71 78.88 56.25 76.11 58.23 73.89 48.00 DR-TFM (GR) 79.64 67.90 85.01 80.14 69.42 60.37 85.79 81.66 76.69 72.79 79.31 72.57
+> DR-TFM (MS) 79.78 67.41 85.02 78.41 69.18 57.86 84.48 77.09 77.13 65.80 79.12 69.31
+
+5.2 Real data analysis 
+
+We follow the experimental setup of Tong et al. (2025), adopting their dataset settings, evaluation group definitions, and evaluation metrics. Details are provided in Appendix A.3. 
+
+5.2.1 Experimental setup Datasets. We evaluate the proposed method on Adult (Becker and Kohavi, 1996), Bank (Moro et al., 2014), Default (Yeh, 2009), Shoppers (Sakar and Kastro, 2018), Taxi (Navas, 2017), and ACS Income (Ding et al., 2021). For ACS Income, we consider three within-state settings and three transfers between Arizona, Massachusetts, and Michigan. All tasks are binary classification. Each evaluated binary attribute is paired with the label to define four groups. 
+
+Baselines and evaluation. We compare DR-TFM with 30 baseline methods, including standard classifiers, TFMs and their adaptations, and robust learning methods. Tables 1 and 2 report results for our TabPFN adaptations and representative baselines that do not use true group labels. Appendix A.3.3 describes the baselines. We evaluate performance using mean group accuracy Acc mean and worst-group accuracy Acc worst .Let A denote the set of evaluated attributes and aA,g the test accuracy of group g ∈ [4] for attribute A ∈ A .These metrics are defined as Acc mean = 1
+
+|A| 
+
+P
+
+A∈A 14
+
+P4
+
+g=1 aA,g and Acc worst = 1
+
+|A| 
+
+P
+
+A∈A min g∈[4] aA,g .Both metrics are expressed as percentages and denoted by Mean and Worst in the tables. DR-TFM does not require true group labels for either training or model selection. We use k-means to estimate groups for GR and construct source subsets for MS. Appendix A.3 provides the training protocols, hyperparameter selection procedures, and ablations on the number of clusters. 
+
+5.2.2 Results 
+
+Tables 1 and 2 summarize benchmark performance on the five tabular benchmarks and ACS Income, respec-tively. Full results, including additional baselines and standard deviations, are reported in Appendices A.4 8Table 2: Classification results on ACS Income for methods without true group labels: within-state prediction (left) and transfers between states (right).                                                                                                                                                                                                                                                                                                                              
+
+> Methods AZ MA MI Avg. AZ →MA MA →MI MI →AZ Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst
+> Standard methods
+> ERM-MLP 77.20 59.42 80.82 73.82 75.69 57.99 77.90 63.74 76.82 60.23 79.13 71.34 75.56 56.31 77.17 62.63 XGBoost 77.64 58.99 82.26 76.38 77.50 62.77 79.13 66.05 77.96 61.99 79.67 72.01 76.82 58.99 78.15 64.33 CatBoost 77.35 58.26 81.97 75.59 77.27 62.43 78.86 65.43 77.66 61.15 79.60 72.31 76.68 58.71 77.98 64.06
+> TFMs
+> TabICL 78.14 59.46 82.89 76.50 77.84 64.30 79.62 66.75 78.03 62.08 79.73 71.78 76.98 59.69 78.25 64.52 BETA 76.73 58.08 80.67 73.25 76.80 62.12 78.07 64.49 77.25 60.70 79.39 72.55 76.30 58.35 77.65 63.87 DistPFN 78.09 59.55 82.98 76.96 77.82 63.78 79.63 66.76 78.76 65.16 79.43 71.58 76.70 58.56 78.29 65.10 EXAONE 78.06 58.93 82.70 76.05 77.80 63.50 79.52 66.16 78.06 61.52 79.85 72.02 76.90 59.03 78.27 64.19 TabFM 77.90 59.64 82.95 77.10 78.05 64.60 79.63 67.11 77.97 61.11 79.90 72.14 77.09 59.86 78.32 64.37 Causilo 77.77 59.45 82.87 76.52 77.77 64.04 79.47 66.67 77.90 61.53 79.85 72.02 76.93 59.31 78.23 64.29
+> Robust methods
+> EIIL †74.98 55.22 78.18 68.42 75.60 63.77 76.25 62.47 75.35 56.80 76.92 65.62 74.78 57.32 75.68 59.91 LSR †76.28 66.42 78.35 73.33 75.53 67.10 76.72 68.95 75.00 62.85 74.75 68.75 74.73 64.10 74.83 65.23 GEORGE 74.76 58.70 76.65 68.82 72.82 66.52 74.74 64.68 73.25 61.69 73.22 64.80 74.21 62.10 73.56 62.86 BPA 63.26 54.44 65.78 58.90 63.42 58.18 64.15 57.17 65.65 59.36 62.72 57.64 63.57 58.96 63.98 58.65 SPARE 74.35 69.94 77.51 70.17 71.05 61.67 74.31 67.26 74.23 65.44 73.23 65.67 70.27 58.96 72.58 63.36
+> TabPFN adaptation
+> TabPFN 78.19 59.87 83.01 77.02 77.72 63.50 79.64 66.80 77.95 61.57 79.69 71.86 76.81 59.08 78.15 64.17 TabPFN (fine-tuned) 78.23 60.35 82.95 77.03 78.23 65.02 79.80 67.47 77.95 62.05 79.62 72.20 76.76 58.77 78.11 64.34 DR-TFM (GR) 78.81 70.36 79.96 70.93 78.87 71.90 79.21 71.06 78.43 69.70 78.73 66.43 78.46 68.84 78.54 68.32 DR-TFM (MS) 79.46 69.30 81.24 72.75 79.30 71.42 80.00 71.16 80.08 73.75 78.82 70.53 78.55 71.38 79.15 71.89
+
+Table 3: Runtime in seconds and peak GPU memory in GB per result, each averaged over the five tabular benchmarks and three seeds. “ft” denotes fine-tuning. Runtime includes hyperparameter selection. 
+
+GEORGE LSR MixturePFN BETA TabPFN TabPFN (ft) DR-TFM (GR) DR-TFM (MS) 
+
+Seconds 77.0 5,156.4 229.5 1,020.6 5.4 214.1 23.8 30.6 Memory (GB) 1.21 3.12 2.17 14.33 0.61 9.25 1.07 0.98 
+
+and A.8. We report accuracy differences in percentage points (pp). 
+
+Five tabular benchmarks. Table 1 shows that our proposed methods achieve the best performance on all five tabular benchmarks. The corresponding averages of worst-group accuracies are 72 .57% and 69 .31% ,yielding improvements of 24 .63 and 21 .37 pp over TabPFN. DR-TFM (GR) and DR-TFM (MS) improve the average of mean group accuracies over TabPFN by 5.56 and 5.37 pp and the average of worst-group accuracies over TabPFN fine-tuning by 24 .57 and 21 .31 pp, respectively. The corresponding gains over GEORGE ( k-means) are 9.68 and 6.42 pp. 
+
+ACS Income. In Table 2, our proposed methods achieve the best and second-best averages of worst-group accuracies in both within-state and transfer settings. Within states, DR-TFM (GR) and DR-TFM (MS) achieve 71 .06% and 71 .16% , exceeding TabPFN by 4.26 and 4.36 pp, respectively. Across transfers, they achieve 68 .32% and 71 .89% . These exceed TabPFN by 4.15 and 7.72 pp and LSR by 3.09 and 6.66 pp, respectively. Both also outperform TabPFN and fine-tuned TabPFN in the average of mean group accuracies in the transfer settings. 
+
+Computational and memory efficiency. Table 3 reports runtime in seconds and peak GPU memory in GB per result, each averaged over the five tabular benchmarks. DR-TFM (GR) and DR-TFM (MS) require 
+
+23 .8 and 30 .6 seconds per result, respectively. These correspond to 9.0- and 7.0-fold speedups over TabPFN standard fine-tuning ( 214 .1 seconds), and 42 .9- and 33 .3-fold speedups over BETA ( 1,020 .6 seconds). Both also use less GPU memory: their average peak memory is 1.07 and 0.98 GB, respectively, compared with 
+
+9.25 GB for TabPFN standard fine-tuning. Further details are provided in Appendix A.5. 9Table 4: Average of worst-group accuracies over five tabular benchmarks and three seeds. Trainable (%) is the percentage of model parameters updated. Encoder refers to all model parameters outside the decoder. Parenthesized values denote improvements over ERM in percentage points. Seconds and Memory (GB) are runtime and peak GPU memory per result under DRO-based adaptation.                                     
+
+> Fine-tuned parameters Trainable (%) ERM (%) DRO (%) Seconds Memory (GB) Input adapter 0.063–0.155 45.45 66.64 (+21.19) 43.5 9.80 Encoder 99.196 48.39 68.92 (+20.53) 241.2 10.22 Full backbone ≈100 48.00 68.98 (+20.98) 246.6 10.31 Decoder 0.804 48.68 71.93 (+23.25) 24.0 1.10
+> Query scaling 0.016 47.34 72.57 (+25.23) 23.8 1.07
+
+Table 5: GR adaptation across tabular foundation models without true group labels. Results are averaged over three seeds. “+ Ours” denotes DR-TFM (GR) applied to the model above, with parentheses indicating the percentage of model parameters updated. Bold parentheses report the change from the corresponding original model, in percentage points.                                                                                                   
+
+> Method Five tabular benchmarks (Avg.) ACS within-state (Avg.) ACS transfer (Avg.) Mean Worst Mean Worst Mean Worst TabPFN 73.75 47.94 79.64 66.80 78.15 64.17 + Ours (0.016%) 79.31 (+5.56) 72.57 (+24.63) 79.21 (-0.43) 71.06 (+4.26) 78.54 (+0.39) 68.32 (+4.15)
+> TabPFN-3.5 74.39 49.26 79.79 67.10 78.25 64.34 + Ours (0.004%) 79.42 (+5.03) 71.47 (+22.21) 79.88 (+0.09) 72.48 (+5.38) 79.19 (+0.94) 71.51 (+7.17)
+> EXAONE 73.72 47.68 79.52 66.16 78.27 64.19 + Ours (0.020%) 79.44 (+5.72) 69.45 (+21.77) 80.28 (+0.76) 71.39 (+5.23) 79.63 (+1.36) 70.37 (+6.18)
+> TabFM 74.15 48.46 79.63 67.11 78.32 64.37 + Ours (0.002%) 79.43 (+5.28) 66.47 (+18.01) 79.65 (+0.02) 69.41 (+2.30) 78.98 (+0.66) 66.60 (+2.23)
+> Causilo 73.95 48.57 79.47 66.67 78.23 64.29 + Ours (0.046%) 78.47 (+4.52) 63.56 (+14.99) 80.22 (+0.75) 72.15 (+5.48) 78.37 (+0.14) 68.21 (+3.92)
+
+Training objective and adaptation strategy. Table 4 compares five fine-tuning strategies under ERM (2) and DRO (4). Our DRO-based adaptation substantially improves the average of worst-group accuracies over ERM across all five strategies. Under DRO-based adaptation, query scaling achieves the highest average of worst-group accuracies ( 72 .57% ) with the fewest trainable parameters ( 0.016% of the model). Its accuracy is slightly higher than that of decoder fine-tuning ( 71 .93% ), while using approximately 1/51 as many trainable parameters. Appendix A.6 provides the adaptation settings and per-dataset results. 
+
+Extension to other tabular foundation models. Table 5 evaluates our robust adaptation on TabPFN-3.5 (Prior Labs, 2026) and three other TFMs: EXAONE (Eo et al., 2026), TabFM (Google Research, 2026), and Causilo (Nums AI Inc., 2026). We fine-tune the pretrained query-scaling network when present, and otherwise add and train a new one. All four models consistently improve the average of worst-group accuracies on the five tabular benchmarks, with an average gain of 19.25 pp across models. These results support the applicability of our adaptation beyond TabPFN. Detailed results and experimental settings are provided in Appendix A.8. 
+
+## 6 Conclusion 
+
+We presented DR-TFM, a parameter-efficient framework for distributionally robust TFM adaptation under subpopulation shift without true group labels. Its two instantiations construct ambiguity sets from estimated groups or source conditional distributions. Query scaling preserves pretrained representations while offering computational and memory efficiency and scalability. Experiments demonstrate improved average worst-group accuracy with competitive mean group accuracy across multiple TFMs. Future work will extend the framework to a broader range of distribution shifts. 10 References 
+
+Barry Becker and Ronny Kohavi. Adult. UCI Machine Learning Repository, 1996. Tianqi Chen and Carlos Guestrin. XGBoost: A scalable tree boosting system. In Proc. ACM SIGKDD International Conference on Knowledge Discovery and Data Mining , pages 785–794, 2016. Elliot Creager, Jörn-Henrik Jacobsen, and Richard Zemel. Environment inference for invariant learning. In 
+
+Proc. International Conference on Machine Learning , pages 2189–2200, 2021. Frances Ding, Moritz Hardt, John Miller, and Ludwig Schmidt. Retiring Adult: New datasets for fair machine learning. In Proc. Advances in Neural Information Processing Systems , volume 34, pages 6478–6490, 2021. John C. Duchi and Hongseok Namkoong. Learning models with uniform performance via distributionally robust optimization. The Annals of Statistics , 49(3):1378–1406, 2021. John C. Duchi, Peter W. Glynn, and Hongseok Namkoong. Statistics of robust optimization: A generalized empirical likelihood approach. Mathematics of Operations Research , 46(3):946–969, 2021. Moonjung Eo, Min-Kook Suh, Hye-Seung Cho, Jiwon Kim, Seoyoon Kim, Sangjun Nam, and Soonyoung Lee. EXAONE Tabular 1.0: Technical report. ArXiv:2608.25774 , 2026. Benjamin Feuer, Robin Tibor Schirrmeister, Valeriia Cherepanova, Chinmay Hegde, Frank Hutter, Micah Goldblum, Niv Cohen, and Colin White. TuneTables: Context optimization for scalable prior-data fitted networks. In Proc. Advances in Neural Information Processing Systems , volume 37, pages 83430–83464, 2024. Google Research. TabFM: Tabular foundation models. https://github.com/google-research/ tabfm , 2026. Léo Grinsztajn, Klemens Flöge, Oscar Key, Felix Birkel, Philipp Jund, Brendan Roof, Mihir Manium, Shi Bin Hoo, Magnus Bühler, Anurag Garg, et al. TabPFN-3: Technical report. ArXiv:2605.13986 , 2026. Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo, Robin Ti-bor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular foundation model. 
+
+Nature , 637(8045):319–326, 2025. Jun-Peng Jiang, Si-Yang Liu, Hao-Run Cai, Qi-Le Zhou, and Han-Jia Ye. Representation learning for tabular data: A comprehensive survey. IEEE Transactions on Pattern Analysis and Machine Intelligence , 48(6): 6488–6508, 2026. Sung Ho Jo, Seonghwi Kim, and Minwoo Chae. Mitigating spurious correlation via distributionally robust learning with hierarchical ambiguity sets. In Proc. International Conference on Learning Representations ,2026. Patrik Kenfack, Samira Ebrahimi Kahou, and Ulrich Aïvodji. Towards fair in-context learning with tabular foundation models. Transactions on Machine Learning Research , 2026. Seonghwi Kim, Sung Ho Jo, Wooseok Ha, and Minwoo Chae. Distributionally robust classification for multi-source unsupervised domain adaptation. In Proc. International Conference on Learning Representations ,2026. 11 David Krueger, Ethan Caballero, Joern-Henrik Jacobsen, Amy Zhang, Jonathan Binas, Dinghuai Zhang, Remi Le Priol, and Aaron Courville. Out-of-distribution generalization via risk extrapolation (REx). In 
+
+Proc. International Conference on Machine Learning , pages 5815–5826, 2021. Seunghan Lee. Mitigating label shift in tabular in-context learning via test-time posterior adjustment. In 
+
+Proc. International Conference on Machine Learning , 2026. Daniel Levy, Yair Carmon, John C. Duchi, and Aaron Sidford. Large-scale methods for distributionally robust optimization. In Proc. Advances in Neural Information Processing Systems , volume 33, pages 8847–8860, 2020. Evan Zheran Liu, Behzad Haghgoo, Annie S. Chen, Aditi Raghunathan, Pang Wei Koh, Shiori Sagawa, Percy Liang, and Chelsea Finn. Just train twice: Improving group robustness without training group information. In Proc. International Conference on Machine Learning , pages 6781–6792, 2021. Jiashuo Liu, Tianyu Wang, Peng Cui, and Hongseok Namkoong. On the need for a language describing distribution shifts: Illustrations on tabular datasets. In Proc. Advances in Neural Information Processing Systems , volume 36, pages 51371–51408, 2023. Si-Yang Liu and Han-Jia Ye. TabPFN unleashed: A scalable and effective solution to tabular classification problems. In Proc. International Conference on Machine Learning , pages 40043–40068, 2025. Junwei Ma, Valentin Thomas, Rasa Hosseinzadeh, Alex Labach, Hamidreza Kamkari, Jesse C. Cresswell, Keyvan Golestan, Guangwei Yu, Anthony L. Caterini, and Maksims Volkovs. TabDPT: Scaling tabular foundation models on real data. In Proc. Advances in Neural Information Processing Systems , volume 38, pages 172692–172722, 2025. Peyman Mohajerin Esfahani and Daniel Kuhn. Data-driven distributionally robust optimization using the Wasserstein metric: Performance guarantees and tractable reformulations. Mathematical Programming ,171(1–2):115–166, 2018. Sérgio Moro, Paulo Rita, and Paulo Cortez. Bank marketing. UCI Machine Learning Repository, 2014. Emilio Navas. Taxi routes of Mexico City, Quito and more. Kaggle, 2017. https://www.kaggle.com/datasets/ mnavas/taxi-routes-for-mexico-city-and-quito. Nums AI Inc. Causilo. https://github.com/nums-ai/causilo , 2026. Henning Petzka, Michael Kamp, Linara Adilova, Cristian Sminchisescu, and Mario Boley. Relative flatness and generalization. In Proc. Advances in Neural Information Processing Systems , volume 34, pages 18420–18432, 2021. Prior Labs. TabPFN-3.5. https://huggingface.co/Prior-Labs/tabpfn_3_5 , 2026. Liudmila Prokhorenkova, Gleb Gusev, Aleksandr Vorobev, Anna Veronika Dorogush, and Andrey Gulin. Cat-Boost: Unbiased boosting with categorical features. In Proc. Advances in Neural Information Processing Systems , volume 31, pages 6638–6648, 2018. Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. TabICL: A tabular foundation model for in-context learning on large data. In Proc. International Conference on Machine Learning , pages 50817–50847, 2025. 12 Jake Robertson, Noah Hollmann, Samuel Müller, Noor Awad, and Frank Hutter. FairPFN: A tabular foundation model for causal fairness. In Proc. International Conference on Machine Learning , pages 51787–51808, 2025. Shiori Sagawa, Pang Wei Koh, Tatsunori B. Hashimoto, and Percy Liang. Distributionally robust neural networks for group shifts: On the importance of regularization for worst-case generalization. In Proc. International Conference on Learning Representations , 2020. C. Okan Sakar and Yomi Kastro. Online shoppers purchasing intention dataset. UCI Machine Learning Repository, 2018. Seonguk Seo, Joon-Young Lee, and Bohyung Han. Unsupervised learning of debiased representations with pseudo-attributes. In Proc. IEEE/CVF Conference on Computer Vision and Pattern Recognition , pages 16742–16751, 2022. Zheyan Shen, Peng Cui, Tong Zhang, and Kun Kuang. Stable learning via sample reweighting. In Proc. AAAI Conference on Artificial Intelligence , volume 34, pages 5692–5699, 2020. Nimit Sohoni, Jared A. Dunnmon, Geoffrey Angus, Albert Gu, and Christopher Ré. No subclass left behind: Fine-grained robustness in coarse-grained classification problems. In Proc. Advances in Neural Information Processing Systems , volume 33, pages 19339–19352, 2020. Valentin Thomas, Junwei Ma, Rasa Hosseinzadeh, Keyvan Golestan, Guangwei Yu, Maksims Volkovs, and Anthony Caterini. Retrieval & fine-tuning for in-context tabular models. In Proc. Advances in Neural Information Processing Systems , volume 37, pages 108439–108467, 2024. Yunze Tong, Fengda Zhang, Zihao Tang, Kaifeng Gao, Kai Huang, Pengfei Lyu, Jun Xiao, and Kun Kuang. Latent score-based reweighting for robust classification on imbalanced tabular data. In Proc. International Conference on Machine Learning , pages 59846–59866, 2025. Derek Xu, Olcay Cirit, Reza Asadi, Yizhou Sun, and Wei Wang. Mixture of in-context prompters for tabular PFNs. In Proc. International Conference on Learning Representations , 2025. Yu Yang, Eric Gan, Gintare Karolina Dziugaite, and Baharan Mirzasoleiman. Identifying spurious biases early in training through the lens of simplicity bias. In Proc. International Conference on Artificial Intelligence and Statistics , pages 2953–2961, 2024. Yuzhe Yang, Haoran Zhang, Dina Katabi, and Marzyeh Ghassemi. Change is hard: A closer look at subpopulation shift. In Proc. International Conference on Machine Learning , pages 39584–39622, 2023. Han-Jia Ye, Si-Yang Liu, and Wei-Lun Chao. A closer look at TabPFN v2: Understanding its strengths and extending its capabilities. In Proc. Advances in Neural Information Processing Systems , volume 38, pages 135605–135637, 2025. I-Cheng Yeh. Default of credit card clients. UCI Machine Learning Repository, 2009. Yingtian Zou, Kenji Kawaguchi, Yingnan Liu, Jiashuo Liu, Mong-Li Lee, and Wynne Hsu. Towards robust out-of-distribution generalization bounds via sharpness. In Proc. International Conference on Learning Representations , 2024. 13 A Appendix Contents 
+
+A.1 Theoretical analysis of subpopulation shift . . . . . . . . . . . . . . . . . . . . . . . . . . . 15 A.2 Method details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 A.2.1 Inputs and data preparation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 19 A.2.2 Optimization for DR-TFM (GR) . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 A.2.3 Optimization for DR-TFM (MS) . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20 A.2.4 Query scaling architecture . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 22 A.2.5 Illustration of query scaling . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 A.2.6 Regression . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23 A.3 Experimental setup . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 A.3.1 Simulation details . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25 A.3.2 Datasets . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27 A.3.3 Baselines . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 28 A.3.4 Group and source construction for DR-TFM . . . . . . . . . . . . . . . . . . . . . . 30 A.3.5 Evaluation metrics . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31 A.3.6 Training protocol . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31 A.3.7 Model selection and hyperparameters . . . . . . . . . . . . . . . . . . . . . . . . . 32 A.3.8 Ablation on the number of clusters . . . . . . . . . . . . . . . . . . . . . . . . . . . 34 A.4 Full result tables . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 35 A.5 Computational cost . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 39 A.6 Training objective and adaptation strategy . . . . . . . . . . . . . . . . . . . . . . . . . . . 40 A.7 Discussion of the χ2-DRO formulation . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 42 A.8 Extension to other tabular foundation models . . . . . . . . . . . . . . . . . . . . . . . . . 42 14 A.1 Theoretical analysis of subpopulation shift 
+
+We characterize how changes in subpopulation proportions affect predictive risk, then examine how group imbalance can produce differences in group risks. • Proposition A.1 shows when subpopulation shift can have a large effect on predictive risk. The effect depends on how much the group proportions change, how different the group risks are, and the direction of the shift. • Proposition A.3 explains how group imbalance can create differences in risk across subpopulations. Under average-risk minimization, stronger imbalance-induced spurious correlation can lead to a larger group risk gap. 
+
+Proposition A.1 (Risk variation under subpopulation mixture shift) . Suppose that the training and test distributions are mixtures of the same K subpopulation distributions, 
+
+P tr =
+
+> K
+
+X
+
+> k=1
+
+πtr  
+
+> k
+
+Pk, P te =
+
+> K
+
+X
+
+> k=1
+
+πte  
+
+> k
+
+Pk,
+
+where πtr , π te ∈ ∆K−1.For a fixed model parameter θ, define the group risks by 
+
+Rk(θ) := EPk
+
+ℓ(fθ(X), Y ).
+
+Assume these risks are finite, and define the training and test risks by Rtr (θ) = P 
+
+> k
+
+πtr  
+
+> k
+
+Rk(θ) and Rte (θ) = P 
+
+> k
+
+πte  
+
+> k
+
+Rk(θ). Let 
+
+Rmax (θ) := max  
+
+> k=1 ,...,K
+
+Rk(θ), Rmin (θ) := min  
+
+> k=1 ,...,K
+
+Rk(θ).
+
+Then, there exists A(θ; πtr , π te ) ∈ [−1, 1] such that 
+
+Rte (θ) − Rtr (θ) = dTV (πte , π tr ) Rmax (θ) − Rmin (θ)A(θ; πtr , π te ),
+
+where 
+
+dTV (πte , π tr ) := 12
+
+> K
+
+X
+
+> k=1
+
+πte  
+
+> k
+
+− πtr 
+
+> k
+
+denotes the total variation distance. Consequently, 
+
+Rte (θ) − Rtr (θ) ≤ dTV (πte , π tr ) Rmax (θ) − Rmin (θ).
+
+The bound depends on the magnitude of the mixture shift and the range of group risks. The alignment factor A determines the direction and size of the actual risk change. 15 Proof of Proposition A.1. For a fixed θ,
+
+Rte (θ) − Rtr (θ) = 
+
+> K
+
+X
+
+> k=1
+
+ πte  
+
+> k
+
+− πtr 
+
+> k
+
+ Rk(θ).
+
+Let 
+
+∆k := πte  
+
+> k
+
+− πtr  
+
+> k
+
+.
+
+Since both πtr and πte are probability vectors, 
+
+> K
+
+X
+
+> k=1
+
+∆k = 0 .
+
+By the definition of total variation distance, 
+
+s := dTV (πte , π tr ) = 12
+
+> K
+
+X
+
+> k=1
+
+|∆k|
+
+=
+
+> K
+
+X
+
+> k=1
+
+[∆ k]+ =
+
+> K
+
+X
+
+> k=1
+
+[−∆k]+, (7) where [a]+ := max {a, 0} denotes the positive part of a. If s = 0 , then πte = πtr and hence Rte (θ) = Rtr (θ),so the result holds by taking A(θ; πtr , π te ) = 0 .Suppose now that s > 0, and define 
+
+q+ 
+
+> k
+
+:= [∆ k]+
+
+s , q− 
+
+> k
+
+:= [−∆k]+
+
+s , k = 1 , . . . , K. 
+
+By (7), both q+ and q− belong to ∆K−1. Moreover, by definition, 
+
+∆k = s  q+ 
+
+> k
+
+− q−
+
+> k
+
+ .
+
+Therefore, 
+
+Rte (θ) − Rtr (θ) = s
+
+> K
+
+X
+
+> k=1
+
+q+ 
+
+> k
+
+Rk(θ) −
+
+> K
+
+X
+
+> k=1
+
+q− 
+
+> k
+
+Rk(θ)
+
+!
+
+. (8) Here, q+ represents the normalized probability mass added to subpopulations at test time, whereas q−
+
+represents the normalized probability mass removed from subpopulations. Since both q+ and q− are probability vectors, 
+
+Rmin (θ) ≤
+
+> K
+
+X
+
+> k=1
+
+qσk Rk(θ) ≤ Rmax (θ), σ ∈ { +, −} .
+
+Therefore, 
+
+− Rmax (θ) − Rmin (θ) ≤
+
+> K
+
+X
+
+> k=1
+
+q+ 
+
+> k
+
+Rk(θ) −
+
+> K
+
+X
+
+> k=1
+
+q− 
+
+> k
+
+Rk(θ) ≤ Rmax (θ) − Rmin (θ). (9) If Rmax (θ) = Rmin (θ), all group risks are identical, and (8) is zero. Thus, the result holds by taking 
+
+A(θ; πtr , π te ) = 0 .16 Otherwise, define 
+
+A(θ; πtr , π te ) := 
+
+PKk=1 q+ 
+
+> k
+
+Rk(θ) − PKk=1 q− 
+
+> k
+
+Rk(θ)
+
+Rmax (θ) − Rmin (θ) . (10) By (9), 
+
+A(θ; πtr , π te ) ∈ [−1, 1] .
+
+Hence, A measures the alignment between the direction of the mixture shift and the group risks: A > 0
+
+indicates a shift toward higher-risk subpopulations, whereas A < 0 indicates a shift toward lower-risk subpopulations. Substituting (10) into (8) gives 
+
+Rte (θ) − Rtr (θ) = dTV (πte , π tr ) Rmax (θ) − Rmin (θ)A(θ; πtr , π te ).
+
+Finally, since |A(θ; πtr , π te )| ≤ 1,
+
+Rte (θ) − Rtr (θ) ≤ dTV (πte , π tr ) Rmax (θ) − Rmin (θ),
+
+which proves the result. The following corollary illustrates this shift-risk alignment more explicitly in the two-subpopulation case. 
+
+Corollary A.2 (Two-subpopulation case) . Suppose K = 2 and R2(θ) ≥ R1(θ). Let 
+
+∆ := πte 2 − πtr 2 .
+
+Then, 
+
+Rte (θ) − Rtr (θ) = ∆  R2(θ) − R1(θ).
+
+Moreover, 
+
+dTV (πte , π tr ) = |∆|,
+
+and hence 
+
+Rte (θ) − Rtr (θ) = dTV (πte , π tr ) Rmax (θ) − Rmin (θ).
+
+For ∆̸ = 0 and R2(θ) > R 1(θ), the alignment factor in Proposition A.1 satisfies 
+
+A(θ; πtr , π te ) = sign(∆) .
+
+The result follows directly from Proposition A.1 by setting K = 2 .The preceding results concern a fixed predictor. We next examine how fitting a predictor to an imbalanced distribution can lead to unequal group risks. 17 Proposition A.3 (Risk heterogeneity under imbalance-induced spurious correlation) . Let Y, S ∈ {− 1, +1 }
+
+and let X = ( Z, S ), where S denotes a binary spurious feature and Z collects the remaining features. Let P1
+
+and P2 be two subpopulation distributions over (X, Y ) such that 
+
+S = Y P1-a.s. , S = −Y P2-a.s. ,
+
+and assume that Y is balanced under both P1 and P2.For ρ ∈ [1 /2, 1) , define 
+
+Pρ = ρP 1 + (1 − ρ)P2.
+
+Then 
+
+Corr Pρ (S, Y ) = 2 ρ − 1.
+
+For g ∈ { 1, 2}, define 
+
+Rg(f ) = EPg [ℓ(f (X), Y )] ,
+
+and let 
+
+fρ ∈ arg min   
+
+> f∈F
+
+{ρR 1(f ) + (1 − ρ)R2(f )} .
+
+Here F is a fixed hypothesis class; the group risks are assumed finite and the minimum is assumed to be attained. Then, for any 1/2 ≤ ρ1 < ρ 2 < 1,
+
+R2(fρ1 ) − R1(fρ1 ) ≤ R2(fρ2 ) − R1(fρ2 ).
+
+Moreover, if 
+
+R1(f1/2) = R2(f1/2),
+
+then, defining 
+
+Rmax (f ) = max  
+
+> g∈{ 1,2}
+
+Rg(f ), Rmin (f ) = min  
+
+> g∈{ 1,2}
+
+Rg(f ),
+
+the group risk gap 
+
+Rmax (fρ) − Rmin (fρ)
+
+is non-decreasing in ρ.Proof. We first compute the correlation between S and Y , then compare the group risks at two mixture proportions. Since Y is balanced under both subpopulations and S = Y under P1 while S = −Y under P2,both variables are balanced under Pρ. Thus, their means are zero and their variances are one, giving 
+
+Corr Pρ (S, Y ) = EPρ [SY ] = ρ EP1 [SY ] + (1 − ρ) EP2 [SY ] = 2 ρ − 1.
+
+Define Lρ(f ) = ρR 1(f ) + (1 − ρ)R2(f ), and let f1 = fρ1 and f2 = fρ2 for 1/2 ≤ ρ1 < ρ 2 < 1. By optimality, 
+
+Lρ1 (f1) ≤ Lρ1 (f2), Lρ2 (f2) ≤ Lρ2 (f1).
+
+Combining these inequalities yields 
+
+Lρ2 (f2) − Lρ1 (f2) ≤ Lρ2 (f1) − Lρ1 (f1).
+
+For any f ∈ F ,
+
+Lρ2 (f ) − Lρ1 (f ) = ( ρ2 − ρ1) R1(f ) − R2(f ).
+
+18 Since ρ2 − ρ1 > 0, we obtain 
+
+R2(fρ1 ) − R1(fρ1 ) ≤ R2(fρ2 ) − R1(fρ2 ).
+
+Finally, if R1(f1/2) = R2(f1/2), this monotonicity implies R2(fρ) − R1(fρ) ≥ 0 for every ρ ∈ [1 /2, 1) .Consequently, 
+
+Rmax (fρ) − Rmin (fρ) = R2(fρ) − R1(fρ),
+
+which is non-decreasing in ρ by the preceding inequality. 
+
+A.2 Method details 
+
+We first describe the inputs, group estimation, and data preparation used for classification. We then detail the optimization procedures for DR-TFM (GR) and DR-TFM (MS), followed by the query scaling architecture and an extension to regression. 
+
+A.2.1 Inputs and data preparation 
+
+The data preparation below applies to the real-data variants without true group labels. Appendix A.3.4 specifies the variants with true groups, and Appendix A.3.1 describes the simulations. 
+
+Inputs. Both methods take a training dataset D = {(xi, y i)}ni=1 and a pretrained TabPFN fθ0 . Training response labels yi are available, but true group labels are not required. A separate validation set is used for selecting hyperparameters and the adapted model; its samples are not included in the context or the adaptation objective. 
+
+Embeddings for group estimation. Using the full training dataset D as context, we extract a frozen pretrained TabPFN embedding for each training input, averaging across ensemble members. We standardize each coordinate using its training mean and standard deviation to obtain the features ezi used for clustering. The same standardization is applied to validation embeddings. 
+
+Class-wise group estimation. For each response class c ∈ Y , we fit a separate clustering rule Cc with 
+
+Gc clusters to {ezi : yi = c}. Each training sample is assigned to the pair (yi, C yi (ezi)) . We reindex these pairs as ˆgi ∈ [G], where G = P 
+
+> c∈Y
+
+Gc. The main tables use DR-TFM (GR; k-means), which assigns each training sample to the nearest fitted centroid within its class. For DR-TFM (GR), the number of clusters per class is selected following GEORGE (Sohoni et al., 2020) (Appendix A.3.7). The assignments remain fixed throughout adaptation. The additional GMM variant fits a diagonal-covariance GMM within each class and assigns each training sample to the component with the largest posterior probability. It uses the same criterion to select the number of clusters. 
+
+Context and loss-evaluation sets. We split D into a context D(c) and a loss-evaluation set D(e) in a 70 /30 
+
+ratio, stratifying by ˆgi. The two sets are disjoint and both retain response labels. After this split, we recompute embeddings for adaptation using D(c) as context, writing z(x) for the frozen pretrained embedding of input 
+
+x. The context samples and their labels remain fixed during adaptation and prediction. DR-TFM (GR) uses the response labels in D(e) to compute group losses. DR-TFM (MS) uses the inputs in D(e) together with soft labels obtained from source-conditioned pretrained predictions, as described below. 19 Adapted parameters. In both classification methods, θL collects the pretrained query scaling network parameters selected for fine-tuning. The feature map and all remaining parameters constitute θF and are kept fixed; the architecture is specified in Appendix A.2.4. The algorithms below describe T optimization iterations. We write θ(t) = ( θF , θ (t) 
+
+> L
+
+) for the full model parameters after t updates of θL. We select the adapted model with the highest worst-group validation accuracy over estimated groups. Training schedules and model selection details are provided in Appendices A.3.6 and A.3.7. For either method, prediction for a new input x uses fθ(x; D(c)) with the selected parameters and the retained context. It requires neither a group assignment for x nor adversarial updates. 
+
+A.2.2 Optimization for DR-TFM (GR) Group losses. Using the fixed assignments from Appendix A.2.1, define the loss-evaluation indices for each estimated group k as bIk = {i : ( xi, y i) ∈ D (e), ˆgi = k}. Let nk = |bIk| > 0 denote its size. Its empirical joint distribution is bP (e) 
+
+> k
+
+= n−1
+
+> k
+
+P 
+
+> i∈bIk
+
+δ(xi,y i). Substituting the ambiguity set in (4) into (3) yields 
+
+min 
+
+> θL
+
+max 
+
+> q∈∆G−1
+> G
+
+X
+
+> k=1
+
+qk
+
+ 1
+
+|bIk|
+
+X
+
+> i∈bIk
+
+ℓ
+
+
+
+fθ(xi; D(c)), y i
+
+ . (11) Here, qk is the weight assigned to estimated group k, and the bracketed quantity is its mean loss, denoted by 
+
+Lk(θ). For classification, ℓ is cross-entropy with the observed response label. Maximizing over q ∈ ∆G−1
+
+selects the largest empirical group loss. 
+
+Alternating updates. We initialize q uniformly and θL from the pretrained query scaling network. Each iteration first computes the mean loss of each estimated group, then increases the weights of groups with larger losses by exponentiated gradient ascent. Holding these updated weights fixed, we update θL to reduce the weighted group losses. Algorithm 1 summarizes the basic updates for (11). In our experiments, we use the group-adjusted DRO variant of Sagawa et al. (2020), with group-size adjustments C/ √nk, where we set 
+
+C = 5 . Further optimization settings are provided in Appendix A.3.7. 
+
+A.2.3 Optimization for DR-TFM (MS) Source construction. We first prepare D(c) and D(e) as in Appendix A.2.1. We then form labeled source subsets S1, . . . , SM from D(c). Here, M denotes the number of retained sources. For MS-C, we apply 
+
+k-means to the fixed context embeddings jointly across response classes. Each retained cluster forms a source; clusters containing only one response class are excluded. For MS-R, we construct each source independently by sampling without replacement from the full context. All context samples are available again when constructing the next source, so different sources may overlap. The initial source count and subset sizes are specified in Appendix A.3.4. 
+
+Source conditional predictions. For each source Sk, we condition the frozen pretrained TabPFN on its inputs and response labels and evaluate every input xi in D(e): bP (k)  
+
+> Y|X
+
+(· | xi) = fθ0 (xi; Sk). Thus, each source provides a class probability vector for every loss-evaluation input. We compute these probabilities at the original inputs and keep them and the source subsets fixed throughout adaptation. Given mixture weights 
+
+β, the soft label is y◦(β, x i) = PMk=1 βk bP (k)  
+
+> Y|X
+
+(· | xi). The mixture weights represent uncertainty over the relative contributions of these source-conditioned predictions. For a predicted probability vector p and a soft label v, we use ℓ(p, v ) = − P 
+
+> y∈Y
+
+vy log py. The adapted model always uses the full context D(c).20 Algorithm 1 DR-TFM (GR) for (11)  
+
+> 1:
+
+Input: training dataset D; validation set; pretrained TabPFN fθ0 ; group estimation rule; learning rates 
+
+ηθL , η q; update steps T 
+
+> 2:
+
+Estimate groups ˆgi ∈ [G] from frozen pretrained embeddings  
+
+> 3:
+
+Prepare the fixed context D(c) and loss-evaluation set D(e) as in Appendix A.2.1  
+
+> 4:
+
+Obtain frozen embeddings using D(c) as context  
+
+> 5:
+
+Define bIk ← { i : ( xi, y i) ∈ D (e), ˆgi = k} and nk ← | bIk| for k ∈ [G] 
+
+> 6:
+
+Initialize q(0) ← (1 /G, . . . , 1/G ) and θ(0)  
+
+> L
+
+from the pretrained query scaling network; freeze all other parameters  
+
+> 7:
+
+for t = 0 , . . . , T − 1 do  
+
+> 8:
+
+Compute the group-wise losses 
+
+Lk(θ(t)) ← 1
+
+nk
+
+X
+
+> i∈bIk
+
+ℓ
+
+
+
+fθ(t) (xi; D(c)), y i
+
+ 
+
+> 9:
+
+Update group weights by exponentiated gradient ascent: 
+
+q(t+1)  
+
+> k
+
+∝ q(t) 
+
+> k
+
+exp 
+
+
+
+ηqLk(θ(t))
+
+
+
+, k ∈ [G] 
+
+> 10:
+
+Normalize q(t+1) such that PGk=1 q(t+1)  
+
+> k
+
+= 1  
+
+> 11:
+
+Update the fine-tuning parameters: 
+
+θ(t+1)  
+
+> L
+
+← θ(t) 
+
+> L
+
+− ηθL ∇θL
+
+> G
+
+X
+
+> k=1
+
+q(t+1)  
+
+> k
+
+Lk(θ) θL=θ(t) 
+
+> L
+> 12:
+
+end for  
+
+> 13:
+
+Select an iterate using validation, as in Appendix A.2.1  
+
+> 14:
+
+Output: selected adapted TabPFN and fixed context D(c)
+
+Surrogate objective. The Wasserstein distance in (5) uses transport cost c(x, x ′) = ∥z(x) − z(x′)∥2, using the adaptation embeddings defined in Appendix A.2.1. Let fθ,Z (z′) denote the decoder prediction at the input embedding z′, with D(c) fixed as context, so that fθ,Z (z(x)) = fθ(x; D(c)). We adopt the surrogate objective proposed by Kim et al. (2026) and optimize it over the query scaling parameters: 
+
+min 
+
+> θL
+
+sup   
+
+> β∈∆M−1
+> ∥β−¯β∥2≤ϵ2
+
+EX∼ bP (e)
+
+> X
+
+"
+
+sup 
+
+> ∥z′−z(X)∥2≤ϵ1
+
+ℓ fθ,Z (z′), y ◦(β, X )#
+
+.
+
+Here, the expectation is over the empirical input distribution of D(e). The mixture weights β are shared across samples, while each sample has its own feature perturbation. 
+
+Alternating updates. We initialize θL from the pretrained query scaling network and β at the uniform nominal vector ¯β. For each minibatch, we initialize each perturbed embedding at z(xi). Holding θL and β
+
+fixed, we take a normalized gradient ascent step on each embedding and project it onto its Euclidean ball of radius ϵ1. We then increase the shared weights of sources with larger average losses and enforce the simplex and radius constraints on β. Finally, holding the perturbed embeddings and the updated β fixed, we update 
+
+θL using their soft-label loss. The updates of θL and β continue across minibatches. 21 Algorithm 2 DR-TFM (MS)  
+
+> 1:
+
+Input: training dataset D; validation set; pretrained TabPFN fθ0 ; source construction rule; radii ϵ1, ϵ 2;learning rates ηθL , η β , η z ; update steps T 
+
+> 2:
+
+Prepare the fixed context D(c) and loss-evaluation set D(e) as in Appendix A.2.1  
+
+> 3:
+
+Obtain frozen embeddings using D(c) as context  
+
+> 4:
+
+Construct source subsets S1, . . . , SM ⊆ D (c) 
+
+> 5:
+
+Compute fixed source predictions bP (k)  
+
+> Y|X
+
+(· | xi) ← fθ0 (xi; Sk) for every (xi, y i) ∈ D (e) and k ∈ [M ] 
+
+> 6:
+
+Initialize β(0) ← ¯β = (1 /M, . . . , 1/M ) and θ(0)  
+
+> L
+
+from the pretrained query scaling network; freeze all other parameters  
+
+> 7:
+
+for t = 0 , . . . , T − 1 do  
+
+> 8:
+
+Draw minibatch indices B from D(e) and set z′ 
+
+> i
+
+← z(xi) for each i ∈ B 
+
+> 9:
+
+Form the soft labels y◦(β(t), x i) ← PMk=1 β(t) 
+
+> k
+
+bP (k)  
+
+> Y|X
+
+(· | xi) 
+
+> 10:
+
+Ascend on each embedding and enforce its radius constraint, for i ∈ B:
+
+z′ 
+
+> i
+
+← ΠBi
+
+
+
+z′ 
+
+> i
+
++ ηz b∇z′ 
+
+> i
+
+ℓ fθ(t),Z (z′
+
+> i
+
+), y ◦(β(t), x i) 
+
+> 11:
+
+Ascend on the shared mixture weights and enforce their constraints: 
+
+β(t+1) ← P β
+
+ β(t) + ηβ g,gk = 1
+
+|B|
+
+X
+
+> i∈B
+
+ℓ fθ(t),Z (z′
+
+> i
+
+), bP (k)  
+
+> Y|X
+
+(· | xi), k ∈ [M ]. 
+
+> 12:
+
+Update θL, holding z′ 
+
+> i
+
+and β(t+1) fixed: 
+
+θ(t+1)  
+
+> L
+
+← θ(t) 
+
+> L
+
+− ηθL ∇θL
+
+1
+
+|B|
+
+X
+
+> i∈B
+
+ℓ fθ,Z (z′
+
+> i
+
+), y ◦(β(t+1) , x i) 
+
+> θL=θ(t)
+> L
+> 13:
+
+end for  
+
+> 14:
+
+Select an iterate using validation, as in Appendix A.2.1  
+
+> 15:
+
+Output: selected adapted TabPFN and fixed context D(c)
+
+Algorithm 2 approximates the inner maximization with one feature step and one mixture step per model update, as used in our experiments. The operator ΠBi projects onto Bi = {u : ∥u − z(xi)∥2 ≤ ϵ1}. For the mixture update, Pβ first projects onto ∆M −1 and then contracts the result toward ¯β if its distance exceeds ϵ2.This preserves the simplex constraint while satisfying the radius constraint. The normalized gradient b∇ has unit Euclidean norm for each sample; a zero gradient leaves its embedding unchanged. 
+
+A.2.4 Query scaling architecture 
+
+We describe the architecture of the scaling function in (6). Let gθL denote the small neural network used to construct sθL . It takes a projected query u ∈ Rr as input and returns a vector of the same dimension. The network consists of two linear layers, each including a bias, with a GELU activation between them: 
+
+Rr Linear 
+
+−−−→ R64 GELU 
+
+−−−→ R64 Linear 
+
+−−−→ Rr.
+
+Equivalently, 
+
+gθL (u) = W2 GELU( W1u + a1) + a2,
+
+22 where W1 ∈ R64 ×r, a1 ∈ R64 , W2 ∈ Rr×64 , and a2 ∈ Rr. In the TabPFN classification model used in our main experiments, r = 64 and the decoder has six attention heads. The same network is applied separately to each head’s query vector. The network output is converted into a coordinate-wise modulation through 1 + tanh( gθL (u)) . This modulation multiplies the decoder’s existing base scaling. As in the main text, we omit the head index and write b(nc) ∈ Rr for the base scaling of one head, computed from log nc by a separate frozen pretrained network. The combined scaling function is 
+
+sθL (u) = 1
+
+√r b(nc) ⊙ 1 + tanh( gθL (u)) ,
+
+where 1 is the vector of ones and tanh is applied element-wise. The parameters of the base scaling network are kept fixed. Thus, for a fixed context size nc, fine-tuning changes only the query-dependent modulation, while b(nc) remains unchanged. We suppress the dependence of sθL on nc in the main text. We include the standard attention normalization factor 1/√r in sθL for notational convenience. In both simulated and real-data classification experiments with TabPFN, we update both linear layers of the query scaling network, with θL = ( W1, a 1, W 2, a 2). This gives 8,320 trainable parameters, approximately 
+
+0.016% of the pretrained model’s parameters. The pretrained TabPFN feature map, the key and query projections, the base scaling network, and all other decoder parameters are kept fixed. 
+
+A.2.5 Illustration of query scaling 
+
+Figure 4 illustrates the effect of a uniform query scale. For fixed query–key scores, a smaller positive uniform scale produces a more diffuse attention distribution, whereas a larger scale concentrates attention on the context samples with the highest scores. The learned scaling function in DR-TFM is coordinate-wise, so it can also change the relative query–key scores. Figure 3 examines the learned attention distributions empirically. 
+
+Figure 4: Schematic attention distributions under smaller and larger positive uniform query scales. 
+
+A.2.6 Regression 
+
+DR-TFM also applies to regression. The pretrained TabPFN regression model used here does not include a query-scaling network. We therefore fine-tune the first linear layer of its output network, keeping the pretrained TabPFN feature map and the second linear layer fixed. The objective uses squared-error loss in place of the classification loss. Given a query embedding z ∈ R512 , the regression output network produces logits for B = 5 ,000 
+
+response buckets. It consists of two linear layers, each including a bias, with a GELU activation between 23 them: 
+
+R512 Linear (updated) 
+
+−−−−−−−−−→ R1024 GELU 
+
+−−−→ R1024 Linear (fixed) 
+
+−−−−−−−→ RB .
+
+Equivalently, 
+
+tθ = W2 GELU( W1z + a1) + a2, pθ = softmax( tθ) ∈ ∆B−1.
+
+The trainable parameters are θL = ( W1, a 1), with W1 ∈ R1024 ×512 and a1 ∈ R1024 , while W2 ∈ RB×1024 
+
+and a2 ∈ RB are fixed. This updates 525 ,312 parameters, approximately 0.90% of the pretrained regression model’s 58 .3 million parameters. The prediction is ˆyθ = PBb=1 pθ,b μb, where μb is the conditional mean of response bucket b. Figure 5 summarizes the architecture. 
+
+Figure 5: Regression architecture. Only the first linear layer of the output network is updated; the pretrained TabPFN feature map and the second linear layer remain fixed. Here μb denotes the conditional mean of response bucket b.
+
+Regression simulation. We draw A ∼ Bernoulli(1 /2) and generate 
+
+Y | A ∼ N  mp(2 A − 1) , 0.62 , X1 | A ∼ N  0.8(2 A − 1) , 0.52 ,X2 = Y + ε, ε ∼ N (0 , 0.82),
+
+where Y and X1 are conditionally independent given A, and ε is independent of (A, Y, X 1). We set 
+
+mp = 0 .6Φ −1(p), where Φ is the standard normal cumulative distribution function. The four evaluation groups are defined by (A, 1{Y ≥ 0}), with probabilities p/ 2, (1 − p)/2, (1 − p)/2, and p/ 2. We vary the training and validation value of p over {0.5, 0.6, 0.7, 0.8, 0.9} and fix p = 0 .5 at test time. In this regression design, changing p changes both the group proportions and the distributions within groups. Each run uses 2,000 training, 1,000 validation, and 2,000 test samples. We estimate four groups by fitting a two-component GMM to the input features separately within each response-sign stratum, without using A.Figure 6 reports mean squared error (MSE) and mean absolute error (MAE), averaged over 50 runs. Mean denotes the average of the four group errors, and Worst group denotes their maximum. Consistent with the classification results, increasing training imbalance leads to a larger deterioration in TabPFN’s worst-group performance than in its mean performance. DR-TFM (GR; GMM) mitigates this deterioration in both MSE and MAE. 24 Figure 6: Regression results as the proportion of majority-group samples in training increases. Panels show test MSE (left) and MAE (right). Solid and dashed curves denote the mean and maximum group errors, respectively. 
+
+A.3 Experimental setup 
+
+We describe the simulation and real-data settings, evaluation metrics, baseline methods, hyperparameter selection, and an ablation on the number of clusters. The real-data benchmark and evaluation protocol follow Tong et al. (2025). 
+
+A.3.1 Simulation details Data generation and groups. We generate each sample by first drawing a binary attribute A ∼
+
+Bernoulli(1 /2) , then setting Y = A with probability p and Y = 1 − A otherwise. Conditional on (A, Y ),we independently draw the two features as 
+
+X1 | A ∼ N  δa(2 A − 1) , σ 2
+
+> a
+
+ , X2 | Y ∼ N  δy(2 Y − 1) , σ 2
+
+> y
+
+ .
+
+For the attention analysis in Figure 3, we use δa = 1 .0, σa = 0 .5, δy = 0 .5, and σy = 0 .6. The four groups are G1 = ( A = 0 , Y = 0) , G2 = ( A = 1 , Y = 0) , G3 = ( A = 0 , Y = 1) , and G4 = ( A = 1 , Y = 1) , with probabilities p/ 2, (1 − p)/2, (1 − p)/2, and p/ 2, respectively. The class probabilities remain balanced for every p; the imbalance is across groups rather than labels. 
+
+Sample sizes and subpopulation shift. We independently generate 2,000 training samples and 1,000 
+
+validation samples with p = 0 .9, and 2,000 test samples with p = 0 .5. Training therefore contains an expected 900 samples from each majority group ( G1, G 4) and 100 from each minority group ( G2, G 3). The corresponding expected counts are 450 and 50 in validation, and 500 per group at test time. Realized counts vary across random draws. Only p changes between training and test; the feature distribution within each group remains fixed. Consequently, X1 is associated with Y through A in training but is independent of Y
+
+under the balanced test distribution. Figure 7 illustrates this construction. For Figure 1, we use the same data-generating parameters and training, validation, and test set sizes. We vary the training and validation value of p over {0.5, 0.6, 0.7, 0.8, 0.9}, keeping the test value fixed at 0.5.The reported curves average results over 50 runs. 25 Figure 7: Illustration of the four-group simulation design. Colors identify the four (A, Y ) groups. Their probabilities are 45% , 5% , 5% , and 45% in training (left), and 25% each at test time (right). The dashed line shows the Bayes-optimal boundary x2 = 0 for the balanced test distribution, displayed in both panels for reference. 
+
+Group estimation and adaptation. We fit a two-component GMM to the input features within each class, fixing the number of estimated groups at G = 4 . We update both linear layers of the query scaling network, totaling 8,320 trainable parameters (Appendix A.2.4). We use AdamW with learning rate 10 −3, weight decay 
+
+10 −4, and at most 500 updates. We evaluate worst-group validation accuracy over the estimated groups every 
+
+10 updates and use it for model selection and early stopping, with patience 10 . Test samples are used only for final evaluation. For the attention analysis in Figure 3, the training set serves as the fixed labeled context D(c). We independently draw an additional 2,000 labeled samples from the same training distribution to form D(e). The context and loss-evaluation sets are disjoint. The GMMs are fitted only on the context and assign estimated groups to loss-evaluation and validation samples within each response class. 
+
+Labels and the decision boundary. The labels are generated by the stochastic rule above, not by de-terministically thresholding the observed features. Under the balanced test distribution, X1 carries no label information, and the two classes have equal prior probabilities and equal variances along X2. The Bayes-optimal classifier for test classification error is therefore 
+
+f ⋆
+
+> te
+
+(x) = 1{x2 > 0},
+
+with decision boundary x2 = 0 . The Gaussian noise produces overlap between classes, so a sample’s label need not agree with the side of this boundary on which it falls. This is the test-optimal boundary; the optimal training classifier can also use X1 because of the training association between A and Y .26 Attention computation. For Figure 3, a test sample’s own group is determined by its true (A, Y ) group defined above. For each attention head and ensemble member, we sum the attention weights assigned to context samples in that same group. We then average these sums across heads and ensemble members to obtain one value per test sample. The left histogram pools these values for test samples in G1 and G4, while the right histogram pools them for test samples in G2 and G3.
+
+A.3.2 Datasets Benchmarks. 
+
+• Adult (Becker and Kohavi, 1996). Census records. The task is to predict whether a person’s annual income exceeds $50K. • Bank (Moro et al., 2014). Marketing calls made by a Portuguese bank. The task is to predict whether the client subscribes to a term deposit. • Default (Yeh, 2009). Credit card clients in Taiwan. The task is to predict whether the client defaults in the following month. • Shoppers (Sakar and Kastro, 2018). Online browsing sessions. The task is to predict whether the session ends in a purchase. About 85% of sessions do not, so the label itself is heavily imbalanced. • Taxi (Navas, 2017). Taxi rides in Mexico City. The task is to predict whether the ride lasts more than thirty minutes. • ACS Income (Ding et al., 2021). US Census records, with one table per state. The task is to predict whether income exceeds $50K. All six tasks are binary classification. 
+
+Transfer across states. ACS Income additionally evaluates transfer across states. We use Arizona (AZ), Massachusetts (MA), and Michigan (MI) in six settings. The three within-state settings train and test within one state, following the benchmark splits. The three transfer settings, AZ →MA, MA →MI and MI →AZ, train on one state and test on another. In a transfer setting the entire source table is split 80 /20 into training and validation, and the entire target table is used as the test set, so the target state contributes no training or validation data. Sizes for all six settings are given in Table 7. 
+
+Groups. Evaluation groups are defined by pairing a binary attribute with the label. During training and model selection, true group labels are used only by the methods explicitly marked as using them. The evaluated attributes are the ones selected in Appendix B.2 of Tong et al. (2025): marital status, race, and sex for Adult; age, housing status, marital status, and last contact duration for Bank; age, sex, and the amount of the given credit for Default; traffic type, visitor type, and a weekend indicator for Shoppers; pickup month, a weekday indicator, and direction for Taxi; and race and sex for ACS Income. We use their dataset-specific binary encodings and average the metrics over these attributes, matching the reported baselines. Each attribute defines four (A, Y ) groups; Appendix A.3.5 gives the metric formulas. 
+
+Data preparation. For the five tabular benchmarks and ACS Income, we follow the data preparation procedure of Tong et al. (2025), with the evaluated attributes specified above. Taxi and ACS Income use the WHY SHIFT preprocessing procedure (Liu et al., 2023) adopted in that benchmark. The resulting sizes are listed in Tables 6 and 7. Categorical columns are one-hot encoded for the MLP-based baselines. 27 Table 6: The five tabular benchmarks and their splits.                         
+
+> Dataset Train Validation Test Total Adult 26,048 6,513 16,281 48,842 Bank 32,551 8,138 4,522 45,211 Default 21,600 5,400 3,000 30,000 Shoppers 8,877 2,220 1,233 12,330 Taxi 9,139 2,285 1,270 12,694
+
+Table 7: ACS Income settings. The first three train and test on the same state; the last three transfer to a held-out state.                             
+
+> Setting Train Validation Test Total AZ 23,959 5,990 3,328 33,277 MA 28,881 7,221 4,012 40,114 MI 36,005 9,002 5,001 50,008 AZ →MA 26,621 6,656 40,114 73,391 MA →MI 32,091 8,023 50,008 90,122 MI →AZ 40,006 10,002 33,277 83,285
+
+A.3.3 Baselines 
+
+We compare standard classifiers, TFMs and their adaptations, robust methods without true group labels, and methods that use true group labels. TabPFN, TabPFN-3.5, TabPFN (fine-tuned), and TabPFN (class-balanced) are counted as separate baselines. For this count, TabDPT with retrieved and full contexts is treated as one method, GEORGE with k-means and Gaussian mixture clustering as one method, and Fair-TabICL with group-balanced and uncertainty-based context selection as one method. Tables 8 and 10 summarize the training schedules and hyperparameter settings. 
+
+Standard methods. 
+
+• ERM-MLP. The classifier of Tong et al. (2025) with the reweighting removed, trained by empirical risk minimization. • XGBoost (Chen and Guestrin, 2016). Gradient-boosted trees. • CatBoost (Prokhorenkova et al., 2018). Gradient-boosted trees with ordered boosting and native handling of categorical columns. 
+
+TFMs. 
+
+• TabPFN (Grinsztajn et al., 2026). Predicts a query from a labeled context in a single forward pass, with no gradient update. This is the pretrained model we adapt. • TabPFN-3.5 (Prior Labs, 2026). A TabPFN model with a shared pretrained checkpoint for classification and regression. • TabICL (Qu et al., 2025). Scales in-context learning to larger tables through a two-stage encoder. 28 • TabFM (Google Research, 2026). Combines row and column attention with row compression and a separate transformer for in-context learning. • EXAONE (Eo et al., 2026). Interleaves feature-axis and sample-axis attention through summary tokens for in-context learning. • Causilo (Nums AI Inc., 2026). A compact in-context model that summarizes the context per feature, mixes features within each row, and predicts through a stack of attention layers in which queries read the labeled context. • TabDPT (Ma et al., 2025). Pretrained on real rather than synthetic tables. We evaluate it with nearest-neighbor retrieval and with the full training set as context. • TuneTables (Feuer et al., 2024). Replaces the context with a learned prompt, so the training set is compressed into a small number of tokens. Its prompt is tied to the input representation of TabPFN v1, which we use for this method. Unless otherwise specified, the other TabPFN-based methods use v3. Comparisons with TuneTables therefore reflect differences in both the pretrained model and the adaptation method. • TabPFN (fine-tuned) (Grinsztajn et al., 2026). Adapts the pretrained transformer using the fine-tuning procedure, with context and loss-evaluation batches drawn from the training set. We use the standard fine-tuning settings, including an 80 /20 split into context and loss-evaluation sets. • TabPFN (class-balanced). The same fine-tuning procedure and settings as TabPFN (fine-tuned), with the cross-entropy weighted by the inverse class frequency of the training labels: 
+
+min  
+
+> θ
+
+E bP (e)
+
+h
+
+wY ℓ
+
+
+
+fθ(X; D(c)), Y 
+
+i 
+
+, wc = 1
+
+|Y| bpc
+
+,
+
+where bpc = n−1 Pni=1 1{yi = c} is the empirical frequency of class c in the full training dataset D, and 
+
+wY is the weight for the observed class Y .• MixturePFN (Xu et al., 2025). Partitions the training set with k-means, fine-tunes one expert per cluster on that cluster, and routes a test point to the expert of its nearest centroid. We adapt this procedure to the pretrained TabPFN model used in our experiments, following Liu and Ye (2025) with a context budget of 
+
+3000 samples and ⌈n/ 3000 ⌉ experts. • LoCalPFN (Thomas et al., 2024). Replaces the full training set as context with the query’s k nearest neighbors. We evaluate the retrieval variant (TabPFN-kNN) with k = 1000 and no parameter updates, using the same pretrained TabPFN model as our method. • BETA (Liu and Ye, 2025). Trains a lightweight input adapter placed before the frozen pretrained TabPFN transformer. We use a two-layer MLP with 16 batch-ensemble members. Each member receives a bootstrapped context, and their predictions are averaged. We use the authors’ settings with a context size of 
+
+1000 and the same pretrained TabPFN model as our method. • DistPFN (Lee, 2026). Adjusts the pretrained TabPFN’s class probabilities at test time using the ratio of their test-set average to the class prior of the context, without updating model parameters. 29 Robust methods without true group labels. For CVaR-DRO, χ2-DRO, KL-DRO, EIIL, JTT, FAM, SRDO, and LSR, we use the dataset-level accuracies and standard deviations across seeds reported by Tong et al. (2025), marked † in the accuracy tables, and compute the Avg. columns across the corresponding datasets or settings. • CVaR-DRO and χ2-DRO (Levy et al., 2020), and KL-DRO (Duchi and Namkoong, 2021). Optimize the worst risk over an f -divergence ball around the training distribution, without constructing groups. • JTT (Liu et al., 2021). Trains once, then upweights the samples the first model misclassifies and trains again. • EIIL (Creager et al., 2021). Infers environments that maximally violate an invariance criterion, then optimizes over them. • FAM (Petzka et al., 2021; Zou et al., 2024). Regularizes the flatness of the minimum reached by training. • SRDO (Shen et al., 2020). Reweights samples so that the covariates become decorrelated. • LSR (Tong et al., 2025). Reweights samples using a score-based density estimate on a learned latent space. This is the method whose benchmark we adopt. • GEORGE (Sohoni et al., 2020). Clusters the penultimate representation of a trained model within each class, then minimizes the GroupDRO objective over the resulting clusters. We evaluate both k-means and Gaussian mixture clustering. • BPA (Seo et al., 2022). Clusters a trained representation and reweights each cluster by its inverse frequency and its running loss. • SPARE (Yang et al., 2024). Clusters the model output early in training, when the spurious feature dominates, then resamples by inverse cluster size. 
+
+Methods using true group labels. Results for methods that use true group labels are reported separately in Tables 15 and 17. A superscript ∗ denotes access to true group labels. • GroupDRO (Sagawa et al., 2020). Minimizes the worst risk over the true groups. • Fair-TabICL (Kenfack et al., 2026). Selects in-context examples using the group label, either to balance the groups or by uncertainty in predicting the attribute. 
+
+A.3.4 Group and source construction for DR-TFM MS source construction. We use the MS-C and MS-R constructions described in Appendix A.2.3. Fol-lowing Kim et al. (2026), we start with ten candidate sources on each dataset. Each MS-R source contains approximately nc/5 context samples. The main tables report DR-TFM (MS-C) as DR-TFM (MS). 
+
+True groups for GR. On the five tabular benchmarks, DR-TFM (GR) ∗ and GroupDRO ∗ use the four groups formed by each binary attribute A ∈ A and the class label Y . This yields 4|A| groups: twelve on Adult, Default, Shoppers, and Taxi, and sixteen on Bank. Each sample belongs to one group per attribute, so groups associated with different attributes may overlap. This per-attribute construction avoids sparse intersections across three or four attributes. On ACS Income, both methods use the eight disjoint (Y, sex , race) groups. Each evaluation group is a union of two of these groups. These true-group variants require no cluster selection. 30 Sampling with true groups. To stratify the context and loss-evaluation split on the five tabular benchmarks, we use the four cells of Y paired with sex (Adult and Default), marital status (Bank), weekend status (Shoppers), or pickup month (Taxi). On ACS Income, we use the eight joint cells above. GR ∗ and MS ∗
+
+split the training set 70 /30 into context and loss-evaluation sets, stratified by these cells. These sampling partitions are distinct from the overlapping groups used in the GR objective on the five tabular benchmarks. 
+
+MS sources with true groups. DR-TFM (MS) ∗ forms sources from the joint attribute values, omitting Y :eight combinations on Adult, Default, Shoppers, and Taxi, sixteen on Bank, and four sex–race combinations on ACS Income. We retain a source only if its context contains both response classes. Model selection for MS ∗ maximizes worst-group validation accuracy over the same groups used for GR ∗: the 4|A| overlapping groups on the five tabular benchmarks and the eight joint groups on ACS Income. 
+
+A.3.5 Evaluation metrics 
+
+We report the evaluation metrics of Tong et al. (2025). Let A denote the evaluated attributes of a dataset. For an attribute A ∈ A , the test set splits into the four groups 
+
+CA(v, c ) =  i : Ai = v, Y i = c , (v, c ) ∈ { 0, 1}2,
+
+each with accuracy 
+
+acc A(v, c ) = 1
+
+|C A(v, c )|
+
+X
+
+> i∈C A(v,c )
+
+1 bYi = Yi .
+
+The two reported quantities are 
+
+Acc worst = 1
+
+|A| 
+
+X
+
+> A∈A
+
+min  
+
+> (v,c )∈{ 0,1}2
+
+acc A(v, c ), Acc mean = 1
+
+|A| 
+
+X
+
+> A∈A
+
+14
+
+X
+
+> (v,c )∈{ 0,1}2
+
+acc A(v, c ).
+
+Here, Acc mean assigns equal weight to the four groups, while Acc worst measures the accuracy of the least accurate group for each attribute. Both metrics are averaged over attributes and reported as percentages. For summaries across datasets or settings, we report the average of mean group accuracies and the average of worst-group accuracies, giving each dataset or setting equal weight. 
+
+A.3.6 Training protocol Group estimation and data splitting. The TabPFN-based real-data variants without true group labels use 
+
+512 -dimensional pretrained embeddings and the preparation procedure in Appendix A.2.1. The true-group variants follow Appendix A.3.4. 
+
+Classifier architecture. The MLP-based baselines use the classifier architecture of Tong et al. (2025): a four-layer neural network d → 1024 → 1024 → 512 → 2 with LeakyReLU activations. These baselines use the one-hot-encoded original features, except for LSR, which retains its VAE-based latent representation. 
+
+Optimization. DR-TFM (GR) uses Adam and DR-TFM (MS) uses AdamW. ERM-MLP and GroupDRO use Adam, following Tong et al. (2025). Learning rates, batch sizes, and schedules are listed in Tables 8 and 10. Unless otherwise noted, results are averaged over seeds 0, 1, and 2.31 Schedule. Table 8 lists the training budgets and model selection criteria. The DR-TFM variants without true group labels use early stopping based on worst-group validation accuracy over estimated groups. For MS-C and MS-R, we evaluate this metric every five parameter updates and stop after five consecutive validation checks without improvement. GR ∗ and MS ∗ use the true groups specified in Appendix A.3.4. Table 10 specifies the patience. Table 8: Training budgets and model selection criteria for DR-TFM and the MLP-based baselines. Method Training Epochs / steps Selection criterion Learning rate schedule ERM-MLP ERM, from scratch 1000 validation accuracy multiply by 0.9 after 20                      
+
+> epochs without improvement in mean training loss GroupDRO GroupDRO over the true groups, from scratch 1000 validation worst-group accuracy (true groups) same as above GEORGE stage 1 ERM, from scratch (feature extractor) 1000 validation accuracy none GEORGE stage 2 GroupDRO over the estimated clusters, newly initialized model 300 worst-group accuracy over the estimated validation clusters none BPA base ERM, then retraining with cluster reweighting 1000 / 300 worst-group accuracy over the estimated validation clusters none SPARE base ERM, then retraining with importance sampling 1000 / 300 worst-group accuracy over the estimated validation clusters none LSR original LSR training procedure 4000 / 4000 / 1000 lowest training loss multiply by 0.9after 20
+> epochs without improvement DR-TFM query scaling with a fixed TabPFN feature map at most 1000 steps validation worst-group accuracy over the estimated clusters —
+
+A.3.7 Model selection and hyperparameters Selection rule. The following settings apply to the real-data experiments. We follow the original methods’ hyperparameter settings and selection procedures where applicable. Group-based robust baselines select remaining hyperparameters using worst-group validation accuracy, evaluated on true groups when available and estimated groups otherwise. XGBoost and CatBoost use validation log-loss. Test data are used only for final evaluation. 
+
+Selected hyperparameters. Table 10 lists the search spaces. For SPARE, we select Tinit using worst-group validation accuracy over estimated groups; the numbers of clusters of SPARE and BPA follow GEORGE. ERM-MLP uses the fixed hyperparameters of Tong et al. (2025), including zero weight decay. 
+
+Cluster selection for DR-TFM (GR). Following GEORGE (Sohoni et al., 2020), we select the number of clusters separately for each class over Gc ∈ { 2, 4, 6, 8} by the silhouette score. This selection uses neither true group labels nor validation data. After selection, validation samples are assigned to the nearest cluster center within their class. For both clustering methods, this criterion selects two clusters per class ( G = 4 ) across all datasets and three seeds reported in Tables 14 and 16. 32 Hyperparameters for DR-TFM (MS). For both source constructions in Appendix A.3.4, we fix ϵ2 = 1 ,following Kim et al. (2026). With the uniform nominal vector, this radius allows all convex mixtures of the source conditionals. Kim et al. (2026) develop their method for unsupervised domain adaptation and also evaluate it under subpopulation shift. In their formulation, ϵ1 controls a Wasserstein neighborhood around the empirical target input distribution, accounting for uncertainty when target data are limited. Our setting focuses on subpopulation shift and does not use target-domain data for adaptation or model selection. Here, ϵ1 controls the size of perturbations to the loss-evaluation embeddings. Table 9 shows that worst-group validation accuracy on Adult varies little across the tested values of ϵ1. Given this limited sensitivity, we select ϵ1 = 0 .2
+
+once using these validation results and keep it fixed across all datasets. Each model update uses one feature ascent step and one mixture-weight ascent step, with ηz = ϵ1 and ηβ = 0 .05 .Table 9: Worst-group validation accuracy of DR-TFM (MS) on Adult for selecting ϵ1, with ϵ2 = 1 and ten initial candidate sources. Accuracy is evaluated over estimated groups. Results are averaged over three seeds; parentheses report standard deviations. 
+
+ϵ1 0 0.2 0.4 0.6 0.8 1
+
+Validation 70.43 (1.21) 70.44 (1.18) 70.44 (1.13) 70.38 (1.15) 70.37 (1.15) 70.39 (1.12) 
+
+GroupDRO updates and regularization. The GroupDRO updates use the group-size adjustment described in Appendix A.2.2, with an adversarial learning rate of 0.1 and C = 5 . DR-TFM (GR) fixes weight decay at 
+
+5 × 10 −3. For GEORGE, BPA, SPARE, and GroupDRO, weight decay is selected for the robust training stage. The initial ERM stages of GEORGE, BPA, and SPARE retain zero weight decay, so their estimated partitions remain fixed across the search. Table 10: Hyperparameters. The final column lists selected quantities; all other settings are fixed. LR denotes the model learning rate. Method η C LR Batch size Budget Patience Weight decay Selected quantities DR-TFM (GR; k-means) 0.1 5 0.01 full 1000 5 0.005 Gc per class by silhouette over                                                                                                                                   
+
+> {2,4,6,8}
+> DR-TFM (GR; GMM) 0.1 50.01 full 1000 50.005 Gcper class by silhouette over
+> {2,4,6,8}
+> DR-TFM (GR) ∗0.1 50.01 full 1000 50.005 none (groups given) DR-TFM (MS) ——0.001 1024 300 510 −4ϵ1once on Adult; fixed thereafter DR-TFM (MS) ∗——0.001 1024 300 510 −4none (groups given) ERM-MLP ——0.001 4096 1000 20 0none GroupDRO 0.1 50.001 4096 1000 20 {10 −4,5×10 −3,10 −2}weight decay GEORGE ( k-means / GMM) 0.1 50.001 4096 1000 + 300 epochs 20 {10 −4,5×10 −3,10 −2}Gcl by silhouette over
+> {2,4,6,8}; weight decay SPARE 0.1 50.001 4096 1000 + 300 epochs 20 {10 −4,5×10 −3,10 −2}Tinit ; weight decay BPA 0.1 50.001 4096 1000 + 300 epochs 20 {10 −4,5×10 −3,10 −2}weight decay; clusters as GEORGE XGBoost ——{0.03 ,0.05 ,0.1}—≤600 ——depth, learning rate, tree count CatBoost ——{0.03 ,0.05 ,0.1}—≤600 ——depth, learning rate, tree count TabICL ———————none TabDPT ———256 ———none
+
+33 Table 11: Additional baseline settings.                                       
+
+> Method Trained component Settings TabPFN (fine-tuned) Full backbone Learning rate 10 −5, weight decay 0.02 , 30 epochs, patience 8 TabPFN (class-balanced) Full backbone As TabPFN (fine-tuned), with inverse-class-frequency weights in the cross-entropy BETA Input adapter 16 ensemble members, learning rate 0.003 , weight decay 0.02 , batch size 1024, 30 epochs, patience 5 MixturePFN Expert models Context size 3000; experts use the TabPFN fine-tuning settings above LoCalPFN None Retrieval context of 1000 neighbors per query batch TuneTables Soft prompt 10 tokens, ≤31 epochs, patience 5, TabPFN v1 Fair-TabICL None Context balanced by group or selected by predictive uncertainty TabICL / TabDPT None TabDPT inference batch size 256 TabFM None Full training context; 32 ensemble members EXAONE None Full training context; 8 ensemble members XGBoost / CatBoost Trees Tree counts {25 ,50 ,100 ,200 ,300 ,400 ,600 }, selected by minimum validation log loss
+
+A.3.8 Ablation on the number of clusters 
+
+We vary the number of clusters per class, denoted by Gcl , over {2, 4, 6, 8} and compare DR-TFM (GR) with GEORGE using class-wise k-means and GMM on the five tabular benchmarks and three within-state ACS Income settings. The ablation isolates Gcl , so every remaining hyperparameter is held fixed and both methods use a weight decay of 5 × 10 −3. For this ablation, each class has Gc = Gcl clusters, giving G = 2 Gcl 
+
+estimated groups. Tables 12 and 13 report both clustering methods. Their standard deviations are computed across seeds after averaging accuracies over datasets or within-state settings. 
+
+Results. DR-TFM (GR) outperforms GEORGE in both metrics at every tested value of Gcl for both clustering methods. With k-means, its gains in the average of worst-group accuracies range from 8.77 to 
+
+24 .41 pp on the five tabular benchmarks and from 4.91 to 25 .66 pp on ACS within-state settings. Compared with GEORGE, DR-TFM (GR) shows substantially more stable performance as the number of clusters varies, with smaller ranges in both metrics for both clustering methods. 34 Table 12: Ablation on Gcl for the five tabular benchmarks, averaged over datasets and three seeds. Parentheses report standard deviations across seeds of the dataset-averaged accuracies. ∆ is DR-TFM (GR) minus GEORGE. Range is the maximum minus minimum within each row across the four values of Gcl . Ranges are computed before rounding. Method Gcl = 2 Gcl = 4 Gcl = 6 Gcl = 8 Range (pp) Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst DR-TFM (GR; k-means) 79.31 72.57 77.42 68.37 75.97 63.90 75.09 61.39 4.22 11.18        
+
+> (0.17) (0.64) (0.33) (1.29) (0.63) (3.00) (0.77) (1.12)
+
+GEORGE ( k-means) 73.79 63.80 61.80 43.96 64.22 48.25 58.64 44.45 15.15 19.84        
+
+> (0.48) (1.21) (2.28) (4.56) (1.04) (2.78) (5.89) (9.45)
+
+∆ (pp) +5.52 +8.77 +15.62 +24.41 +11.75 +15.65 +16.45 +16.94 10.93 15.64 DR-TFM (GR; GMM) 79.19 71.81 77.12 67.71 75.99 64.09 74.57 59.67 4.62 12.13        
+
+> (0.15) (0.38) (1.08) (1.29) (0.90) (2.26) (0.38) (3.08)
+
+GEORGE (GMM) 73.75 65.26 68.68 59.69 63.40 49.30 62.26 46.10 11.49 19.16        
+
+> (1.18) (1.66) (1.37) (0.56) (1.66) (4.99) (2.29) (8.85)
+
+∆ (pp) +5.44 +6.55 +8.44 +8.02 +12.59 +14.79 +12.31 +13.57 7.15 8.24 Table 13: Ablation on Gcl for ACS Income, averaged over the three within-state settings and three seeds. Parentheses report standard deviations across seeds of the setting-averaged accuracies. ∆ is DR-TFM (GR) minus GEORGE. Range is the maximum minus minimum within each row across the four values of Gcl .Ranges are computed before rounding. Method Gcl = 2 Gcl = 4 Gcl = 6 Gcl = 8 Range (pp) Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst DR-TFM (GR; k-means) 79.21 71.06 80.00 72.99 79.53 72.22 79.70 72.59 0.78 1.93        
+
+> (0.14) (0.12) (0.12) (0.40) (0.38) (1.11) (0.04) (0.39)
+
+GEORGE ( k-means) 74.36 66.15 64.70 54.67 65.41 56.41 66.75 46.94 9.66 19.22        
+
+> (3.03) (2.31) (1.35) (4.89) (2.71) (1.27) (6.77) (9.64)
+
+∆ (pp) +4.85 +4.91 +15.29 +18.32 +14.11 +15.81 +12.95 +25.66 10.44 20.75 DR-TFM (GR; GMM) 79.82 72.17 79.96 72.86 79.42 71.85 79.69 72.32 0.54 1.01        
+
+> (0.16) (0.82) (0.24) (0.38) (0.47) (1.18) (0.43) (0.47)
+
+GEORGE (GMM) 64.98 59.52 63.69 56.20 64.28 55.68 65.08 55.01 1.40 4.51        
+
+> (2.71) (2.97) (1.40) (2.65) (2.39) (3.18) (3.25) (1.81)
+
+∆ (pp) +14.84 +12.65 +16.27 +16.66 +15.13 +16.18 +14.61 +17.31 1.66 4.66 
+
+A.4 Full result tables 
+
+Method names follow Table 1; MS-C and MS-R denote clustered and randomly sampled sources, respectively. Tables 14–17 report the full results, grouped by method family and access to true group labels. Detailed results for the additional TFMs are reported separately in Appendix A.8. Results are averaged over three seeds. Values in parentheses are standard deviations over seeds where available. The Avg. columns report the average of mean group accuracies and the average of worst-group accuracies across the constituent datasets 35 or settings. Parenthesized values in these columns are the averages of the per-dataset or per-setting standard deviations across seeds. 
+
+Comparisons with true group labels. The true-group protocols for Tables 15 and 17 are described in Appendices A.3.3 and A.3.4. On the five tabular benchmarks, DR-TFM (GR) with estimated groups achieves an average of worst-group accuracies of 72 .57% , exceeding GroupDRO with true groups ( 71 .79% ) and coming within 1.09 pp of DR-TFM (GR) with true groups ( 73 .66% ). The recovery with true groups under the same query-scaling architecture suggests that the degradation on MA →MI may reflect a mismatch between the estimated groups used for adaptation and model selection and the target evaluation groups (Tables 16 and 17). Table 14: Results on the five tabular benchmarks for methods without true group labels. Avg. denotes the average of each metric across datasets. Values in parentheses are standard deviations over three seeds. Accuracy results marked †, including standard deviations, are taken from Tong et al. (2025). Bold method names indicate our variants. 
+
+Methods Adult Bank Default Shoppers Taxi Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst 
+
+Standard methods 
+
+ERM-MLP 73.45 45.29 71.86 42.03 63.70 28.52 76.44 50.11 75.27 57.37 72.14 44.67            
+
+> (0.16) (0.90) (1.80) (4.18) (0.48) (0.21) (0.47) (1.85) (0.60) (1.44) (0.70) (1.72)
+
+XGBoost 77.09 52.58 68.69 33.87 64.78 30.72 78.03 55.42 75.81 57.57 72.88 46.03            
+
+> (0.17) (0.48) (0.31) (0.92) (0.11) (0.13) (0.19) (0.24) (0.21) (0.16) (0.20) (0.39)
+
+CatBoost 76.50 51.33 68.94 34.43 64.75 31.03 77.50 54.24 76.04 58.71 72.75 45.95            
+
+> (0.22) (0.73) (0.49) (0.65) (0.05) (0.00) (0.62) (2.30) (0.07) (0.54) (0.29) (0.84)
+
+TFMs 
+
+TabICL 76.40 51.17 71.90 40.38 64.70 31.48 78.71 56.70 76.07 57.86 73.56 47.52            
+
+> (0.66) (1.26) (0.18) (0.54) (0.09) (0.19) (0.05) (0.00) (0.18) (0.35) (0.23) (0.47)
+
+TabDPT (retrieval) 74.13 46.80 70.06 37.47 64.25 30.18 78.70 58.11 75.90 58.44 72.61 46.20            
+
+> (0.22) (0.66) (0.25) (1.12) (0.18) (0.30) (0.35) (1.07) (0.12) (0.20) (0.23) (0.67)
+
+TabDPT (full context) 72.58 41.77 62.28 23.68 63.54 28.96 77.36 52.98 75.39 57.44 70.23 40.97            
+
+> (1.46) (4.91) (2.03) (4.62) (2.63) (7.04) (1.09) (5.21) (0.28) (1.06) (1.50) (4.57)
+
+TuneTables 68.98 34.03 64.61 27.84 60.84 21.53 77.64 53.82 71.51 46.10 68.72 36.66            
+
+> (1.31) (2.61) (2.28) (4.18) (2.42) (6.60) (1.28) (2.99) (2.07) (5.42) (1.87) (4.36)
+
+MixturePFN 74.17 46.00 70.32 38.24 64.16 30.55 78.60 55.82 75.54 57.51 72.56 45.62            
+
+> (0.59) (1.67) (0.84) (2.03) (0.17) (0.37) (1.62) (4.95) (0.28) (0.63) (0.70) (1.93)
+
+LoCalPFN (retrieval) 75.61 49.34 71.75 40.86 64.45 31.13 79.24 58.11 75.72 57.57 73.35 47.40            
+
+> (0.14) (0.39) (0.17) (0.42) (0.15) (0.14) (0.38) (1.11) (0.10) (0.29) (0.19) (0.47)
+
+BETA 74.70 47.36 66.26 30.51 64.46 30.93 78.44 56.84 75.03 57.14 71.78 44.56            
+
+> (0.35) (0.87) (1.28) (2.49) (0.12) (0.72) (0.54) (2.08) (0.05) (0.25) (0.47) (1.28)
+
+DistPFN 75.02 48.37 72.63 42.04 64.61 30.71 78.00 54.63 75.76 57.26 73.20 46.60            
+
+> (0.17) (0.59) (0.10) (0.19) (0.05) (0.05) (0.13) (0.60) (0.13) (0.44) (0.12) (0.37)
+
+Robust methods 
+
+CVaR-DRO † 71.95 49.02 68.93 38.71 62.43 34.60 76.65 51.26 65.55 54.51 69.10 45.62            
+
+> (0.68) (2.63) (1.52) (3.59) (0.33) (2.44) (0.31) (2.01) (2.00) (5.93) (0.97) (3.32)
+
+χ2-DRO † 71.85 50.09 70.88 40.04 62.03 34.16 76.95 52.40 68.27 62.43 70.00 47.82            
+
+> (0.73) (1.78) (0.81) (3.56) (0.19) (2.12) (1.72) (3.60) (0.99) (1.08) (0.89) (2.43)
+
+KL-DRO † 74.33 49.17 69.95 39.89 59.03 19.39 79.53 59.74 62.30 47.93 69.03 43.22            
+
+> (0.14) (0.90) (0.60) (1.75) (3.25) (5.10) (1.08) (3.98) (8.96) (23.68) (2.81) (7.08)
+
+EIIL † 69.37 38.97 61.85 21.69 65.05 28.91 74.82 46.18 69.52 58.00 68.12 38.75            
+
+> (2.50) (8.15) (2.49) (6.91) (1.06) (7.55) (7.04) (15.02) (0.07) (4.43) (2.63) (8.41)
+
+JTT † 71.46 49.93 68.78 37.77 62.47 35.51 78.10 52.59 67.47 60.01 69.66 47.16            
+
+> (1.89) (3.65) (0.67) (1.50) (0.90) (1.58) (0.75) (3.35) (0.42) (2.60) (0.93) (2.54)
+
+FAM † 72.85 49.59 71.03 41.09 62.50 37.12 76.60 53.51 67.90 62.24 70.18 48.71            
+
+> (1.65) (1.95) (3.89) (5.25) (0.19) (2.07) (0.09) (2.05) (0.75) (0.63) (1.31) (2.39)
+
+SRDO † 71.27 46.44 66.34 32.08 62.38 33.34 76.24 53.11 64.57 58.18 68.16 44.63            
+
+> (2.43) (6.82) (2.55) (5.44) (8.06) (10.94) (0.35) (2.31) (2.07) (2.50) (3.09) (5.60)
+
+Continued on next page 
+
+36 Table 14: Five tabular benchmarks, methods without true group labels (continued). 
+
+Methods Adult Bank Default Shoppers Taxi Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst LSR † 74.33 54.79 69.50 41.28 62.62 38.78 79.68 60.73 67.85 63.14 70.80 51.74 
+
+(0.28) (2.01) (0.39) (1.56) (0.12) (1.22) (1.44) (3.39) (0.16) (2.02) (0.48) (2.04) 
+
+GEORGE ( k-means) 77.48 60.18 81.72 73.32 62.73 56.60 77.47 71.56 64.03 52.82 72.69 62.89 
+
+(0.42) (2.37) (0.54) (2.36) (2.89) (3.62) (10.40) (14.47) (2.31) (6.26) (3.31) (5.82) 
+
+GEORGE (GMM) 76.67 57.68 70.44 58.98 64.95 59.42 75.14 69.90 75.30 71.95 72.50 63.59 
+
+(0.37) (3.46) (3.73) (4.11) (1.24) (1.80) (6.57) (6.98) (0.34) (0.63) (2.45) (3.40) 
+
+BPA 64.21 54.34 65.52 54.04 57.45 51.97 62.88 50.18 59.96 50.19 62.00 52.14 
+
+(2.69) (4.11) (6.83) (6.41) (1.05) (1.95) (1.96) (3.19) (1.32) (3.25) (2.77) (3.78) 
+
+SPARE 69.81 46.64 76.34 57.52 57.68 34.70 79.93 69.67 66.08 51.24 69.97 51.95 
+
+(0.84) (2.84) (1.41) (3.99) (5.48) (15.51) (0.87) (5.36) (8.24) (9.91) (3.37) (7.52) 
+
+TFM adaptation 
+
+TabPFN 75.33 49.17 73.07 42.96 64.77 31.09 79.59 58.29 76.01 58.19 73.75 47.94 
+
+(0.05) (0.28) (0.31) (0.76) (0.04) (0.04) (0.32) (0.52) (0.25) (0.53) (0.19) (0.43) 
+
+TabPFN (fine-tuned) 76.33 50.80 73.10 42.99 65.03 31.71 78.88 56.25 76.11 58.23 73.89 48.00 
+
+(0.35) (0.47) (0.02) (0.21) (0.40) (2.04) (0.76) (1.98) (0.27) (0.66) (0.36) (1.07) 
+
+TabPFN (class-balanced) 75.92 50.98 73.22 43.42 65.27 32.76 77.79 53.24 76.48 61.37 73.74 48.35 
+
+(0.40) (1.14) (0.51) (1.42) (0.60) (1.73) (2.89) (8.24) (0.96) (5.68) (1.07) (3.64) 
+
+DR-TFM (GR; k-means) 79.64 67.90 85.01 80.14 69.42 60.37 85.79 81.66 76.69 72.79 79.31 72.57 
+
+(0.20) (1.61) (0.36) (0.53) (0.62) (1.70) (0.32) (0.50) (0.19) (0.62) (0.34) (0.99) 
+
+DR-TFM (GR; GMM) 79.10 65.58 84.74 79.12 69.80 60.45 85.86 82.40 76.45 71.48 79.19 71.81 
+
+(0.16) (1.47) (0.40) (1.03) (0.37) (1.66) (0.32) (1.77) (0.28) (1.06) (0.31) (1.40) 
+
+DR-TFM (MS-C) 79.78 67.41 85.02 78.41 69.18 57.86 84.48 77.09 77.13 65.80 79.12 69.31 
+
+(0.24) (0.64) (1.33) (1.49) (0.52) (4.76) (0.35) (0.66) (0.13) (0.70) (0.51) (1.65) 
+
+DR-TFM (MS-R) 79.70 66.87 82.99 75.71 69.05 57.72 84.97 78.35 77.37 67.91 78.82 69.31 
+
+(0.05) (0.32) (1.52) (3.24) (0.49) (5.56) (0.73) (1.21) (0.52) (1.79) (0.66) (2.42) 
+
+Table 15: Results on the five tabular benchmarks for methods using true group labels. Avg. denotes the average of each metric across datasets. Values in parentheses are standard deviations over three seeds. Bold method names indicate our variants. 
+
+Methods Adult Bank Default Shoppers Taxi Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst 
+
+Robust methods 
+
+Fair-TabICL (group-balanced) 80.11 72.34 86.58 78.54 69.86 57.73 86.24 83.38 77.45 68.03 80.05 72.00 
+
+(0.23) (0.91) (0.09) (0.10) (0.23) (0.71) (0.85) (0.91) (0.32) (0.49) (0.34) (0.62) 
+
+Fair-TabICL (uncertainty) 61.80 21.35 71.52 40.51 64.93 31.18 77.80 52.81 75.94 57.61 70.40 40.69 
+
+(0.74) (1.65) (0.14) (0.32) (0.12) (0.13) (0.43) (1.57) (0.14) (0.52) (0.31) (0.84) 
+
+GroupDRO 78.16 73.90 81.56 75.47 67.16 61.82 80.30 76.28 75.21 71.47 76.48 71.79 
+
+(0.22) (0.69) (0.57) (1.25) (0.45) (1.09) (1.26) (2.80) (0.04) (1.26) (0.51) (1.42) 
+
+TFM adaptation 
+
+DR-TFM (GR) 78.36 72.26 86.12 81.94 69.58 65.30 85.21 80.52 77.03 68.28 79.26 73.66 
+
+(0.52) (0.79) (0.93) (0.34) (0.26) (1.19) (0.39) (2.17) (0.39) (2.32) (0.50) (1.36) 
+
+DR-TFM (MS) 78.86 72.32 86.56 77.72 69.85 54.71 85.09 79.71 77.45 68.48 79.56 70.59 
+
+(1.55) (1.08) (0.39) (0.63) (0.39) (1.70) (0.99) (3.23) (0.27) (0.96) (0.72) (1.52) 
+
+37 Table 16: ACS Income results for methods without true group labels. The left block reports within-state results and the right block reports transfers between states. Avg. denotes the average of each metric across the three settings in its block. Values in parentheses are standard deviations over three seeds. Accuracy results marked †, including standard deviations, are taken from Tong et al. (2025). Bold method names indicate our variants. 
+
+Methods AZ MA MI Avg. AZ → MA MA → MI MI → AZ Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst 
+
+Standard methods 
+
+ERM-MLP 77.20 59.42 80.82 73.82 75.69 57.99 77.90 63.74 76.82 60.23 79.13 71.34 75.56 56.31 77.17 62.63 
+
+(0.54) (1.59) (0.07) (0.61) (0.32) (1.88) (0.31) (1.36) (0.62) (2.91) (0.09) (0.66) (0.30) (2.40) (0.34) (1.99) 
+
+XGBoost 77.64 58.99 82.26 76.38 77.50 62.77 79.13 66.05 77.96 61.99 79.67 72.01 76.82 58.99 78.15 64.33 
+
+(0.27) (0.76) (0.25) (0.12) (0.11) (0.40) (0.21) (0.43) (0.14) (0.36) (0.06) (0.13) (0.10) (0.30) (0.10) (0.27) 
+
+CatBoost 77.35 58.26 81.97 75.59 77.27 62.43 78.86 65.43 77.66 61.15 79.60 72.31 76.68 58.71 77.98 64.06 
+
+(0.20) (0.60) (0.20) (0.19) (0.12) (0.13) (0.17) (0.30) (0.14) (0.25) (0.05) (0.42) (0.09) (0.04) (0.09) (0.23) 
+
+TFMs 
+
+TabICL 78.14 59.46 82.89 76.50 77.84 64.30 79.62 66.75 78.03 62.08 79.73 71.78 76.98 59.69 78.25 64.52 
+
+(0.09) (0.21) (0.03) (0.33) (0.23) (0.38) (0.12) (0.31) (0.07) (0.19) (0.06) (0.17) (0.05) (0.22) (0.06) (0.19) 
+
+TabDPT (retrieval) 77.25 57.85 81.39 75.43 76.80 61.13 78.48 64.80 76.92 59.51 78.89 70.70 75.21 54.67 77.01 61.63 
+
+(0.33) (0.58) (0.25) (0.24) (0.20) (0.52) (0.26) (0.44) (0.03) (0.20) (0.04) (0.19) (0.06) (0.22) (0.04) (0.21) 
+
+TabDPT (full context) 74.13 50.99 79.51 72.34 74.95 58.01 76.20 60.44 75.89 58.09 77.70 71.51 73.51 51.16 75.70 60.25 
+
+(0.41) (1.71) (0.85) (3.16) (0.58) (3.56) (0.61) (2.81) (0.73) (2.07) (0.33) (2.02) (0.47) (2.25) (0.51) (2.11) 
+
+TuneTables 74.34 52.56 78.13 70.04 72.22 49.83 74.90 57.48 72.98 46.66 77.35 67.66 72.42 46.06 74.25 53.46 
+
+(1.02) (3.03) (0.29) (1.74) (1.95) (4.90) (1.09) (3.22) (0.03) (1.77) (0.27) (2.57) (0.51) (1.21) (0.27) (1.85) 
+
+MixturePFN 76.62 56.62 81.89 76.01 77.77 64.52 78.76 65.72 77.18 60.52 79.32 72.02 76.07 58.36 77.52 63.63 
+
+(0.61) (2.21) (0.19) (0.68) (0.18) (0.85) (0.33) (1.25) (0.22) (0.62) (0.03) (0.42) (0.07) (0.23) (0.11) (0.42) 
+
+LoCalPFN (retrieval) 78.05 60.44 82.58 77.31 77.42 63.22 79.35 66.99 77.48 60.85 79.63 72.64 76.42 58.32 77.84 63.94 
+
+(0.26) (0.11) (0.07) (0.14) (0.09) (0.53) (0.14) (0.26) (0.07) (0.12) (0.05) (0.10) (0.07) (0.20) (0.07) (0.14) 
+
+BETA 76.73 58.08 80.67 73.25 76.80 62.12 78.07 64.49 77.25 60.70 79.39 72.55 76.30 58.35 77.65 63.87 
+
+(0.17) (0.87) (0.22) (0.75) (0.21) (1.29) (0.20) (0.97) (0.49) (1.65) (0.04) (0.83) (0.03) (0.42) (0.19) (0.97) 
+
+DistPFN 78.09 59.55 82.98 76.96 77.82 63.78 79.63 66.76 78.76 65.16 79.43 71.58 76.70 58.56 78.29 65.10 
+
+(0.19) (0.26) (0.11) (0.27) (0.07) (0.27) (0.13) (0.27) (0.03) (0.02) (0.03) (0.13) (0.11) (0.23) (0.05) (0.13) 
+
+Robust methods 
+
+CVaR-DRO † 77.00 64.41 77.85 72.85 73.48 61.88 76.11 66.38 74.10 59.42 74.85 68.57 71.75 54.67 73.57 60.89 
+
+(0.14) (3.70) (1.27) (1.88) (0.74) (4.97) (0.72) (3.52) (0.35) (2.51) (0.14) (0.65) (0.28) (2.55) (0.26) (1.90) 
+
+χ2-DRO † 76.95 64.07 77.55 71.82 73.13 59.03 75.88 64.97 74.53 61.18 74.23 68.53 71.33 53.05 73.36 60.92 
+
+(0.14) (4.60) (0.92) (1.58) (1.38) (2.06) (0.81) (2.75) (0.25) (1.15) (0.18) (0.67) (0.60) (1.76) (0.34) (1.19) 
+
+KL-DRO † 75.68 60.98 78.23 71.22 76.10 62.88 76.67 65.03 74.20 57.78 75.35 68.72 74.73 57.20 74.76 61.23 
+
+(1.23) (3.00) (0.32) (2.41) (0.07) (0.37) (0.54) (1.93) (1.20) (2.91) (0.78) (1.71) (0.25) (0.97) (0.74) (1.86) 
+
+EIIL † 74.98 55.22 78.18 68.42 75.60 63.77 76.25 62.47 75.35 56.80 76.92 65.62 74.78 57.32 75.68 59.91 
+
+(1.80) (6.65) (0.67) (5.86) (0.49) (3.19) (0.99) (5.23) (1.70) (5.52) (1.59) (5.88) (1.51) (4.95) (1.60) (5.45) 
+
+JTT † 75.70 57.73 77.48 68.48 74.48 60.63 75.89 62.28 73.90 55.17 74.00 66.57 72.65 55.17 73.52 58.97 
+
+(1.06) (2.49) (0.25) (2.70) (0.53) (1.84) (0.61) (2.34) (0.78) (3.14) (0.28) (2.33) (0.35) (0.62) (0.47) (2.03) 
+
+FAM † 75.00 57.82 78.73 70.12 74.38 59.45 76.04 62.46 72.93 54.60 74.68 66.35 73.40 54.53 73.67 58.49 
+
+(0.57) (2.17) (0.03) (3.33) (2.09) (6.29) (0.90) (3.93) (0.53) (2.45) (0.11) (2.44) (1.27) (5.24) (0.64) (3.38) 
+
+SRDO † 75.17 60.03 77.85 69.52 73.30 54.63 75.44 61.39 74.00 58.37 74.78 61.77 73.83 60.05 74.20 60.06 
+
+(2.22) (10.23) (1.01) (2.49) (1.22) (5.75) (1.48) (6.16) (1.83) (8.57) (0.49) (4.26) (0.35) (0.96) (0.89) (4.60) 
+
+LSR † 76.28 66.42 78.35 73.33 75.53 67.10 76.72 68.95 75.00 62.85 74.75 68.75 74.73 64.10 74.83 65.23 
+
+(0.11) (0.89) (0.14) (1.48) (1.77) (1.61) (0.67) (1.33) (0.07) (0.40) (0.35) (0.30) (0.35) (0.35) (0.26) (0.35) 
+
+GEORGE ( k-means) 74.76 58.70 76.65 68.82 72.82 66.52 74.74 64.68 73.25 61.69 73.22 64.80 74.21 62.10 73.56 62.86 
+
+(2.95) (14.27) (1.68) (5.90) (1.78) (1.05) (2.14) (7.07) (4.66) (3.06) (1.18) (4.67) (2.42) (5.66) (2.75) (4.46) 
+
+GEORGE (GMM) 65.41 61.03 61.45 55.58 65.06 59.28 63.97 58.63 66.73 61.40 62.24 58.05 61.35 55.30 63.44 58.25 
+
+(5.34) (5.03) (1.48) (2.59) (0.83) (0.87) (2.55) (2.83) (2.57) (3.87) (0.36) (1.89) (4.65) (8.68) (2.53) (4.81) 
+
+BPA 63.26 54.44 65.78 58.90 63.42 58.18 64.15 57.17 65.65 59.36 62.72 57.64 63.57 58.96 63.98 58.65 
+
+(1.32) (4.12) (1.46) (1.97) (0.68) (1.31) (1.15) (2.47) (0.57) (2.86) (1.20) (1.08) (0.16) (0.71) (0.65) (1.55) 
+
+SPARE 74.35 69.94 77.51 70.17 71.05 61.67 74.31 67.26 74.23 65.44 73.23 65.67 70.27 58.96 72.58 63.36 
+
+(2.61) (4.73) (1.49) (1.32) (1.82) (5.26) (1.97) (3.77) (0.89) (2.30) (0.97) (1.74) (1.20) (5.30) (1.02) (3.11) 
+
+TFM adaptation 
+
+TabPFN 78.19 59.87 83.01 77.02 77.72 63.50 79.64 66.80 77.95 61.57 79.69 71.86 76.81 59.08 78.15 64.17 
+
+(0.32) (0.50) (0.12) (0.27) (0.03) (0.20) (0.16) (0.32) (0.07) (0.18) (0.08) (0.25) (0.05) (0.12) (0.07) (0.18) 
+
+Continued on next page 
+
+38 Table 16: ACS Income, methods without true group labels (continued). 
+
+Methods AZ MA MI Avg. AZ → MA MA → MI MI → AZ Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst TabPFN (fine-tuned) 78.23 60.35 82.95 77.03 78.23 65.02 79.80 67.47 77.95 62.05 79.62 72.20 76.76 58.77 78.11 64.34                
+
+> (0.20) (0.39) (0.11) (0.33) (0.24) (0.56) (0.18) (0.43) (0.10) (0.68) (0.07) (0.21) (0.08) (0.63) (0.08) (0.50)
+
+TabPFN (class-balanced) 78.52 61.44 82.98 76.72 78.12 64.74 79.87 67.63 78.55 64.46 79.67 70.23 76.84 59.15 78.35 64.61                
+
+> (0.35) (1.76) (0.09) (0.20) (0.55) (2.05) (0.33) (1.34) (1.13) (5.11) (0.04) (0.17) (0.10) (0.23) (0.42) (1.84)
+
+DR-TFM (GR; k-means) 78.81 70.36 79.96 70.93 78.87 71.90 79.21 71.06 78.43 69.70 78.73 66.43 78.46 68.84 78.54 68.32                
+
+> (0.13) (1.00) (0.59) (1.31) (0.30) (0.86) (0.34) (1.06) (0.15) (0.72) (0.68) (0.34) (0.15) (0.59) (0.32) (0.55)
+
+DR-TFM (GR; GMM) 79.22 71.29 81.51 73.97 78.74 71.25 79.82 72.17 78.88 70.08 79.10 66.99 78.34 68.97 78.77 68.68                
+
+> (0.26) (1.61) (0.42) (0.90) (0.65) (1.46) (0.44) (1.33) (0.42) (1.01) (0.55) (1.32) (0.32) (0.85) (0.43) (1.06)
+
+DR-TFM (MS-C) 79.46 69.30 81.24 72.75 79.30 71.42 80.00 71.16 80.08 73.75 78.82 70.53 78.55 71.38 79.15 71.89                
+
+> (0.36) (2.39) (1.00) (2.43) (0.22) (1.84) (0.53) (2.22) (0.05) (1.44) (0.48) (1.12) (0.09) (0.35) (0.21) (0.97)
+
+DR-TFM (MS-R) 79.43 70.31 81.91 73.94 78.90 71.10 80.08 71.78 80.15 74.93 79.51 66.86 78.54 71.50 79.40 71.10                
+
+> (0.16) (0.58) (0.15) (1.09) (0.12) (1.90) (0.14) (1.19) (0.17) (0.26) (0.09) (0.32) (0.06) (0.31) (0.11) (0.30)
+
+Table 17: ACS Income results for methods using true group labels. Avg. denotes the average of each metric across the three settings in its block. Values in parentheses are standard deviations over three seeds. Bold method names indicate our variants. 
+
+Methods AZ MA MI Avg. AZ → MA MA → MI MI → AZ Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst 
+
+Robust methods 
+
+Fair-TabICL (group-balanced) 79.43 74.38 81.42 78.68 78.96 75.19 79.94 76.09 80.10 78.18 79.56 75.01 78.87 75.41 79.51 76.20                
+
+> (0.24) (0.09) (0.03) (0.82) (0.20) (1.21) (0.16) (0.71) (0.08) (0.03) (0.06) (0.54) (0.15) (1.33) (0.10) (0.63)
+
+Fair-TabICL (uncertainty) 77.72 58.40 82.36 77.46 76.71 62.07 78.93 65.98 77.41 60.40 79.59 73.40 76.24 57.21 77.75 63.67                
+
+> (0.17) (0.57) (0.05) (0.21) (0.31) (0.61) (0.18) (0.47) (0.08) (0.39) (0.12) (0.25) (0.13) (0.13) (0.11) (0.26)
+
+GroupDRO 79.74 78.39 81.39 78.91 78.23 76.70 79.79 78.00 79.19 76.22 79.26 76.24 78.40 75.50 78.95 75.99                
+
+> (0.09) (0.20) (0.43) (0.62) (0.34) (0.38) (0.29) (0.40) (0.10) (0.26) (0.09) (0.30) (0.17) (0.53) (0.12) (0.37)
+
+TFM adaptation 
+
+DR-TFM (GR) 79.55 76.36 81.45 79.27 78.64 76.09 79.88 77.24 79.61 78.02 79.37 76.36 78.50 76.25 79.16 76.88                
+
+> (0.40) (0.91) (0.34) (0.49) (0.25) (0.80) (0.33) (0.73) (0.47) (1.54) (0.03) (0.93) (0.05) (0.37) (0.19) (0.95)
+
+DR-TFM (MS) 79.57 75.05 81.35 77.59 78.47 75.83 79.80 76.16 80.13 78.60 79.31 76.60 78.76 74.77 79.40 76.66                
+
+> (0.26) (1.67) (0.40) (0.57) (0.26) (0.44) (0.30) (0.89) (0.33) (0.31) (0.05) (0.64) (0.03) (0.95) (0.14) (0.63)
+
+A.5 Computational cost 
+
+All runtimes were measured on a server equipped with two Intel Xeon Gold 6230R CPUs (2.10 GHz), using a single NVIDIA GeForce RTX 3090 GPU. Each experiment was timed separately, with no other experiments running concurrently. 39 Table 18: Runtime in seconds per reported result, averaged over three seeds. Times include hyperparameter selection and all training or adaptation stages; TabPFN requires no parameter updates.                                                                                             
+
+> Method Adult Bank Default Shoppers Taxi Avg. XGBoost 5.5 6.4 7.1 4.6 4.1 5.5 CatBoost 22.8 25.2 24.1 12.8 12.8 19.5 TabPFN 7.5 7.8 5.5 3.2 3.1 5.4 ERM-MLP 32.0 36.6 29.9 15.1 14.8 25.7 DR-TFM (GR; k-means) 25.6 50.2 24.6 9.1 9.4 23.8 DR-TFM (MS; k-means) 35.9 45.0 36.6 16.9 18.8 30.6 GEORGE ( k-means) 98.4 117.4 89.1 40.2 39.8 77.0 SPARE 136.6 212.5 104.4 34.4 29.7 103.5 GroupDRO 183.0 213.0 163.8 76.2 84.3 144.1 TabPFN (fine-tuned) 452.3 347.0 123.1 53.1 94.6 214.1 LSR (all stages) 6,602.0 6,171.6 5,619.8 3,700.6 3,688.0 5,156.4 MixturePFN 327.9 322.0 290.8 91.4 115.4 229.5 LoCalPFN (retrieval) 354.3 126.1 74.1 29.1 26.1 121.9 BETA 1,903.5 1,399.6 887.5 657.3 255.0 1,020.6
+
+Table 19 reports peak GPU memory for the methods in Table 3, measured as the maximum memory allocated by PyTorch during a run and averaged over three seeds. Table 19: Peak GPU memory in GB per reported result, averaged over three seeds.                                                         
+
+> Method Adult Bank Default Shoppers Taxi Avg. TabPFN 0.77 0.77 0.62 0.44 0.43 0.61 DR-TFM (GR; k-means) 1.37 1.62 1.15 0.60 0.61 1.07 DR-TFM (MS; k-means) 1.27 1.41 1.02 0.61 0.58 0.98 GEORGE ( k-means) 1.62 1.63 1.60 0.71 0.51 1.21 TabPFN (fine-tuned) 10.98 14.45 11.81 5.25 3.75 9.25 LSR (all stages) 3.56 5.07 4.82 1.50 0.67 3.12 MixturePFN 2.14 2.17 2.46 2.25 1.83 2.17 BETA 14.32 14.32 14.40 14.34 14.30 14.33
+
+A.6 Training objective and adaptation strategy 
+
+For the comparison in Table 4, DRO-based adaptation uses the objective and model selection of DR-TFM (GR), while ERM-based adaptation follows the standard TabPFN fine-tuning objective in (2). Input-adapter tuning uses a single ensemble member of the BETA adapter architecture (Liu and Ye, 2025) and the training schedule used for query scaling. Table 20 reports the per-dataset results for input-adapter, full-backbone, encoder, decoder, and query-scaling adaptation. Tables 21 and 22 report the corresponding runtime and peak GPU memory per result. 
+
+Fine-tuned parameters. The pretrained TabPFN contains 53 ,153 ,144 parameters. Encoder fine-tuning updates all parameters outside the decoder ( 52 ,725 ,752 ). Decoder fine-tuning updates its key and query projections and scaling networks ( 427 ,392 ), whereas query scaling updates only 8,320 parameters. The input adapter contains 33 ,481 –82 ,536 parameters across the five benchmarks ( 0.06% –0.16% of the combined adapter and pretrained model), depending on the input dimension and categorical cardinalities. 40 Table 20: Mean group accuracy and worst-group accuracy under ERM-based and DRO-based adaptation (GR) for five adaptation strategies, averaged over three seeds. Avg. denotes the average of each metric across the five tabular benchmarks. Values in parentheses are standard deviations over three seeds. Parenthesized values in the Avg. columns are the averages of the per-dataset standard deviations. 
+
+Adaptation Adult Bank Default Shoppers Taxi Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst 
+
+Input adapter 
+
+ERM 74.34 46.89 69.39 36.98 64.39 30.34 78.31 55.67 75.38 57.36 72.36 45.45            
+
+> (0.67) (1.58) (1.53) (2.81) (0.10) (0.53) (0.91) (2.12) (0.14) (0.22) (0.67) (1.45)
+
+DRO 78.83 65.90 82.70 73.21 67.92 47.05 84.96 79.60 77.23 67.43 78.33 66.64            
+
+> (0.51) (1.58) (1.34) (1.38) (0.38) (1.44) (0.61) (0.57) (0.27) (0.97) (0.62) (1.19)
+
+Full backbone 
+
+ERM 76.33 50.80 73.10 42.99 65.03 31.71 78.88 56.25 76.11 58.23 73.89 48.00            
+
+> (0.35) (0.47) (0.02) (0.21) (0.40) (2.04) (0.76) (1.98) (0.27) (0.66) (0.36) (1.07)
+
+DRO 78.01 59.56 85.32 79.81 69.02 60.18 83.34 72.73 75.72 72.64 78.28 68.98            
+
+> (0.86) (3.82) (0.80) (1.36) (0.70) (2.86) (1.99) (8.66) (0.91) (1.65) (1.05) (3.67)
+
+Encoder 
+
+ERM 77.05 52.15 73.50 44.01 65.02 31.29 78.88 56.25 76.13 58.23 74.11 48.39            
+
+> (0.13) (0.56) (0.20) (1.13) (0.38) (1.32) (0.76) (1.98) (0.33) (0.66) (0.36) (1.13)
+
+DRO 77.96 59.40 85.23 79.41 69.18 60.42 83.30 72.94 75.40 72.41 78.22 68.92            
+
+> (0.85) (3.70) (0.69) (0.96) (0.47) (2.34) (1.93) (9.01) (0.73) (1.44) (0.93) (3.49)
+
+Decoder 
+
+ERM 74.84 48.17 72.78 42.91 64.89 31.66 79.89 61.31 76.30 59.32 73.74 48.68            
+
+> (0.48) (1.27) (1.02) (1.70) (1.03) (2.44) (0.19) (0.80) (0.08) (0.26) (0.56) (1.29)
+
+DRO 79.24 65.50 84.49 78.88 69.33 59.42 85.86 82.51 76.25 73.31 79.03 71.93            
+
+> (0.33) (0.88) (0.48) (1.35) (0.58) (1.13) (0.40) (0.17) (0.69) (0.93) (0.49) (0.89)
+
+Query scaling 
+
+ERM 74.86 48.58 72.29 41.83 64.85 30.94 78.62 56.42 76.05 58.92 73.34 47.34            
+
+> (0.16) (0.52) (1.02) (1.99) (0.54) (1.31) (0.32) (1.45) (0.27) (0.79) (0.46) (1.21)
+
+DRO 79.64 67.90 85.01 80.14 69.42 60.37 85.79 81.66 76.69 72.79 79.31 72.57            
+
+> (0.20) (1.61) (0.36) (0.53) (0.62) (1.70) (0.32) (0.50) (0.19) (0.62) (0.34) (0.99)
+
+Table 21: Runtime in seconds per reported result under DRO-based adaptation for the adaptation strategies in Table 4, averaged over three seeds. Times include group estimation, adaptation, and prediction. 
+
+Fine-tuned parameters Adult Bank Default Shoppers Taxi Avg. Input adapter 56.5 63.0 40.8 26.8 30.3 43.5 Encoder 214.2 439.1 364.7 80.0 107.8 241.2 Full backbone 213.8 438.3 383.8 90.3 106.8 246.6 Decoder 29.9 45.3 25.9 9.6 9.5 24.0 Query scaling 25.6 50.2 24.6 9.1 9.4 23.8 
+
+Table 22: Peak GPU memory in GB per reported result under DRO-based adaptation for the adaptation strategies in Table 4, averaged over three seeds. 
+
+Fine-tuned parameters Adult Bank Default Shoppers Taxi Avg. Input adapter 12.58 15.45 10.86 5.02 5.09 9.80 Encoder 12.22 16.10 13.20 5.32 4.27 10.22 Full backbone 12.34 16.24 13.29 5.36 4.31 10.31 Decoder 1.38 1.68 1.18 0.62 0.63 1.10 Query scaling 1.37 1.62 1.15 0.60 0.61 1.07 
+
+41 A.7 Discussion of the χ2-DRO formulation 
+
+We examine a variant that reweights individual samples within a χ2 ambiguity set, without estimating groups. 
+
+Formulation. The variant retains the fixed pretrained TabPFN feature map and adapts the same query scaling network. Write ℓθ(x, y ) = ℓ(fθ(x; D(c)), y ). We minimize the robust risk 
+
+sup         
+
+> Q:Dχ2(Q∥bP(e))≤ρ
+
+EQ[ℓθ] = inf 
+
+> η∈R
+
+np 2ρ + 1  E bP (e)
+
+(ℓθ − η)2+
+
+ 1/2 + η
+
+o
+
+over θL. Here Dχ2 (Q∥ bP (e)) = 12 E bP (e) [( dQ/d bP (e) − 1) 2] for Q ≪ bP (e), [a]+ = max {a, 0}, and η is a scalar threshold. The right-hand side is the dual formulation of Duchi et al. (2021). We parameterize the radius as ρα = (1 /α − 1) 2 for α ∈ (0 , 1] . Thus, α = 1 recovers the empirical mean, while smaller values allow more weight to be assigned to high-loss samples. 
+
+Empirical results. Table 23 reports results for each tested α. In both evaluation suites, the empirical mean objective ( α = 1 ) achieves a higher average of worst-group accuracies than every tested α < 1. These results suggest that emphasizing high-loss samples alone may be insufficient to improve worst-group performance. This is consistent with the observation of Tong et al. (2025) that upweighting misclassified samples does not necessarily address the underlying data imbalance. Table 23: Average of mean group accuracies and average of worst-group accuracies for the χ2-DRO variant at each tested α, over the five tabular datasets or all six ACS settings, and over three seeds. α = 1 uses the empirical mean loss. All tested values are reported. † marks averages computed from accuracy results reported by Tong et al. (2025).                                       
+
+> Method Five tabular benchmarks ACS Income Mean Worst Mean Worst ERM-MLP 72.14 44.67 77.54 63.19
+> χ2-DRO †70.00 47.82 74.62 62.95 TabPFN-χ2-DRO ( α= 1 )73.34 47.34 78.73 65.26 TabPFN-χ2-DRO ( α= 0 .6)73.16 47.19 78.02 63.27 TabPFN-χ2-DRO ( α= 0 .4)69.65 37.75 76.93 59.40 TabPFN-χ2-DRO ( α= 0 .2)69.49 37.21 76.96 59.55 TabPFN-χ2-DRO ( α= 0 .1)69.43 37.14 77.15 60.08
+
+A.8 Extension to other tabular foundation models 
+
+Tables 24 and 25 report the per-dataset and per-setting results summarized in Table 5. For each model, we list the pretrained model, DR-TFM (GR) without true group labels (“+ Ours”), and DR-TFM (GR) with true group labels (“+ Ours ∗”). The starred rows follow the true-group protocol of Appendix A.3.4; the TabPFN + Ours ∗ results are those of Tables 15 and 17. Parenthesized values in the Avg. columns are the averages of the per-dataset or per-setting standard deviations across seeds. 
+
+Settings. We follow the training settings in Appendix A.3.6 and use the inference settings specified for each model. Query scaling is applied to the queries in the final attention layer that attends to the context. For models without a pretrained scaling network, we add the network gθL of Appendix A.2.4 with its second layer initialized at zero; its modulation 1 + tanh( gθL (u)) multiplies the queries while each model’s own 42 attention scaling is kept. The remaining model parameters are kept fixed. Without true group labels, groups are estimated from the representations entering the output network, averaged over ensemble members, as for TabPFN. • TabPFN-3.5. This model uses the same decoder architecture as TabPFN. We use 4 ensemble members and fine-tune its pretrained query scaling network, updating 0.004% of the model’s parameters. • EXAONE. We add the scaling network to scale the queries in the final attention layer operating across samples. We use 8 ensemble members and update 0.020% of the adapted model’s parameters. • TabFM. We use 32 ensemble members and update 0.002% of the adapted model’s parameters. • Causilo. We add the scaling network to scale the queries in the final attention layer of its prediction network. We use 8 ensemble members and update 0.046% of the adapted model’s parameters. Groups are instead estimated from the representations entering the final linear layer of the output network, since context representations form a separate cluster at the input to the output network. 43 Table 24: GR adaptation across tabular foundation models on the five tabular benchmarks. “+ Ours” denotes DR-TFM (GR) applied to the model above; ∗ indicates use of true group labels. Avg. denotes the average of each metric across datasets. Non-bold parentheses report standard deviations over three seeds. Bold parentheses report changes from the corresponding pretrained model, in percentage points. 
+
+Methods Adult Bank Default Shoppers Taxi Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst TabPFN 75.33 49.17 73.07 42.96 64.77 31.09 79.59 58.29 76.01 58.19 73.75 47.94 
+
+(0.05) (0.28) (0.31) (0.76) (0.04) (0.04) (0.32) (0.52) (0.25) (0.53) (0.19) (0.43) 
+
++ Ours 79.64 67.90 85.01 80.14 69.42 60.37 85.79 81.66 76.69 72.79 79.31 72.57 
+
+(0.20) (1.61) (0.36) (0.53) (0.62) (1.70) (0.32) (0.50) (0.19) (0.62) (0.34) (0.99) 
+
+(+4.31) (+18.73) (+11.94) (+37.18) (+4.65) (+29.28) (+6.20) (+23.37) (+0.68) (+14.60) (+5.56) (+24.63) 
+
++ Ours ∗ 78.36 72.26 86.12 81.94 69.58 65.30 85.21 80.52 77.03 68.28 79.26 73.66 
+
+(0.52) (0.79) (0.93) (0.34) (0.26) (1.19) (0.39) (2.17) (0.39) (2.32) (0.50) (1.36) 
+
+(+3.03) (+23.09) (+13.05) (+38.98) (+4.81) (+34.21) (+5.62) (+22.23) (+1.02) (+10.09) (+5.51) (+25.72) 
+
+TabPFN-3.5 77.79 54.25 73.83 45.31 64.87 31.60 78.92 56.12 76.56 59.00 74.39 49.26 
+
+(0.09) (0.30) (0.06) (0.38) (0.11) (0.26) (0.16) (0.55) (0.16) (0.59) (0.12) (0.42) 
+
++ Ours 81.96 71.82 86.40 79.81 68.92 58.94 85.17 79.92 74.66 66.83 79.42 71.47 
+
+(0.26) (0.44) (0.41) (0.40) (0.27) (0.17) (0.46) (1.13) (2.81) (2.06) (0.84) (0.84) 
+
+(+4.17) (+17.57) (+12.57) (+34.50) (+4.05) (+27.34) (+6.25) (+23.80) (-1.90) (+7.83) (+5.03) (+22.21) 
+
++ Ours ∗ 80.20 74.69 86.90 81.81 69.00 65.94 85.88 82.58 77.47 68.68 79.89 74.74 
+
+(0.84) (1.08) (0.22) (0.52) (0.33) (0.99) (0.21) (0.57) (0.33) (0.23) (0.39) (0.68) 
+
+(+2.41) (+20.44) (+13.07) (+36.50) (+4.13) (+34.34) (+6.96) (+26.46) (+0.91) (+9.68) (+5.50) (+25.48) 
+
+EXAONE 77.47 53.46 72.67 42.35 64.74 31.10 77.74 53.72 75.99 57.77 73.72 47.68 
+
+(0.02) (0.05) (0.18) (0.26) (0.12) (0.27) (0.16) (0.29) (0.06) (0.16) (0.11) (0.21) 
+
++ Ours 81.12 67.82 84.53 77.46 68.86 56.15 85.37 80.48 77.32 65.34 79.44 69.45 
+
+(0.07) (0.35) (0.53) (1.39) (0.07) (5.45) (0.16) (1.35) (0.50) (2.48) (0.27) (2.21) 
+
+(+3.65) (+14.36) (+11.86) (+35.11) (+4.12) (+25.05) (+7.63) (+26.76) (+1.33) (+7.57) (+5.72) (+21.77) 
+
++ Ours ∗ 81.24 74.34 86.73 80.45 69.56 63.70 85.61 80.85 77.37 68.49 80.10 73.57 
+
+(0.24) (1.32) (0.04) (0.69) (0.39) (3.41) (0.29) (2.79) (0.27) (0.70) (0.25) (1.78) 
+
+(+3.77) (+20.88) (+14.06) (+38.10) (+4.82) (+32.60) (+7.87) (+27.13) (+1.38) (+10.72) (+6.38) (+25.89) 
+
+TabFM 77.39 52.88 73.75 44.42 65.02 31.91 78.28 54.96 76.34 58.11 74.15 48.46 
+
+(0.02) (0.10) (0.06) (0.10) (0.03) (0.30) (0.25) (0.63) (0.13) (0.28) (0.10) (0.28) 
+
++ Ours 80.06 64.25 86.21 73.96 69.07 52.03 85.38 81.67 76.42 60.44 79.43 66.47 
+
+(2.09) (7.86) (0.66) (1.28) (0.75) (0.94) (0.56) (1.97) (0.65) (1.65) (0.94) (2.74) 
+
+(+2.67) (+11.37) (+12.46) (+29.54) (+4.05) (+20.12) (+7.10) (+26.71) (+0.08) (+2.33) (+5.28) (+18.01) 
+
++ Ours ∗ 81.38 72.66 87.49 78.83 69.87 59.67 85.71 81.36 77.62 68.70 80.41 72.25 
+
+(0.24) (0.66) (0.23) (0.18) (0.26) (1.13) (0.57) (0.55) (0.38) (0.65) (0.33) (0.63) 
+
+(+3.99) (+19.78) (+13.74) (+34.41) (+4.85) (+27.76) (+7.43) (+26.40) (+1.28) (+10.59) (+6.26) (+23.79) 
+
+Causilo 77.25 52.89 72.95 43.27 64.70 31.27 78.60 56.44 76.28 58.98 73.95 48.57 
+
+(0.12) (0.40) (0.23) (0.47) (0.13) (0.29) (0.05) (0.00) (0.11) (0.07) (0.13) (0.25) 
+
++ Ours 80.53 65.96 83.25 65.25 66.82 44.44 84.96 79.77 76.77 62.41 78.47 63.56 
+
+(0.13) (0.62) (0.13) (0.97) (0.31) (0.65) (0.14) (1.70) (0.35) (1.58) (0.21) (1.10) 
+
+(+3.28) (+13.07) (+10.30) (+21.98) (+2.12) (+13.17) (+6.36) (+23.33) (+0.49) (+3.43) (+4.52) (+14.99) 
+
++ Ours ∗ 80.68 73.52 86.40 81.82 69.61 64.09 85.59 81.59 77.68 68.38 79.99 73.88 
+
+(0.49) (0.61) (0.36) (0.50) (0.51) (4.86) (1.01) (0.95) (0.40) (0.79) (0.55) (1.54) 
+
+(+3.43) (+20.63) (+13.45) (+38.55) (+4.91) (+32.82) (+6.99) (+25.15) (+1.40) (+9.40) (+6.04) (+25.31) 
+
+44 Table 25: GR adaptation across tabular foundation models on ACS Income. “+ Ours” denotes DR-TFM (GR) applied to the model above; ∗ indicates use of true group labels. The left block reports within-state results and the right block reports transfers between states. Avg. denotes the average of each metric across the three settings in its block. Non-bold parentheses report standard deviations over three seeds. Bold parentheses report changes from the corresponding pretrained model, in percentage points. 
+
+Methods AZ MA MI Avg. AZ → MA MA → MI MI → AZ Avg. Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst Mean Worst TabPFN 78.19 59.87 83.01 77.02 77.72 63.50 79.64 66.80 77.95 61.57 79.69 71.86 76.81 59.08 78.15 64.17 
+
+(0.32) (0.50) (0.12) (0.27) (0.03) (0.20) (0.16) (0.32) (0.07) (0.18) (0.08) (0.25) (0.05) (0.12) (0.07) (0.18) 
+
++ Ours 78.81 70.36 79.96 70.93 78.87 71.90 79.21 71.06 78.43 69.70 78.73 66.43 78.46 68.84 78.54 68.32 
+
+(0.13) (1.00) (0.59) (1.31) (0.30) (0.86) (0.34) (1.06) (0.15) (0.72) (0.68) (0.34) (0.15) (0.59) (0.32) (0.55) 
+
+(+0.62) (+10.49) (-3.05) (-6.09) (+1.15) (+8.40) (-0.43) (+4.26) (+0.48) (+8.13) (-0.96) (-5.43) (+1.65) (+9.76) (+0.39) (+4.15) 
+
++ Ours ∗ 79.55 76.36 81.45 79.27 78.64 76.09 79.88 77.24 79.61 78.02 79.37 76.36 78.50 76.25 79.16 76.88 
+
+(0.40) (0.91) (0.34) (0.49) (0.25) (0.80) (0.33) (0.73) (0.47) (1.54) (0.03) (0.93) (0.05) (0.37) (0.19) (0.95) 
+
+(+1.36) (+16.49) (-1.56) (+2.25) (+0.92) (+12.59) (+0.24) (+10.44) (+1.66) (+16.45) (-0.32) (+4.50) (+1.69) (+17.17) (+1.01) (+12.71) 
+
+TabPFN-3.5 78.18 59.60 83.19 77.23 78.00 64.47 79.79 67.10 78.00 61.70 79.80 72.23 76.94 59.08 78.25 64.34 
+
+(0.29) (1.01) (0.25) (0.44) (0.03) (0.20) (0.19) (0.55) (0.02) (0.06) (0.08) (0.23) (0.04) (0.16) (0.05) (0.15) 
+
++ Ours 79.77 71.01 81.28 73.80 78.60 72.62 79.88 72.48 79.77 74.91 79.19 66.85 78.59 72.77 79.19 71.51 
+
+(0.40) (0.78) (0.11) (1.25) (0.46) (1.73) (0.32) (1.25) (0.25) (1.06) (0.20) (3.39) (0.01) (1.60) (0.15) (2.02) 
+
+(+1.59) (+11.41) (-1.91) (-3.43) (+0.60) (+8.15) (+0.09) (+5.38) (+1.77) (+13.21) (-0.61) (-5.38) (+1.65) (+13.69) (+0.94) (+7.17) 
+
++ Ours ∗ 79.90 76.20 81.42 78.95 78.96 75.11 80.09 76.75 79.73 77.74 79.37 74.99 78.56 76.24 79.22 76.32 
+
+(0.29) (0.39) (0.28) (0.89) (0.23) (0.65) (0.27) (0.64) (0.26) (0.39) (0.07) (2.30) (0.22) (0.57) (0.18) (1.09) 
+
+(+1.72) (+16.60) (-1.77) (+1.72) (+0.96) (+10.64) (+0.30) (+9.65) (+1.73) (+16.04) (-0.43) (+2.76) (+1.62) (+17.16) (+0.97) (+11.98) 
+
+EXAONE 78.06 58.93 82.70 76.05 77.80 63.50 79.52 66.16 78.06 61.52 79.85 72.02 76.90 59.03 78.27 64.19 
+
+(0.02) (0.19) (0.05) (0.16) (0.07) (0.05) (0.05) (0.13) (0.02) (0.11) (0.02) (0.06) (0.08) (0.21) (0.04) (0.13) 
+
++ Ours 80.26 71.46 81.73 74.28 78.85 68.43 80.28 71.39 80.33 73.44 79.52 66.19 79.03 71.48 79.63 70.37 
+
+(0.17) (1.12) (0.22) (1.42) (0.45) (3.68) (0.28) (2.07) (0.41) (1.22) (0.43) (3.40) (0.13) (0.91) (0.32) (1.84) 
+
+(+2.20) (+12.53) (-0.97) (-1.77) (+1.05) (+4.93) (+0.76) (+5.23) (+2.27) (+11.92) (-0.33) (-5.83) (+2.13) (+12.45) (+1.36) (+6.18) 
+
++ Ours ∗ 79.93 76.07 81.47 78.65 79.08 75.23 80.16 76.65 80.02 78.41 79.50 73.49 78.73 76.05 79.42 75.99 
+
+(0.57) (1.05) (0.15) (0.98) (0.60) (0.38) (0.44) (0.80) (0.37) (0.43) (0.03) (1.32) (0.06) (0.37) (0.16) (0.71) 
+
+(+1.87) (+17.14) (-1.23) (+2.60) (+1.28) (+11.73) (+0.64) (+10.49) (+1.96) (+16.89) (-0.35) (+1.47) (+1.83) (+17.02) (+1.15) (+11.80) 
+
+TabFM 77.90 59.64 82.95 77.10 78.05 64.60 79.63 67.11 77.97 61.11 79.90 72.14 77.09 59.86 78.32 64.37 
+
+(0.06) (0.24) (0.05) (0.08) (0.03) (0.13) (0.05) (0.15) (0.01) (0.02) (0.01) (0.03) (0.01) (0.08) (0.01) (0.04) 
+
++ Ours 79.38 69.88 80.25 64.83 79.32 73.51 79.65 69.41 79.46 70.70 78.50 58.87 78.96 70.22 78.98 66.60 
+
+(0.36) (1.42) (0.32) (0.99) (0.10) (0.98) (0.26) (1.13) (0.22) (3.47) (0.04) (0.17) (0.13) (0.55) (0.13) (1.40) 
+
+(+1.48) (+10.24) (-2.70) (-12.27) (+1.27) (+8.91) (+0.02) (+2.30) (+1.49) (+9.59) (-1.40) (-13.27) (+1.87) (+10.36) (+0.66) (+2.23) 
+
++ Ours ∗ 79.59 75.88 81.40 79.29 79.20 75.52 80.06 76.90 80.08 78.43 79.43 73.69 78.75 76.24 79.42 76.12 
+
+(0.26) (0.83) (0.09) (0.89) (0.51) (0.34) (0.29) (0.69) (0.30) (0.45) (0.19) (1.93) (0.09) (0.25) (0.19) (0.88) 
+
+(+1.69) (+16.24) (-1.55) (+2.19) (+1.15) (+10.92) (+0.43) (+9.79) (+2.11) (+17.32) (-0.47) (+1.55) (+1.66) (+16.38) (+1.10) (+11.75) 
+
+Causilo 77.77 59.45 82.87 76.52 77.77 64.04 79.47 66.67 77.90 61.53 79.85 72.02 76.93 59.31 78.23 64.29 
+
+(0.24) (0.49) (0.14) (0.25) (0.16) (0.52) (0.18) (0.42) (0.09) (0.25) (0.04) (0.25) (0.05) (0.16) (0.06) (0.22) 
+
++ Ours 79.53 70.25 82.26 75.04 78.88 71.16 80.22 72.15 78.51 71.61 79.11 67.17 77.50 65.83 78.37 68.21 
+
+(0.33) (2.34) (0.21) (0.40) (0.07) (1.34) (0.20) (1.36) (1.18) (0.62) (0.79) (1.57) (1.35) (0.58) (1.11) (0.92) 
+
+(+1.76) (+10.80) (-0.61) (-1.48) (+1.11) (+7.12) (+0.75) (+5.48) (+0.61) (+10.08) (-0.74) (-4.85) (+0.57) (+6.52) (+0.14) (+3.92) 
+
++ Ours ∗ 79.83 76.43 81.47 79.31 79.15 75.89 80.15 77.21 80.03 78.44 79.39 75.21 78.61 76.58 79.35 76.74 
+
+(0.40) (0.88) (0.14) (0.28) (0.18) (0.17) (0.24) (0.44) (0.27) (0.66) (0.08) (2.06) (0.12) (0.13) (0.16) (0.95) 
+
+(+2.06) (+16.98) (-1.40) (+2.79) (+1.38) (+11.85) (+0.68) (+10.54) (+2.13) (+16.91) (-0.46) (+3.19) (+1.68) (+17.27) (+1.12) (+12.45) 
+
+AI use statement 
+
+We used generative AI tools to assist with drafting and editing the manuscript and with implementation details. The authors reviewed all AI-assisted content and take responsibility for the final manuscript. 45

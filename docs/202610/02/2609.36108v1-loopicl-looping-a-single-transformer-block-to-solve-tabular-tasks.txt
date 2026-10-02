@@ -1,0 +1,914 @@
+Title: LoopICL: Looping a single transformer block to solve tabular tasks
+
+URL Source: https://arxiv.org/pdf/2609.36108v1
+
+Published Time: Wed, 30 Sep 2026 00:16:56 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# LOOP ICL: L OOPING A SINGLE TRANSFORMER BLOCK TO SOLVE TABULAR TASKS 
+
+Amir Rezaei Balef 1,2,3 Katharina Eggensperger 1,21TU Dortmund University, Dortmund, Germany 
+
+> 2
+
+Lamarr Institute for Machine Learning and Artificial Intelligence, Dortmund, Germany 
+
+> 3
+
+University of T¨ ubingen, T¨ ubingen, Germany 
+
+amir.balef@tu-dortmund.de 
+
+ABSTRACT 
+
+Tabular foundation models using in-context learning have recently surpassed gradient-boosted trees on predictive tabular tasks. However, recent mechanistic insights suggest that parameters in these models are largely redundant. We in-troduce LoopICL , a looped transformer whose core design decouples parameter count from computational depth. LoopICL consists of a single block, processing data through two coupled streams: a cell stream capturing per-cell feature repre-sentations and a row stream capturing in-context example representations, jointly refined through within-column and cross-column attention. During pre-training, we vary loop counts, allowing the block to be unrolled for a varying number of iterations at test-time and use a learned exit-gate to automatically exit. In its stan-dard setting, LoopICL performs competitively with TabICLv2 on TabArena and 
+
+TALENT at the same computational cost (FLOPs), while using nearly 90% fewer parameters. Furthermore, its recurrent design enables users to also trade off infer-ence cost and performance, providing a resource-aware TFM. 
+
+1 INTRODUCTION 
+
+Tabular Foundation Models (TFMs) such as TabICLv2 (Qu et al., 2026), TabPFN-3 (Grinsztajn et al., 2026), and TabFM (Research, 2026) have surpassed gradient-boosted trees in predictive per-formance across a wide range of benchmark tasks (Liu et al., 2025; Erickson et al., 2025; Landsgesell et al., 2026). This highlights the potential of In-Context Learning (ICL) for supervised tabular tasks: given labeled training examples as context, these Transformer-based models can directly predict labels for new examples, without requiring task-specific training (Hollmann et al., 2023). Current frontier TFMs rely on ICL and use a transformer-based model pre-trained on synthetic data generated from a prior by minimizing the loss on a given ICL task. As a result, these prior-data-fitted networks (M¨ uller et al., 2022) amortize predictive inference and generalize to real-world tasks out of the box. Specifically, they rely on deep stacks of independently parameterized transformer layers, resulting in fixed inference costs regardless of task complexity or computational budget. Recent progress has come from better input encoding and re-designing the prior (e.g., TabICLv2 ; Qu et al. (2026)), but is mostly based on continuously scaling up the parameter count (e.g., TabPFN-3 is 7×
+
+larger than TabPFN v2 ; Grinsztajn et al. (2026)). Mechanistic analyses suggest that these models are depth-wise redundant and mainly work through iterative refinement, e.g., increasing separability between classes in the latent space (Balef et al., 2026). This finding is further strengthened by extensive compressibility via task-aware block prun-ing (Koshil et al., 2026). Here, we challenge the scaling-up trend and use the insight that a transformer’s computational depth is not necessarily tied to the number of unique weights and layers. So-called looped transformers replace a conventional stack of independently parameterized layers with repeated applications of the same transformer block (Mostafa et al., 2019), thus decoupling parameter count from depth. This parameter sharing enables the model to increase its effective computational depth through iterative 1arXiv:2609.36108v1 [cs.LG] 28 Sep 2026 Input X ∈ RR×C , ytrain Distributional encoding Init H0 Cell Embedding label inject                     
+
+> Input Encoding
+> Within-col induced attention Cross-col attention ICL attention
+> Residual scaling X(i+1) =X(i)+α∆X(i)H(i+1) =H(i)+α∆H(i)
+> Recurrent Block
+> Classification decoder Early-exit gate
+> Decoder
+> X0,H0
+> Cell X(i)Row H(i)
+> H(i+1)
+> ×L10M 100M
+> Model parameters (log scale)
+> 1400 1500 1600 1700 1800 1900 2000
+> ELO  Classification (TabArena)  Compact FM ( 100M)
+> Optimal
+> 1.64B
+> Default Tuned + Ens. LoopICL 12L (Default) Pareto front
+
+Figure 1: Left: LoopICL architecture overview. The blue boxes operate on the cell stream (per-cell representations); the red box operates on the row stream (per-row ICL representations). Right: 
+
+LoopICL is highly parameter-efficient by reusing the same parameters across recurrent steps. refinement while keeping the parameter count fixed, with the number of iterations adjustable at inference time to trade computational cost for predictive performance (Geiping et al., 2026). This mechanism seems well suited for tabular tasks: Once tokenized, a supervised tabular task can be approached through iterative refinement of the latent representation, followed by a lightweight decoder to label query points. This differentiates tabular ICL from knowledge-intensive NLP tasks, which rely on retrieving learned facts and thus benefit from larger parameter counts (Morris et al.), and is consistent with the observation that existing TFMs exhibit different latent-space dynamics and redundancy compared to LLMs (Balef et al., 2026). 
+
+Contributions. We propose LoopICL , to the best of our knowledge, the first recurrent Transformer architecture demonstrated at scale for tabular ICL, combining parameter sharing with iterative com-putation. At its core is a single transformer block that contains a cell stream capturing per-cell feature representations and a row stream capturing in-context example representations, which is re-peatedly applied to refine internal representations. A novel distributional conditioning on the input tokens stabilizes training and further improves predictive performance. On standard benchmarks, our model pushed the Pareto front of the accuracy–parameter trade-off, matching or exceeding the performance of 9-times larger TFMs (e.g., TabICLv2 ). To understand the behavior and capabilities of LoopICL , we conduct a detailed empirical analysis addressing the following research questions. 
+
+(RQ1) Can a single looped Transformer block match or exceed the predictive performance of the respective fixed-depth TFM? We first establish recurrent models as a novel and competitive alternative for solving predictive tabular tasks. 
+
+(RQ2) How does LoopICL refine its representations across recurrent steps? We show that ex-plicit residual scaling enables smooth refinement and extrapolation to high loop counts, and implic-itly learned scaling enables the model to exit early at the minimum loops needed. 
+
+(RQ3) How does LoopICL ’s performance compare to substantially larger, fixed-depth frontier TFMs? Finally, we position our contribution in the context of the cost-efficiency of frontier TFMs. 
+
+2 RELATED WORK AND BACKGROUND 
+
+LoopICL connects three lines of prior work. First, as a tabular foundation model (TFM), it builds on transformer architectures for ICL on tabular data. Second, its recurrent design relates to looped and weight-tied Transformers, which replace independently parameterized layers with repeated applica-tions of the same block. Third, we study the behavior and scaling of recurrent computation, where 2varying the number of recurrent iterations provides an inference-time compute budget, connecting 
+
+LoopICL to adaptive computation and compute-efficient inference. 
+
+Related TFM Architectures. TFMs are pretrained Transformer-based models that leverage ICL for predictive tabular tasks. Given a set of labeled examples as context, the models predict labels for new examples directly from these examples, without requiring task-specific parameter updates (M¨ uller et al., 2022). TabPFN (Hollmann et al., 2023) pioneered this paradigm using a vanilla encoder-only architecture. Building on this design, TabSwift (Liu & Ye, 2026) added gated attention for built-in support for Early Exit (EE). In 2025, Hollmann et al. (2025) introduced TabPFNv2 , which use 2D-attention transformers (Kossen et al., 2021) applying attention along the row and column axes. 
+
+TabICL (Qu et al., 2024) uses dedicated compression stage, followed by an encoder-only transformer to scale to larger contexts. TabICL v2 (Qu et al., 2026) further introduces query-aware scalable softmax attention for better generalization to larger datasets, an architecture subsequently adopted and improved by TabPFN-3 (Grinsztajn et al., 2026). 
+
+EXAONE (Eo et al., 2026) introduces feature-summary and item-summary tokens, achieving state-of-the-art performance. 
+
+Recurrent tabular models. The idea of iterative refinement in tabular prediction dates back to classical ensemble methods such as gradient boosting (Friedman, 2001) successively fitting weak learners to the residuals of previous rounds. Their strong performance on tabular benchmarks (Grinsztajn et al., 2022; McElfresh et al., 2023) provides evidence that this mechanism is well suited for tabular tasks. Also deep learning methods have explored iterative computation through recurrent and state-space architectures. Mambular (Thielmann et al., 2024) and the SSM-based TFM of Koch et al. (2025) use state-space models for tabular prediction, while Padayachy et al. (2026) applies the Tiny Recursive Model (Jolicoeur-Martineau, 2025) to insurance pricing and Komisarczyk et al. (2026) proposes a hybrid attention–state-space architecture. These works show that iterative computation can serve as the main principle for tabular tasks, further reinforced by the observation that even fixed-depth TFMs develop an inductive bias toward iterative refinement (Balef et al., 2026). 
+
+Recurrent Transformers. Recurrent Transformers repeatedly apply shared blocks to intermedi-ate representations, increasing computational depth without increasing the number of parameters (Mostafa et al., 2019). Saunshi et al. (2025) show that looped models can achieve strong reason-ing performance with substantially fewer parameters and exhibit an inductive bias toward reasoning rather than memorization. Similarly, Yang et al. (2024) demonstrate that weight sharing across iterations enables to efficiently emulate iterative learning algorithms. Fixed-Point Reasoners interpret the process as convergence toward a stable representation and use convergence-based halting to allocate computation adaptively (Movahedi et al., 2026). Similar ideas have also been explored in visual generation (Goyal et al., 2026) and audio processing (Kaloga et al., 2026). In the tabular domain, Balef et al. (2026) provide a small-scale proof of concept for using recurrence to iteratively refine latent representations. Collectively, these studies establish recurrence as a mechanism for increasing effective computation while maintaining parameter efficiency, how-ever, it remains unclear how to scale computation to achieve competitive performance with large contexts. 
+
+Understanding recurrent Transformers. Several works suggest that recurrent computation pro-gressively refines and stabilizes representations across iterations (Movahedi et al., 2026; Blayney et al., 2026), while the training-time distribution of recurrent steps shapes representation quality and generalization to unseen depths (Geiping et al., 2026). Mechanistically, Blayney et al. (2026) find the same recurrent block can perform different stages of computation across iterations. This suggests that each iteration can progressively carry out a different part of the overall computation, even though the same block is reused. In the tabular domain, Balef et al. (2026) similarly observe transitions in representations across TFM layers, suggesting distinct stages of computation. How-ever, how representations evolve under recurrent computation in tabular ICL remains unexplored. We therefore investigate the dynamics of LoopICL across recurrent steps. 
+
+Adaptive computation. Recurrence has traditionally been used to model sequential dependencies in recurrent neural networks (Elman, 1990), but it has also been recognized as a mechanism for adaptive computation (Graves, 2016) and for introducing recurrent depth into Transformers (Mostafa 3et al., 2019). Adaptive computation can be monitored via representation stability (Movahedi et al., 2026) or prediction convergence (Geiping et al., 2026). Dedicated prediction heads can determine when to halt computation (Zhu et al., 2025). More recently, Jeddi et al. (2026) showed that adaptive-computation strategies can be fragile when applied to looped Transformers and proposed budget-conditioned reasoning, where the user specifies the computational budget at inference time. K¨ uken et al. (2025) propose an early-exit strategy for TFMs that use an entropy threshold as a proxy metric to exit the forward pass. More recently, Liu & Ye (2026) proposed a per-query early-exit inference method, in which each query is processed independently, and the exit decision is made on a per-query basis. Their ap-proach attaches lightweight prediction and exit heads to a subset of Transformer layers, enabling intermediate predictions and input-dependent stopping decisions. 
+
+3 ARCHITECTURE 
+
+Figure 1 (Left) shows an overview of the architecture; below, we highlight the key architectural innovations and components going through input encoding, residual scaling, and output decoding, while Appendix A provides full architectural details. 
+
+Distributional Input Encoding. Raw features are standardized per column and encoded via cyclic feature grouping into E-dimensional cell embeddings (Qu et al., 2026). We inject class labels via an orthogonally initialized embedding matrix (Grinsztajn et al., 2026) and re-inject them at each recurrent step. Before the recurrent loop, we additionally introduce distributional encoding ,which uses three complementary distribution-aware signals: marginal histograms , discriminative histograms , and Fourier quantile encodings . These histogram-based signals capture marginal and class-discriminative feature distributions, while Fourier quantile encodings capture relative feature rankings and provide information about potential out-of-distribution test samples. 
+
+Recurrent Block. LoopICL processes data through two asymmetrically coupled streams: a cell stream of individual cell representations, RR×C×E , and a compact row stream , RR×D , with E =128 and D = 4 E. This separation preserves fine-grained feature interactions while enabling efficient row-wise ICL, as relying solely on compressed row representations can lead to information loss (Eo et al., 2026). At each recurrent iteration, the cell stream first models local feature interactions and is then read out into the row stream. The row representations are refined through in-context attention, while the updated cell stream is retained and reused in the next iteration. More specifically, each iteration applies a single shared axial block: within-column self-attention operates independently on each column, while cross-column self-attention with RoPE positional encodings operates across each row (Su et al., 2024). The cross-column self-attention updates the cell stream, followed by a CLS-based readout into the row stream, which is then updated by causally masked ICL attention. All sub-blocks use sandwich normalization (pre- and post-RMSNorm) (Ding et al., 2021). 
+
+Residual Scaling. Since LoopICL applies the same block for L ∈ N+ iterations, residual scaling can improve training stability by controlling the accumulation of updates (Wang et al., 2026; Movahedi et al., 2026). After each iteration, given the block output ˜x, it constrains the update with alpha: 
+
+x ← x + α(˜ x − x), (1) where α ∈ (0 , 1] is a configurable scaling factor, comparable to the step size in an optimization procedure; α = 1 means no scaling, and smaller values reduce the magnitude of each update, pre-venting the residual stream from diverging as L increases. A fixed α may not generalize across highly varying L values and encourages the model to greedily front-load computation into early iterations and actively suppress updates in later iterations. Alternatively, a depth-normalized scaling scheme that sets α as a function of a pre-defined loop depth L encourages the model to spread com-putation uniformly across the given budget. To observe the impact of this in practice, we empirically study three variants ranging from no decay to linear depth normalization: α ∈ { 1, 1/√L, 1/L}.
+
+Decoder. Following Grinsztajn et al. (2026), we use an attention-based retrieval decoder that is target-permutation equivariant (Arbel et al., 2026). The normalized row-stream representations of test examples serve as queries and those of training examples serve as keys, with attention scores accumulated separately per class via one-hot label weighting (Koshil et al., 2025). We then average 4the resulting per-class attention masses across heads to produce class probabilities. Additionally, we introduce an early-exit gate that predicts whether further iterations are likely to improve perfor-mance. A compact MLP uses only training-set representations, combining the current state, its rate of change, the iteration index, and dataset size to produce an exit probability λ ∈ (0 , 100) .1 Further details are provided in Appendix A.4. At test time, we use an ensemble of N =8 members, each receiving a differently transformed view of the data (permuted feature order, shuffled class labels, varied preprocessing); predictions are averaged across members. The early-exit gate operates independently per member, so each member may exit at a different loop step. Full ensemble details are provided in Appendix B. 3.1 PRETRAINING 
+
+We pretrain LoopICL in two stages on synthetic tasks generated from the TabICLv2 graph-based SCM prior (Qu et al., 2026). Here, we summarize the key settings, full details are in Appendix C. 
+
+Recurrent loop schedule. The number of recurrent iterations for each training step is sam-pled from a log-normal Poisson distribution (Geiping et al., 2026) to improve depth general-ization and performance retention (Schwarzschild et al., 2021; Yang et al., 2026). We sample 
+
+γ ∼ LogNormal( μ, 0.52) and L ∼ 1 + Poisson( γ), with L clipped to [1 , 8] . We choose μ such that 
+
+E[L] = 6 before clipping, meaning the model learns on average from 5.32 loops during pretraining (Figure 2). 2 4 6 8 10 12 14 16 18 20    
+
+> Number of loops L
+> 0.00 0.02 0.04 0.06 0.08 0.10 0.12
+> Density
+> Clipping point Lmax = 8 mean (raw) = 6.00 mean (clip) = 5.32 median (raw) = 5 median (clip) = 5
+
+Figure 2: The number of re-current iterations L is sam-pled from a log-normal Pois-son distribution during pre-training. Prior work optimizes the expected loss across recurrent depths (Zhu et al., 2025; Geiping et al., 2026). In contrast, we compute the cross-entropy loss only at the final iteration, training the model to achieve peak performance at the given L. Since our residual scal-ing in LoopICL depends on the number of iterations, this objective explicitly trains the model to use all iterations effectively. 
+
+Stage 1: Pretraining (500K steps). We train for 500 ,000 steps with batch size 64 on datasets containing 2-100 features, up to 10 classes, and up to 1,024 rows. Train/test split ratios are uniformly sampled from [0 .3, 0.9] . We use full backpropagation through all recurrent iterations. Optimization uses Muon (Jordan et al., 2024) with learning rate 8×10 −4 and momentum 0.9. We use a 5,000 -step warmup followed by cosine decay over the final 10% of training, gradient clipping at 1.0, weight decay 0.01. 
+
+Stage 2: Long-context continued pretraining (30K steps). We continue training for 30 ,000 steps on larger synthetic tasks with 1–2,000 features and up to 100 ,000 rows, subject to a feature ×row budget of 10 6. We use truncated backpropagation through time (TBPTT) (Geng et al., 2021) with a window of k = 5 , propagating gradients only through the final five loops and detaching earlier ac-tivations. This reduces memory and computation while preserving parameter sharing across loops, allowing us to pretrain with a larger number of loops than would be feasible with full backpropa-gation under our GPU memory constraints. We use a learning rate of 10 −4 and 400 warmup steps, with all other optimization settings kept the same as in Stage 1. 
+
+Stage 3: Early-exit gate (4K steps). Starting from the Stage 2 checkpoint, we freeze the backbone and train the early-exit gate for 4,000 steps with the same setting as Stage 2. The gate is trained on per-loop prediction losses: it continues if future iterations improve the loss and exits otherwise. The gate uses only training embeddings and makes its decision based on the training samples, with-out using information from the test set. When the gate probability exceeds a threshold λ, the re-current loop terminates, and the decoder is then run to obtain predictions. Notably, we train the early-exit gate with a maximum of 16 loops, which is twice the pretraining limit. 
+
+> 1
+
+Query-based early exit, as widely used in LLMs, may no directly transfer to TFMs. Unlike autoregressive LLMs, TFMs process all context elements in a single forward pass. Even if confident predictions are available for some query points, looping continues till all query points can be predicted. Consequently, we base our early-exit decision on the embeddings of the training samples and exit once iterative refinement converges. 
+
+5Training Stability 0 25 50 75 100  
+
+> Training step (k)
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Gradient norm
+
+Development set 0 20 40 60 80 100  
+
+> Training step (k)
+> 0.22 0.24 0.26 0.28 0.30
+> Min-Max Norm. Log-Loss
+
+Synthetic priors 25 50 75 100        
+
+> Training step (k)
+> 0.15 0.20 0.25 0.30 0.35 0.40
+> Min-Max Norm. Log-Loss LoopICL ( = 1 )
+> (6 loops) LoopICL ( =1
+> L)
+> (6 loops) Stacked blocks (6 layers) LoopICL w/o dist. conditioning (6 loops) LoopICL ( =1
+> L)
+> (6 loops) TabICLv2 TabPFN-3
+
+Figure 3: Ablation study. Training stability (gradient norm) and predictive performance (normal-ized log loss averaged across tasks) of recurrent and non-recurrent model variants. 
+
+4 EXPERIMENTS 
+
+In this section, we first conduct a series of ablation studies on LoopICL at computationally feasible intermediate pre-training checkpoints and investigate the model’s performance across different lay-ers and computational budgets (extensive results are in Appendix D). Finally, we evaluate LoopICL 
+
+on TabArena and TALENT benchmarks and compare its performance against state-of-the-art models. 4.1 (RQ1) C AN A SINGLE LOOPED TRANSFORMER BLOCK MATCH OR EXCEED THE PREDICTIVE PERFORMANCE OF THE RESPECTIVE FIXED -DEPTH TFM? 
+
+Setup. We evaluate checkpoints from Stage 1 ( 100 K steps). We study classification performance averaged across 1,000 synthetic tasks sampled from the prior and across 10 folds of the 54 develop-ment set used in TabICLv2 and TabPFNv2 (Hollmann et al., 2025) , without any ensembling. We use up to 2,048 rows per dataset to match the pretraining regime, following (Qu et al., 2026). We compare a fixed-depth TFM comprising six Stacked blocks ( ), matching the approximately 
+
+E[L] = 5 .21 loops used during pretraining. As recurrent baselines, we consider LoopICL with 
+
+L = 6 with different residual scaling schedules α ∈ { 1, 1/L, 1/√L}. Additionally, we evaluate a variant without distributional input encoding ( w/o dist. conditioning ; ). 
+
+Pretraining stability. The left panel of Figure 3 compares the gradient norms as a proxy to training stability. Comparing the stacked blocks and the recurrent model , we observe that recurrent models are more challenging to train, exhibiting generally larger gradient norms. More interestingly, comparing the and curves shows that our distributional encoding not only reduces gradient norm and, thus, improves training stability, but also achieves a better predictive performance across both synthetic priors and the development set .
+
+Finding 1. Recurrence makes optimization challenging due to greater gradient instability. 
+
+Finding 2. Distributional conditioning increases training stability and predictive performance. 
+
+Performance. The middle and right panel of Figure 3 compares the stacked ( ) with recurrent variants ( , , ) on synthetic prior and development set tasks. On the synthetic priors tasks, the stacked model achieves lower in-distribution loss, potentially reflecting its larger parameter count and greater capacity. 2 In contrast, the recurrent variants achieve lower loss on the development set 
+
+tasks, indicating better generalization to unseen tasks. We also observe stronger generalization to large context sizes for our recurrent models (see Appendix D.1) 
+
+Residual Scaling. Finally, we compare different residual scaling strategies and revisit Figure 3. Overall, residual scaling has only a minor effect on the gradient norms; however, although we use a fixed L, performance on the development set tasks varies. This raises the question of how residual scaling impacts stability during looping, which we study next. 
+
+> 2
+
+We note, that the fixed-depth may require additional training to undergo grokking to transition from mem-orization to generalization. 
+
+64.2 (RQ2) H OW DOES LoopICL REFINE ITS REPRESENTATIONS ACROSS RECURRENT STEPS ?The most intriguing ability of looped models is that we can increase computational depth at inference time. Residual scaling can be used to controls this ability. Thus, we study how different scaling schemes impact generalization performance and internal representations during refinement. 
+
+Setup. We continue pretraining for our looped models with different values of α for 10 ,000 more steps in the Stage 2 setting to enable longer-context processing. We use all available samples in the 
+
+development set tasks and use the setup from the previous experiment otherwise. 1 4 8 12                 
+
+> Loop step
+> 0.250 0.275 0.300 0.325 0.350 0.375 0.400
+> Normalised log-loss (lower is better) 14812 16 20
+> Number of loops
+> 0.270 0.275 0.280 0.285 0.290 0.295 0.300 6812 16 20
+> Number of loops
+> 40 45 50 55 60 65
+> Win rate vs loop 6 (%) LoopICL ( = 1 )
+> LoopICL ( =1
+> L)
+> LoopICL ( =1
+> L)
+> Pretraining limit
+
+Figure 4: Residual scaling improves extrapolation. Left: per-iteration norm. log loss for L = 12 .Middle: norm. log loss for L ∈ [1 , 20] . Right: win rate relative to performance at L = 6 , for L ≥ 6.
+
+Impact on performance. We first study how performance evolves during looping and evaluate predictions at each loop step up to L = 12 (see Figure 4). Aggressive fixed residual scaling ( α = 1 , ) leads to slower improvements in performance, how-ever, adaptive scaling ( α = 1/√L, ) may achieve better performance at a higher loop count. This suggests that, in settings such as early exit, ( α = 1 , ) may be a preferable choice, as it can achieve stronger performance at earlier loop steps. In the middle and right panel of Figure 4, we compare performance across increasing values for L.3
+
+(α = 1 , ) performs best within the range of loop counts sampled during pretraining, but degrades with high loop counts. In contrast, adaptive residual scaling using ( α = 1/L, ) steadily improves performance with more loops even extrapolates beyond the pre-training limit. However, as the scaling factor depends on the number of loops which, in practice, must be deter-mined in advance. With a fixed scaling α = 1 , L does not need to be set in advance and the model can exit anytime. 
+
+Finding 3. Residual scaling enables stable extrapolation to loop counts beyond pretraining. 6 12 18 24 30 36                                 
+
+> Loop step
+> 10 1
+> Normalized Log-Loss
+> =1
+> L
+> 612 18 24 30 36
+> Loop step
+> =1
+> L
+> Scale denom. No scaling (= 1 )
+> L= 1
+> L= 3
+> L= 7
+> L= 10
+> L= 16
+> L= 20
+> L= 25 510 15 20 25 30 35
+> Loop step
+> = 1
+> 13710 16 20 25
+> Residual scaling denominator L
+> =1
+> L
+> 13710 16 20 25
+> Residual scaling denominator L
+> =1
+> L
+> 80th percentile Peak performance (color = task)
+
+Figure 5: Residual scaling ablation. Left: Performance across loop steps for different L and residual scaling schemes. Stars indicate the optimal loop step. Right: Optimal loop steps across datasets, showing dataset-dependent computation and the effect of L on budget allocation. 
+
+Impact on model behavior. Next, we characterize convergence behavior. For this we vary the value of L (impacting residual scaling) and report per-loop performance, including the best-observed performance, across 1-36 loops in the left panel of Figure 5. 
+
+> 3
+
+Note that for α = 1 the value of L does not change model behavior. 
+
+710 5 0 5 10 15                                                           
+
+> PC1 (29.5%)
+> 6
+> 4
+> 2
+> 02468
+> PC2 (18.4%)
+> Stacked blocks
+> i136i136i136i136i136i136i136i136i136i136
+> 12 205
+> PC2 (22.3%)
+> 10
+> 5
+> 0510
+> PC1 (27.3%)
+> = 1
+> i1369i1369 i1369i1369i1369i1369i1 369i1369i1369i13 69
+> 642024
+> PC1 (36.4%)
+> 4
+> 2
+> 02
+> PC2 (18.2%)
+> = 1/ L,L= 6
+> i1369i1369i1369i1369i1369i1369i136 9 i1369i13 69i1369
+> 7.5 5.0 2.5 0.0 2.5 5.0
+> PC1 (33.0%)
+> 4
+> 2
+> 02468
+> PC2 (13.4%)
+> = 1/ L,L= 6
+> i1369i1369i1369i1369i1369i1369i1369i1369i1369i1369
+> Class 0 Class 1 Init (iter. 0) Iter. 6 (resid. scaling) 10% 90% repeat spread Dataset : scene rl ionosphere heart-h wholesale-customers
+
+Figure 6: Latent representation trajectories. PCA of embeddings across loops for binary tasks. Residual scaling with α = 1/L induces structured and uniform progress toward separating classes. Overall, smaller values of L lead to faster convergence, i.e. the best iteration, while increasing the number of iterations can cause performance divergence. Interestingly, for α = 1/√L and L = 1 , we observe substantial fluctuations in performance. This behavior is reminiscent of the oscillatory or non-convergent dynamics that can arise in iterative fixed-point methods, which have recently been studied in the context of looped Transformers (Movahedi et al., 2026). As L increases, convergence becomes slower, while the region of near-optimal performance (error ≤ 0.001 ) gets broader. Also, we note that the best iteration not necessarily coincides with L, highlighting a possibility for further tuning. The right panel of Figure 5 shows that the optimal number of loop steps is task-dependent. For the 
+
+α = 1 variant, on average, approximately half of the datasets converge within 8 loops, while the remaining datasets require more iterations. For α = 1/√L and α = 1/L the optimal loop count varies with L, indicating that the model adapts its computation to the given budget: the effective number of iterations required to reach near-optimal performance increases with L. In particular, α = 1/L
+
+provides an effective allocation as the optimal number of loop steps approximates L.
+
+Finding 4. With α = 1 , the model optimally scales updates across all loop steps within the pretraining range. Adaptive scaling using α = 1/L enables budget-aware computation, achiev-ing near-optimal performance around L loop steps, including beyond the pretraining range. 
+
+Internal representations. Finally, we analyze how the internal representations and performance evolve at each loop step (see Appendix D.2 for further details). Figure 6 shows the evolution of the embedding space across loop steps. We track internal embeddings for five binary classification tasks from the development set across L = 6 loops and visualize the first two PCA components. Starting from the right-most panels, α = 1/√L and α = 1/L exhibit a very structured and similar be-havior. PC2 primarily captures class separation across the datasets, while PC1 is strongly correlated with the loop step. The model continuously changes its internal state with more loops. Interestingly, for α = 1/L, the loop steps are encoded almost uniformly resulting in linear trajectories, suggesting that α = 1
+
+L induces a controlled iterative refinement. For α = 1 PC1 ( 27 .3% explained variance) also captures class separation, however, the evolvement of representation through PC2 is less systematic, suggesting that the representations quickly organize according to the target classes. The left panel shows the fixed-depth model as a reference (more details in Appendix D.3). 
+
+Finding 5. α = 1/L yields more stable and uniform encoding of loop steps, leading to smoother latent representation trajectories and more consistent iterative refinement. 4.3 (RQ3) H OW DOES LoopICL ’S PERFORMANCE COMPARE TO SUBSTANTIALLY LARGER ,
+
+FIXED -DEPTH FRONTIER TFM S?Finally, we study performance on TabArena (Erickson et al., 2025) and TALENT (Liu et al., 2025). We compare against state-of-the-art TFMs and report improvability vs. inference costs in Figure 7 (detailed results are in Appendix D.4). We evaluate LoopICL using an ensemble of 8 members. We choose α = 1 to apply our early exit gate to showcase both ways to control the performance-cost 8TabArena 10 0 10 1 10 2 
+
+> Total time (s, log scale)
+> 0.05 0.10 0.15 0.20 0.25
+> Improvability  (lower is better)
+> Default LoopICL LoopICL-EE Pareto front
+
+TALENT 10 1 10 2
+
+> Total time (s, log scale)
+> 0.05 0.10 0.15 0.20 0.25 0.30 0.35 0.40
+> Improvability  (lower is better)
+> Default LoopICL LoopICL-EE Pareto front
+
+Figure 7: Improvability (lower is better) measures the relative error gap to the best method, averaged across datasets. Time is training + inference. For TALENT , all models are evaluated on an A100 GPU under identical conditions, enabling a direct runtime comparison. For TabArena , competitor runtimes are taken from the published benchmark and may reflect different hardware; these results should not be used for direct runtime comparisons of LoopICL with other baselines. tradeoff: by fixing the number of loops L we define the compute budget to be used and with the early-exit threshold λ > 0 we specify a confidence threshold required to justify another loop. Specifying L, the performance of LoopICL improves with more loops, peaking at around L = 12 
+
+loop steps, competitive with TabICLv2 . TabICLv2 uses 12 ICL blocks and hidden dimensions of the same size as LoopICL , thus, the dominant FLOPs cost is the same (runtime measurements might differ due to different hardware (see caption of Figure 7); LoopICL incurs only a minor overhead from additional cheap row-interaction and set-transformer iterations. Notably, LoopICL achieves this at 88 .2% fewer parameters. More importantly, these results demonstrate that our model robustly extrapolates beyond its pre-training limit on real-world tasks and operates effectively at roughly twice the average number of loop steps observed during pretraining. Results using the early-exit gate ( LoopICL -EE) confirm this as a reliable alternative to relying on a pre-defined, fixed number of loop steps. The left panel in Figure 8 reports the median speedup relative to the 16-loop baseline (i.e., early exit disabled, 8 ensemble members each running 16 loops), which serves as the upper bound on the number of loops executed. As λ increases, the model exits more conservatively, yielding better performance at the cost of lower speedup. At λ=90 we observe both a speedup and a win-rate gain over the 16-loop baseline on both benchmarks. The center and right panels in Figure 8 compare λ=90 against the best-performing fixed-loop con-figuration (12 loops). On TabArena , EE is faster on 33 out of 38 datasets, and 12 out of 38 datasets gain both speed and accuracy simultaneously. Some datasets do incur a performance loss, though the maximum relative error increase remains within 6% . On TALENT , we observe higher overall speedup and win rate; however, the magnitude of both gains and losses is larger, with maximum relative error gains and losses reaching approximately 10% and 20% , respectively. 
+
+5 CONCLUSION 
+
+Our results revisit the central question: does tabular ICL require more parameters , or simply more computation ? LoopICL suggests the latter. A single shared block, applied recurrently, matches substantially larger fixed-depth TFMs on TabArena and TALENT . This also provides evidence that tabular foundation models may rely more on learning iterative task-solving algorithms than on mem-orizing and recalling knowledge, as is common in language models. Across RQ1–RQ3, we find that weight sharing improves generalization, recurrent computation enables stable iterative refinement even beyond the pretraining depth, and the number of loops can adapt to dataset difficulty at infer-ence time. These results suggest that some benefits of model scaling may arise from increased 
+
+9=30 =50 =70 =90 
+
+> Early-exit threshold
+> 1.0 1.2 1.4 1.6 1.8 2.0 Speedup  (time 16 L / time EE )
+> 1.89× 18.4% 1.71× 39.5% 1.52× 44.7% 1.35× 60.5% 2.09× 33.0% 1.84× 40.5% 1.68× 54.5% 1.46× 60.5%
+> TabArena TALENT 1× (no speedup)
+> 0% 25% 50% 75% 100%
+> Win rate vs LoopICL-16L
+
+TabArena 0.8 1.0 1.2 1.4 1.6      
+
+> Speedup (time 12 L/ time EE )
+> 0.06
+> 0.05
+> 0.04
+> 0.03
+> 0.02
+> 0.01
+> 0.00 0.01
+> Relative error reduction
+> (e12 L eEE ) / | e12 L|
+> Median speedup: 1.14× Faster: 33/38 |Better: 12/38
+> Faster & better Faster worse perf Slower better perf Slower & worse
+
+TALENT 0.75 1.00 1.25 1.50 1.75     
+
+> Speedup (time 12 L/ time EE )
+> 0.20
+> 0.15
+> 0.10
+> 0.05
+> 0.00 0.05 0.10
+> Relative error reduction
+> (e12 L eEE ) / | e12 L|
+> Faster & better Faster worse perf Slower better perf Slower & worse
+> Median speedup: 1.20× Faster: 183/184 |Better: 82/184
+
+Figure 8: Left: Median speedup of LoopICL -EE over the full 16-loop baseline across different λ;color indicates the fraction of datasets where EE wins. Center / Right: Per-dataset speedup vs. relative error reduction for λ=90 on TabArena and TALENT , compared to the 12-loop baseline (the best-performing fixed-loop configuration). Each point is one dataset; x > 1 means EE is faster, 
+
+y > 0 means EE is more accurate. Points in the green quadrant achieve both simultaneously. 
+
+computational depth rather than parameter count, motivating a simple alternative: instead of growing the parameter budget, grow the loop budget. Limitations and future directions. The current model supports classification tasks; extending it to regression tasks is left for future work. Future work should scale LoopICL in both model size and the number of recurrent iterations, for example by repeating N layers rather than a single layer. Studying scaling laws for tabular foundation models is another promising direction. Finally, inspired by low-rank structure observed in KV caching across iterations in looped language models (Vendrell et al., 2026; Neill & Reid, 2026), it would be interesting to investigate whether similar structure exists in the tabular domain and can be exploited for more efficient inference. IMPLEMENTATION CODE 
+
+The implementation code is available at https://github.com/amirbalef/loopicl .ACKNOWLEDGMENTS 
+
+This research has been funded by the Federal Ministry of Research, Technology and Space of Ger-many and the state of North Rhine-Westphalia as part of the Lamarr Institute for Machine Learning and Artificial Intelligence. Additionally, A. Balef thanks the International Max Planck Research School for Intelligent Systems (IMPRS-IS). 
+
+REFERENCES 
+
+Michael Arbel, David Salinas, and Frank Hutter. EquitabPFN: A target-permutation equivariant prior fitted network. Advances in Neural Information Processing Systems , 38:62586–62609, 2026. Thomas Bachlechner, Bodhisattwa Prasad Majumder, Henry Mao, Gary Cottrell, and Julian McAuley. Rezero is all you need: Fast convergence at large depth. In Uncertainty in artificial intelligence , pp. 1352–1361. PMLR, 2021. Amir Rezaei Balef, Mykhailo Koshil, and Katharina Eggensperger. Is one layer enough? under-standing inference dynamics in tabular foundation models. In Forty-third International Confer-ence on Machine Learning , Proceedings of Machine Learning Research. PMLR, 2026. Hugh Blayney, ´Alvaro Arroyo, Johan Obando-Ceron, Pablo Samuel Castro, Aaron Courville, Michael M Bronstein, and Xiaowen Dong. A mechanistic analysis of looped reasoning language models. arXiv preprint arXiv:2604.11791 , 2026. Ming Ding, Zhuoyi Yang, Wenyi Hong, Wendi Zheng, Chang Zhou, Da Yin, Junyang Lin, Xu Zou, Zhou Shao, Hongxia Yang, et al. Cogview: Mastering text-to-image generation via transformers. 
+
+Advances in neural information processing systems , 34:19822–19835, 2021. 10 Jeffrey L Elman. Finding structure in time. Cognitive science , 14(2):179–211, 1990. Moonjung Eo, Min-Kook Suh, Hye-Seung Cho, Jiwon Kim, Seoyoon Kim, Sangjun Nam, and Soonyoung Lee. Exaone tabular 1.0 : Technical report. arXiv preprint arXiv:2608.25774 , 2026. N. Erickson, L. Purucker, A. Tschalzev, D. Holzm¨ uller, P. M. Desai, D. Salinas, and F. Hutter. TabArena: A living benchmark for machine learning on tabular data. In Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks . Curran Associates, 2025. Ying Fan, Yilun Du, Kannan Ramchandran, and Kangwook Lee. Looped transformers for length generalization. In International Conference on Learning Representations , volume 2025, pp. 14502–14520, 2025. J. Friedman. Greedy function approximation: A gradient boosting machine. Annals of Statistics ,pp. 1189–1232, 2001. Jonas Geiping, Sean McLeish, Neel Jain, John Kirchenbauer, Siddharth Singh, Brian Bartoldson, Bhavya Kailkhura, Abhinav Bhatele, and Tom Goldstein. Scaling up test-time compute with latent reasoning: A recurrent depth approach. Advances in Neural Information Processing Systems , 38: 41340–41391, 2026. Zhengyang Geng, Xin-Yu Zhang, Shaojie Bai, Yisen Wang, and Zhouchen Lin. On training implicit models. Advances in neural information processing systems , 34:24247–24260, 2021. Sahil Goyal, Swayam Agrawal, Gautham Govind Anil, Prateek Jain, Sujoy Paul, and Aditya Kusu-pati. Elt: Elastic looped transformers for visual generation. arXiv preprint arXiv:2604.09168 ,2026. Alex Graves. Adaptive computation time for recurrent neural networks. arXiv preprint arXiv:1603.08983 , 2016. L. Grinsztajn, E. Oyallon, and G. Varoquaux. Why do tree-based models still outperform deep learning on typical tabular data? In S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh (eds.), Proceedings of the 35th International Conference on Advances in Neural Infor-mation Processing Systems (NeurIPS’22) . Curran Associates, 2022. L´ eo Grinsztajn, Klemens Fl¨ oge, Oscar Key, Felix Birkel, Philipp Jund, Brendan Roof, Mihir Ma-nium, Shi Bin Hoo, Magnus B¨ uhler, Anurag Garg, et al. TabPFN-3: Technical report. arXiv preprint arXiv:2605.13986 , 2026. Steffen Herbold. Autorank: A python package for automated ranking of classifiers. Journal of Open Source Software , 5(48):2173, 2020. doi: 10.21105/joss.02173. URL https://doi.org/10. 21105/joss.02173 .N. Hollmann, S. M¨ uller, K. Eggensperger, and F. Hutter. TabPFN: A transformer that solves small tabular classification problems in a second. In The Eleventh International Conference on Learning Representations (ICLR’23) . ICLR, 2023. N. Hollmann, S. M¨ uller, L. Purucker, A. Krishnakumar, M. K¨ orfer, Shi Bin Hoo, Robin Tibor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular foundation model. Nature , 637(8045):319–326, 2025. Ahmadreza Jeddi, Marco Ciccone, and Babak Taati. Loopformer: Elastic-depth looped trans-formers for latent reasoning via shortcut modulation. In The Fourteenth International Confer-ence on Learning Representations , 2026. URL https://openreview.net/forum?id= RzYXb5YWBs .Alexia Jolicoeur-Martineau. Less is more: Recursive reasoning with tiny networks. arXiv preprint arXiv:2510.04871 , 2025. Keller Jordan, Yuchen Jin, Vlado Boza, Jiacheng You, Franz Cesista, Laker Newhouse, and Jeremy Bernstein. Muon: An optimizer for hidden layers in neural networks, 2024. URL https://kellerjordan. github. io/posts/muon , 6(3):4, 2024. 11 Yacouba Kaloga, Shashi Kumar, Shakeel A Sheikh, Driss Khalil, Petr Motlicek, and Ina Kodrasi. Test-time compute scaling for asr with depth-conditioned looped transformers. arXiv preprint arXiv:2606.04678 , 2026. Felix Koch, Marcel Wever, Fabian Raisch, and Benjamin Tischler. State-space models for tabular prior-data fitted networks. arXiv preprint arXiv:2510.14573 , 2025. Mieszko Komisarczyk, Saurabh Mathur, Maurice Kraus, Sriraam Natarajan, and Kristian Kersting. Tydra: An efficient hybrid model for tabular data. arXiv preprint arXiv:2608.21199 , 2026. Mykhailo Koshil, Matthias Feurer, and Katharina Eggensperger. In-context learning of soft nearest neighbor classifiers for intelligible tabular machine learning. In Proceedings of the 4th Table Representation Learning Workshop , pp. 182–191, 2025. Mykhailo Koshil, Matthias Feurer, and Katharina Eggensperger. Tacticl: Task-aware compression of tabular icl models. arXiv preprint arXiv:2608.10837 , 2026. Jannik Kossen, Neil Band, Clare Lyle, Aidan N Gomez, Thomas Rainforth, and Yarin Gal. Self-attention between datapoints: Going beyond individual input-output pairs in deep learning. Ad-vances in Neural Information Processing Systems , 34:28742–28756, 2021. J. K¨ uken, L. Purucker, and F. Hutter. Early stopping tabular in-context learning. In 1st International Workshop on Foundation Models for Structured Data (FMSD) @ ICML 2025 , 2025. Jonas Landsgesell, Pascal Knoll, and Tizian Wenzel. Scoringbench: A benchmark for evaluating tabular foundation models with proper scoring rules. arXiv preprint arXiv:2603.29928 , 2026. Si-Yang Liu and Han-Jia Ye. TabSwift: An efficient tabular foundation model with row-wise at-tention. In Forty-third International Conference on Machine Learning , Proceedings of Machine Learning Research. PMLR, 2026. Si-Yang Liu, Hao-Run Cai, Qi-Le Zhou, Huai-Hong Yin, Tao Zhou, Jun-Peng Jiang, and Han-Jia Ye. Talent: A tabular analytics and learning toolbox. Journal of Machine Learning Research , 26 (226):1–16, 2025. D. McElfresh, S. Khandagale, J. Valverde, V. Prasad C, G. Ramakrishnan, M. Goldblum, and C. White. When do neural nets outperform boosted trees on tabular data? In A. Oh, T. Nau-mann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (eds.), Proceedings of the 36th Inter-national Conference on Advances in Neural Information Processing Systems (NeurIPS’23) , pp. 76336–76369. Curran Associates, 2023. John Xavier Morris, Chawin Sitawarin, Chuan Guo, Narine Kokhlikyan, G Edward Suh, Alexan-der M Rush, Kamalika Chaudhuri, and Saeed Mahloujifar. How much can language models memorize? In Forty-third International Conference on Machine Learning .D. Mostafa, G. Stephan, V. Oriol, J. Uszkoreit, and L. Kaiser. Universal Transformers. In The Seventh International Conference on Learning Representations (ICLR’19) . ICLR, 2019. Sajad Movahedi, Vera Milovanovi´ c, Shlomo Libo Feigin, Alexander Theus, Thomas Hofmann, Valentina Boeva, T Konstantin Rusch, and Antonio Orvieto. Fixed-point reasoners: Stable and adaptive deep looped transformers. arXiv preprint arXiv:2606.18206 , 2026. S. M¨ uller, N. Hollmann, S. Arango, J. Grabocka, and F. Hutter. Transformers can do Bayesian inference. In The Tenth International Conference on Learning Representations (ICLR’22) . ICLR, 2022. James O’ Neill and Fergal Reid. Looped latent attention: Cross-loop kv compression for looped transformers. arXiv preprint arXiv:2607.15456 , 2026. Kishan Padayachy, Ronald Richman, and Mario V W¨ uthrich. Tab-trm: Tiny recursive model for insurance pricing on tabular data. arXiv preprint arXiv:2601.07675 , 2026. Pascal Pfeiffer, Dmitry Gordeev, Mathias M¨ uller, Laura Fink, Joan Salv` a Soler, Mark Landry, Bran-den Murray, Marcos V Conde, and Sri Satish Ambati. Tabh2o: A unified foundation model for tabular prediction. arXiv preprint arXiv:2605.18383 , 2026. 12 J. Qu, D. Holzm¨ uller, G. Varoquaux, and M. Le Morvan. TabICL: A tabular foundation model for in-context learning on large data. In Proceedings of the 41st International Conference on Machine Learning (ICML’24) , volume 251 of Proceedings of Machine Learning Research . PMLR, 2024. Jingang Qu, David Holzm¨ uller, Ga¨ el Varoquaux, and Marine Le Morvan. Tabiclv2: A better, faster, scalable, and open tabular foundation model. arXiv preprint arXiv:2602.11139 , 2026. Google Research. Tabfm: A zero-shot foundation model for tab-ular data. 2026. URL https://research.google/blog/ introducing-tabfm-a-zero-shot-foundation-model-for-tabular-data/ .Nikunj Saunshi, Nishanth Dikkala, Zhiyuan Li, Sanjiv Kumar, and Sashank J Reddi. Reasoning with latent thoughts: On the power of looped transformers. In International Conference on Learning Representations , volume 2025, pp. 14855–14881, 2025. Avi Schwarzschild, Eitan Borgnia, Arjun Gupta, Furong Huang, Uzi Vishkin, Micah Goldblum, and Tom Goldstein. Can you learn an algorithm? generalizing from easy to hard problems with recurrent networks. Advances in Neural Information Processing Systems , 34:6695–6706, 2021. Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. Roformer: En-hanced transformer with rotary position embedding. Neurocomputing , 568:127063, 2024. Anton Frederik Thielmann, Manish Kumar, Christoph Weisser, Arik Reuter, Benjamin S¨ afken, and Soheila Samiee. Mambular: A sequential model for tabular deep learning. arXiv preprint arXiv:2408.06291 , 2024. Victor Conchello Vendrell, Arnau Padres Masdemont, Niccol` o Grillo, Jordi Ros-Giralt, Arash Be-hboodi, and Fabio Valerio Massoli. Memory-efficient looped transformer: Decoupling compute from memory in looped language models. arXiv preprint arXiv:2605.07721 , 2026. Shaowen Wang, Bingrui Li, Ge Zhang, Wenhao Huang, Shen Yan, and Jian Li. On the residual scaling of looped transformers: Stability and transferability. arXiv preprint arXiv:2606.18524 ,2026. Liu Yang, Kangwook Lee, Robert Nowak, and Dimitris Papailiopoulos. Looped transformers are better at learning learning algorithms. In International conference on learning representations ,volume 2024, pp. 42195–42214, 2024. Xiao-Wen Yang, Ziyu Han, Xi-Hua Zhang, Wen-Da Wei, Jie-Jing Shao, Lan-Zhe Guo, and Yu-Feng Li. Stabilizing recurrent dynamics for test-time scalable latent reasoning in looped language models. arXiv preprint arXiv:2605.26733 , 2026. Lvmin Zhang, Anyi Rao, and Maneesh Agrawala. Adding conditional control to text-to-image diffusion models. In 2023 IEEE/CVF International Conference on Computer Vision (ICCV) , pp. 3813–3824. IEEE, 2023. Rui-Jie Zhu, Zixuan Wang, Kai Hua, Tianyu Zhang, Ziniu Li, Haoran Que, Boyi Wei, Zixin Wen, Fan Yin, He Xing, et al. Scaling latent reasoning via looped language models. arXiv preprint arXiv:2510.25741 , 2025. 
+
+A ARCHITECTURE DETAILS 
+
+A.1 INPUT ENCODING 
+
+Raw features are standardized per column using training-row statistics, with missing values im-puted by the column mean. Following Qu et al. (2026), the model applies cyclic feature grouping :each feature is concatenated with its G−1 cyclically-shifted neighbors ( G=3 ), forming local feature groups projected to E-dimensional cell embeddings, yielding the initial cell stream RR×C×E .
+
+Label encoding. Training-row class labels are mapped through a trainable orthogonally-initialized embedding (Grinsztajn et al., 2026) and added to training-row cells. 
+
+Distribution conditioning. Three signals characterizing the training distribution are computed once and broadcast across all rows. 13 • Marginal histogram. Adaptive-quantile soft log-histograms (32 bins) with four distribu-tional moments are projected column-wise via a small MLP. • Discriminative histogram. For classification , per-class log-histogram residuals (class mi-nus marginal) are projected column-wise. • Fourier quantile encoder. The empirical rank of each cell within its column is Fourier-encoded (8 frequencies) with a binary OOD flag and projected per-cell. All conditioning MLPs have zero-initialized output layers, making them initially inactive (Bachlech-ner et al., 2021). This prevents untrained conditioning heads from disrupting the backbone during pretraining and protects pretrained representations during regression continued pretraining (Zhang et al., 2023). The conditioning pathways then gradually activate as their weights move away from zero, allowing the model to learn how strongly to rely on each signal. A.2 RECURRENT BLOCK 
+
+Each recurrent iteration applies a single shared axial block with weights tied across all L loops. 
+
+Axial here means the block alternates attention over rows (within each column) and attention over columns (within each row), avoiding the quadratic cost of full joint attention over all cells. For the 
+
+cell stream (RR×C×E ): 1. Label re-injection. Label embeddings are added to training-row cells via a zero-initialized projection. 2. Within-column attention. An Induced Set Attention Block (ISAB) (Qu et al., 2024) pro-cesses each column independently over rows using K=128 learned inducing points ( H=8 ,head dim 16). 3. Cross-column attention. Self-attention with RoPE (Su et al., 2024) processes each row over columns ( H=8 , head dim 16). A readout via cross-attention then projects cells into the row stream (RR×D ) using Cℓ=4 learned CLS tokens per row. The row stream is updated by a zero-initialized label injection followed by causally-masked ICL attention ( H=8 , head dim 64), allowing test rows to attend to training rows. All sub-blocks use sandwich normalization (pre- and post-RMSNorm) (Ding et al., 2021). Each attention block includes a query-conditioned softmax scaling layer (Qu et al., 2026) that rescales queries before the dot product: 
+
+q ← q · γ · δ, γ = 1 + f
+
+
+
+log nnref 
+
+
+
+, δ = 1 + tanh( g(q)) ,
+
+where γ is a per-head temperature correction, δ is a per-query modulation, and f , g are small zero-initialized MLPs. We introduce nref =512 to prevent unbounded output growth that can cause insta-bility at longer sequence lengths (Pfeiffer et al., 2026). A.3 OUTPUT HEAD 
+
+Inspired by Grinsztajn et al. (2026), an attention-based retrieval decoder (Arbel et al., 2026) accu-mulates per-class attention mass between test-row queries and training-row keys via one-hot label weighting (Koshil et al., 2025), averaged across heads to produce class log-probabilities. A.4 EARLY -E XIT GATE 
+
+After each recurrent iteration t, a lightweight gate decides whether to stop or continue. If it exits at step t, the decoder runs once at that step; earlier iterations only update the shared representa-tions. The gate has fewer than 20K ( 19 521 ) parameters and runs on pooled row embeddings, so its overhead is negligible. 
+
+Gate inputs. The gate takes a 43-dimensional feature vector ft formed by concatenating five sig-nals: 14 Signal Description Dim                  
+
+> ctCompressed mean state 8
+> ∆t=ct−ct−1Change since last loop 8
+> pe( t)Sinusoidal loop-depth encoding 16
+> [λt−1, λ t−2, λ t−3]Last three gate outputs 3
+> pe(log N)Sinusoidal dataset-size encoding 8Total 43
+
+The compressed state ct ∈ R8 is computed by passing each row embedding through a small MLP (512 → 32 → 8, ReLU, no bias) and averaging over rows. The change signal ∆t is near zero when representations have stabilised, providing a natural convergence cue. 
+
+Decision network. A two-layer MLP (43 → 64 → 1) with sigmoid output maps ft to an exit prob-ability: 
+
+λt = σ(MLP ϕ(ft)) ∈ (0 , 1) .
+
+The output layer is zero-initialised, so λ1 ≈ 0.5 at the start of training. 
+
+Inference-time exit rule. We accumulate a running exit probability 
+
+Ft = 1 −
+
+> t
+
+Y
+
+> s=1
+
+(1 − λs)
+
+and stop at the first loop t where Ft > q (default q = 0 .5), following Zhu et al. (2025). A per-sample variant exits each example independently once its Ft > q .
+
+Training. The backbone is frozen; only the gate is trained. The oracle label 
+
+wt = σ 50 ( It − 0.005) , It = Lt − min  
+
+> s>t
+
+Ls,
+
+encodes whether continuing past loop t reduces the loss. We train with weighted binary cross-entropy, upweighting steps where early exit causes large regret ( rt = ( Lt − min s Ls)+): 
+
+Lgate = 1
+
+T
+
+"T −1X
+
+> t=1
+
+(1 + rt) BCE( λt, 1 − wt) + BCE( λT , 1) 
+
+#
+
+.
+
+To discourage late exits we add a gap penalty Lgap = 0 .02 E[˜ g(¯ t − t∗)2], where ˜g(δ) = 2 δ for δ > 0
+
+and δ otherwise (late exits penalised twice as heavily). The total loss is L = Lgate + Lgap .A.5 PARAMETER COUNTS 
+
+Table 1 lists per-component parameter counts. In total, the model has ∼3.25 M parameters with 
+
+∼2.7M parameters in the recurrent block. 
+
+B INFERENCE DETAILS 
+
+Preprocessing. LoopICL applies a fixed preprocessing pipeline fitted on training rows and reap-plied consistently to test rows: 1. Feature encoding. Categorical columns are ordinal-encoded (unknown test categories →−1); numeric missing values are mean-imputed from training statistics. 2. Constant feature removal. Features with only one unique training value are dropped. 3. Z-score standardization. All features are standardized and clipped to [−100 , 100] .4. Outlier clipping. A two-stage z-score clipper (threshold 4.0) first identifies and removes outliers, re-estimates statistics on the cleaned data, then clips remaining values to ±4ˆ σ of the cleaned distribution. 15 Table 1: Parameter counts for LoopICL (E=128 , D=512 ).                 
+
+> Component Parameters
+> Input encoding
+> Cell embedding 512 Label encoder 1,280 Log-histogram conditioner 14,848 Discriminative histogram conditioner 14,592 Fourier quantile encoder 9,472 Init readout 131,712
+> Shared axial block (tied across Lloops)
+> Within-column attention (ISAB) 290,384 Cross-column attention 142,160 ICL transformer block 2,140,928 Auxiliary (label inject, CLS, norms) 83,456
+> Output
+> Output norm 512 Retrieval decoder 427,392
+> Total 3,257,248
+
+Ensemble inference. At test time, LoopICL runs N =8 ensemble members and aggregates their predictions. Each member receives a differently transformed view of the data, varied along three axes: • Feature order. Columns are permuted using Latin square patterns (Qu et al., 2026), ensur-ing each feature appears in a distinct input position across members with no two members sharing the same ordering. • Class permutation (classification). Training labels are shuffled using a balanced permu-tation strategy (Grinsztajn et al., 2026): all unique class orderings are enumerated, dedu-plicated, and distributed evenly across members, removing positional bias towards specific class indices. • Preprocessing. Members cycle through four distribution normalizations: none , Yeo-Johnson, quantile-to-N (0 , 1) , and robust IQR scaling, to increase diversity. A fingerprint feature—a per-row hash of the training context—is appended to each member’s feature matrix (Grinsztajn et al., 2026), providing a unique row identifier per member. For classification ,each member’s logits are converted to probabilities via softmax and the N probability vectors are averaged. 
+
+Many-class support. The model natively supports up to T =10 classes. For datasets with more than 10 classes, we apply a mixed-radix decomposition (Qu et al., 2026): each class c is encoded as a tuple of digits (d1, . . . , d L) in a mixed base, where each digit position dℓ ∈ { 0, . . . , b ℓ−1} defines a 
+
+bℓ-class sub-problem the model can solve natively. Each digit position is run independently through the full ensemble, producing per-digit class probabilities. Final class probabilities are obtained by multiplying the per-digit probabilities: P (c) ∝ Q 
+
+> ℓ
+
+P (dℓ=digit ℓ(c)) .
+
+C PRETRAINING DETAILS 
+
+Recurrent loop schedule. At each training step, the number of recurrent iterations L is sampled from a log-normal Poisson distribution (Geiping et al., 2026): γ ∼ LogNormal( μ, σ 2) with σ = 0 .5,then L ∼ Poisson( γ), clipped to [1 , 8] . The mean μ is chosen so that E[L] = 6 . This distribution concentrates mass near the default depth while maintaining a long tail, enabling generalization to more iterations at inference time (Schwarzschild et al., 2021). During training L is sampled from a log-normal Poisson distribution ( μ=5 , σ=0 .5, max 8); at inference L=6 with loop-residual scaling 
+
+α=γ/ (L√S).16 256 512 1024 2048 4096 8192 full stage 2 (full)        
+
+> Context size
+> 0.20 0.25 0.30 0.35 0.40 0.45
+> Min-Max Norm. Log-Loss
+> LoopICL ( = 1 )
+> (6 loops) LoopICL ( =1
+> L)
+> (6 loops) LoopICL ( =1
+> L)
+> (6 loops) Stacked blocks (6 layers) TabICLv2 TabPFN-3
+
+Figure 9: Length generalization. Recurrent models demonstrate stronger length generalization compared to the stacked model. 
+
+Stage 1: Pretraining. We train for 500,000 steps with a batch size of 64 on synthetic datasets generated by the TabICLv2 graph-based SCM prior (Qu et al., 2026). Each dataset contains 2–100 features, up to 10 classes, and up to 1,024 rows, with train/test split ratios uniformly sampled in 
+
+[0 .3, 0.9] . Full backpropagation through all recurrent iterations is used. We use the Muon optimizer (Jordan et al., 2024) (lr = 8 × 10 −4, momentum = 0 .9) with an AdamW fallback (lr = 3 × 10 −4,
+
+β = (0 .9, 0.95) ) for scalar and embedding parameters. A warmup-stable-decay (WSD) schedule applies a 5,000-step warmup followed by cosine decay over the final 10% of training. We use gradient clipping (norm = 1 .0), weight decay = 0 .01 , an exponential moving average (EMA) with decay = 0 .999 , and bfloat16 mixed precision. 
+
+Stage 2: Long-context fine-tuning. Starting from the Stage 1 checkpoint, we fine-tune for 30,000 steps on a larger-scale prior with 1–2,000 features and up to 100,000 rows (subject to a feature ×row budget of 10 6), enabling the model to handle datasets far beyond its Stage 1 training distribution. To make this computationally feasible, we use TBPTT (Geng et al., 2021) with a window of k =5: gradients are propagated only through the last 5 recurrent iterations, and earlier activations are detached. This reduces memory proportionally to k/L , allowing inference-time depth to far exceed training-time depth (Geiping et al., 2026). We use a reduced learning rate of 10 −4 with 400 warmup steps; all other optimizer settings are inherited from Stage 1. 
+
+Training compute. We train LoopICL on B300 GPUs. Stage 1 takes 18 GPU-days, Stage 2 takes 10 GPU-days, and training the early-exit gate takes 1 GPU-day. 
+
+D EXPERIMENT DETAILS 
+
+D.1 LENGTH GENERALIZATION 
+
+We also compare the ability of our models to scale with an increasing number of in-context ex-amples. As shown in Figure 9, the recurrent models scale slightly better than the stacked model, with the performance gap between the stacked ( ) and recurrent models ( , , ) widening as the context size increases. This effect is particularly pronounced for the recurrent model with 
+
+α = 1/L, consistent with the findings of (Fan et al., 2025), who show that looped Transformers with an adaptive number of steps can substantially improve length generalization. We further evaluate the models after long-context training in Stage 2. As shown in Figure 9, all models benefit from long-context training. Notably, after this additional training, the stack model nearly matches the performance of the recurrent models, substantially narrowing the gap observed with shorter-context training. 17 D.2 REPRESENTATION ANALYSIS 
+
+We analyze how embeddings evolve across loop iterations using three complementary measures: embeddings similarity, cross-step probing classifiers (logistic regression trained on step i, tested on step j), and class separation gap, following the approach of Balef et al. (2026). 1 2 3 4 5 6                                  
+
+> Step j
+> 123456
+> Step  i
+> Linear CKA similarity Cosine similarity Stacked blocks
+> 0.0 0.2 0.4 0.6 0.8 1.0
+> Similarity 123456789
+> Step j
+> 123456789
+> Step  i
+> Linear CKA similarity Cosine similarity
+> = 1
+> 123456789
+> Step j
+> 123456789
+> Step  i
+> = 1/ L,L= 6
+> 123456789
+> Step j
+> 123456789
+> Step  i
+> = 1/ L,L= 6
+> 0.825 0.850 0.875 0.900 0.925 0.950 0.975 1.000
+> Similarity
+
+Figure 10: Cross-step embedding similarity for stacked blocks ( left ) and looped models ( right ). Each heatmap entry (i, j ) shows the cosine similarity (lower triangle) or linear CKA (upper triangle) between embeddings at loop steps i and j, averaged over all binary-classification datasets. 
+
+Embeddings similarity. As shown in Figure 10, stacked blocks exhibit low off-diagonal similarity, indicating that each block produces a qualitatively distinct representation. In contrast, looped models maintain high similarity across step pairs, reflecting the representational stability induced by weight tying. 1 2 3 4 5 6                              
+
+> Loop step (test)
+> 123456
+> Loop step (train)
+> Stacked blocks
+> 0.4 0.5 0.6 0.7 0.8
+> ROC-AUC 123456789
+> Loop step (test)
+> 123456789
+> Loop step (train)
+> = 1
+> 123456789
+> Loop step (test)
+> 123456789
+> Loop step (train)
+> = 1/ L,L= 6
+> 123456789
+> Loop step (test)
+> 123456789
+> Loop step (train)
+> = 1/ L,L= 6
+> 0.81 0.82 0.83 0.84 0.85 0.86 0.87 0.88
+> ROC-AUC
+
+Figure 11: Cross-step probing AUC for stacked blocks ( left ) and looped models ( right ). Each entry 
+
+(i, j ) shows the ROC-AUC of a logistic regression trained on embeddings at step i and evaluated on embeddings at step j, averaged over all binary-classification datasets. 
+
+Probing classifiers. As shown in Figure 11, stacked blocks exhibit near-chance off-diagonal AUC, indicating limited transferability of representations across blocks. In contrast, looped models retain high off-diagonal AUC, showing that a classifier trained at one loop step generalizes well to the others. More interestingly, among looped models, the asymmetry between the upper ( j > i , train early/test late) and lower ( j < i , train late/test early) triangles reveals distinct convergence regimes. For α = 1 , the upper triangle dominates: early-step features are largely preserved at later iterations, while later steps introduce additional discriminative structure that early classifiers cannot capture. For α = 1
+
+L , this pattern reverses, becoming particularly pronounced beyond loop step L. Classifiers trained after step L continue to transfer to earlier steps, whereas classifiers trained at earlier steps fail to transfer beyond step L. This asymmetry suggests that the scaled residual updates progressively overwrite features established during the first L loops, providing a possible explanation for the degradation observed when models trained with a fixed L are evaluated for more than L iterations at test time. 
+
+Separation gap. Figure 12 shows that stacked blocks begin with a near-zero separation gap, indicat-ing that the early layers primarily perform latent mapping before progressively building class struc-ture across subsequent layers. In contrast, looped models already exhibit a substantial separation gap at the first iteration, suggesting that the subsequent iterations primarily perform feature engineering .For α = 1 , the separation gap grows monotonically across all nine steps ( 0.169 → 0.276 ). For 
+
+α = 1√L , the gap plateaus around step 4, while for α = 1
+
+L it peaks at step L = 6 before marginally 18 1 2 3 4 5 6 7 8 9Loop step 0.00 0.05 0.10 0.15 0.20 0.25 0.30 Separation gap                                 
+
+> Stacked blocks
+> = 1
+> = 1/ L,L= 6
+> = 1/ L,L= 6
+> Class separation gap across loop steps 12345678Loop step 0.2 0.4 0.6 0.8 1.0 1.2 L2 change
+> Embedding L2 change between steps
+> Stacked blocks
+> = 1
+> = 1/ L,L= 6
+> = 1/ L,L= 6
+> 12345678Loop step 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0 Cosine similarity
+> Consecutive step cosine similarity
+> Stacked blocks
+> = 1
+> = 1/ L,L= 6
+> = 1/ L,L= 6
+
+Figure 12: Left : class separation gap (mean inter-class minus intra-class cosine distance) at each loop step. Right : embedding update magnitude across iterations, measured as the normalised ℓ2
+
+change between consecutive steps ( left panel ) and as the cosine similarity between consecutive em-beddings ( right panel ). declining. The latter behavior is consistent with the representational overwriting observed in Fig-ure 11. 
+
+Residual Scaling. Interestingly, as shown in Figure 13, with residual scaling α = 1 /L , the optimal number of loops for a fixed residual depth ( L = 16 ) exhibits a clear correlation with dataset size. In contrast, we do not observe the same relationship without residual scaling or with α = 1 /√L. This suggests that residual scaling by 1/L may help the model adapt its effective computation depth to the size of the dataset. 3 4 5 6
+
+log (rows × features) 
+
+> 246810 12 14 16
+> Peak performance loop number
+
+Ricotta ( = 1
+
+L )
+
+r=0.42, p=0.00    
+
+> 3456
+
+log (rows × features) 
+
+Ricotta ( = 1
+
+L )
+
+r=0.24, p=0.08    
+
+> 3456
+
+log (rows × features) 
+
+Ricotta ( = 1 )
+
+r=0.15, p=0.28     
+
+> 10 2
+> 10 3
+> 10 4
+> log  (rows)
+> # features 310 30 100 300
+
+Figure 13: With residual scaling 1
+
+L we see a correlation between the optimal number of loops and dataset size. D.3 PCA ANALYSIS 
+
+To characterize how information is organized within the iterative latent space, we apply PCA to the test-row embeddings at each loop step. For each dataset, embeddings are averaged across repeats within a fold and stacked into an SN × D matrix (loop steps × test samples), then a PCA is fit retaining the top 10 principal components. We score each PC k against four candidate roles: • Time-step ( t): absolute Pearson correlation between PC scores and the loop-step index, 
+
+A(t)
+
+k = |ρ(zk, t )| .
+
+19 • Class separation ( y): eta-squared measuring how much variance in PC scores is explained by the binary class label, 
+
+A(y) 
+
+> k
+
+= η2(zk, y ) = 
+
+X
+
+> c∈{ 0,1}
+
+nc
+
+ ¯zk,c − ¯zk
+
+2
+
+X
+
+> j
+
+ zk,j − ¯zk
+
+2 ,
+
+where nc and ¯zk,c are the count and mean PC score for class c, and ¯zk is the overall mean. • Confidence ( H): absolute Pearson correlation between PC scores and per-sample predic-tion entropy, 
+
+A(H) 
+
+> k
+
+= |ρ(zk, H )| , Hi = −
+
+> C
+
+X
+
+> c=1
+
+pic log pic ,
+
+averaged across repeats and loop steps. • Sample identity ( i): eta-squared measuring how much variance is explained by sample membership, 
+
+A(i) 
+
+> k
+
+= η2(zk, i ) = 
+
+S 
+
+> N−1
+
+X
+
+> r=0
+
+ ¯zk,r − ¯zk
+
+2
+
+X
+
+> j
+
+ zk,j − ¯zk
+
+2 ,
+
+where ¯zk,r is the mean PC score for sample r across its S loop steps. For each role, the 10 raw scores are L1-normalized to form a probability distribution pr ∈ ∆9
+
+over PC indices, indicating the relative affinity of each PC for that role. The four distributions are computed independently, so a single PC may carry signal for multiple roles. Within each cross-validation fold, the per-dataset probability vectors are averaged across datasets to yield one vector per role per fold. We report the mean and 95% confidence interval ( ±1.96 × SEM) across the three folds (Figure 14). As shown in Figure 14, in recurrent model variants the time-step role is strongly concentrated in the leading PC, followed by class-separation signal in the next principal components — indicating that the model organizes its iterative dynamics along a small number of structured axes. Interestingly, in the stacked-blocks variant the contributions of all four roles are more diffuse, spreading across higher-order components rather than concentrating in the first few. 1 2 3 4 5 6 7 8 9 10                                  
+
+> PC index
+> 0.0 0.2 0.4 0.6 0.8 1.0 1.2
+> Probability
+> Stacked blocks
+> 12345678910
+> PC index
+> = 1
+> 12345678910
+> PC index
+> = 1/ L,L= 6
+> 12345678910
+> PC index
+> = 1/ L,L= 6
+> Time-step Class-sep. Confidence Sample id.
+
+Figure 14: Structure of information in the iterative latent space. We apply PCA to query embed-dings pooled across loop steps and samples, and measure the affinity of each principal component (PC) with four functional roles: time-step progression, class separation, prediction confidence, and sample identity. D.4 PERFORMANCE 
+
+Here we provide more details on the performance on TabArena and TALENT . For TabArena , we re-port Elo ratings (Figure 15), a critical difference diagram (Figure 16), and pairwise win rates among the top-20 models (Figure 17). For TALENT , we report the corresponding Elo ratings (Figure 18), critical difference diagram (Figure 19), and pairwise win rates (Figure 20). 20 TabFM EXAONE-Tabular TabPFN-3 TabICLv2 LoopICL-12L LoopICL-10L RealTabPFN-2.5 LoopICL-EE (  =90) 
+
+> LoopICL-8L LoopICL-EE (  =70)
+> LoopICL-16L LoopICL-6L LoopICL-EE (  =50)
+> RealMLP TabM LoopICL-4L LightGBM TabDPT LoopICL-EE (  =30)
+> LimiX CatBoost Mitra TabSwift XGBoost ModernNCA LoopICL-2L ExtraTrees RandomForest
+
+1200 1400 1600 1800 2000 
+
+> ELO score
+
+2027 1953 1818 1761 1741 1732 1716 1712 1695 1658 1649 1647 1603 1583 1563 1563 1517 1515 1512 1507 1486 1478 1463 1458 1449 1365 1286 1254 
+
+ELO Classification (binary + multiclass, >1200) 
+
+TabFM EXAONE-Tabular TabPFN-3 TabICLv2 LoopICL-12L LoopICL-10L RealTabPFN-2.5 LoopICL-EE ( =90) 
+
+LoopICL-8L LoopICL-EE ( =70) 
+
+LoopICL-16L LoopICL-6L LoopICL-EE ( =50) 
+
+RealMLP TabM LoopICL-4L LightGBM TabDPT LoopICL-EE ( =30) 
+
+LimiX CatBoost Mitra TabSwift XGBoost ModernNCA LoopICL-2L ExtraTrees RandomForest Figure 15: Elo ratings for classification on TabArena . Higher is better. 12345678910 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 RandomForest ExtraTrees 
+
+LoopICL-2L 
+
+XGBoost TabSwift LightGBM Mitra 
+
+LoopICL-EE ( =30) 
+
+LimiX CatBoost ModernNCA TabM TabDPT 
+
+LoopICL-4L RealMLP 
+
+LoopICL-EE ( =50) 
+
+LoopICL-6L LoopICL-16L LoopICL-EE ( =70) 
+
+LoopICL-8L LoopICL-EE ( =90) 
+
+LoopICL-10L LoopICL-12L 
+
+RealTabPFN-2.5 TabICLv2 TabPFN-3 EXAONE-Tabular TabFM CD 
+
+Autorank CD Diagram Classification 
+
+Figure 16: Critical difference diagram for classification on TabArena , computed via the autorank 
+
+framework (Herbold, 2020) using a Wilcoxon signed-rank test with Holm correction ( α = 0 .05 ). Models connected by a horizontal bar are not significantly different. 21 TabFM EXAONE-Tabular TabPFN-3 TabICLv2 
+
+> LoopICL-12L LoopICL-10L LoopICL-EE (  =90)
+> LoopICL-8L
+> RealTabPFN-2.5
+> LoopICL-16L LoopICL-EE (  =70)
+> LoopICL-6L LoopICL-EE (  =50)
+> RealMLP TabM TabDPT LightGBM CatBoost ModernNCA XGBoost
+
+TabFM EXAONE-Tabular TabPFN-3 TabICLv2 
+
+LoopICL-12L LoopICL-10L LoopICL-EE ( =90) 
+
+LoopICL-8L 
+
+RealTabPFN-2.5 
+
+LoopICL-16L LoopICL-EE ( =70) 
+
+LoopICL-6L LoopICL-EE ( =50) 
+
+RealMLP TabM TabDPT LightGBM CatBoost ModernNCA XGBoost 
+
+0.71 0.84 0.95 0.89 0.92 0.92 0.92 0.89 0.89 0.92 0.92 0.92 0.84 0.89 0.95 0.92 0.92 0.92 0.95 0.29 0.74 0.74 0.74 0.74 0.76 0.76 0.84 0.79 0.76 0.76 0.84 0.95 0.97 0.97 0.97 0.95 0.97 1.00 0.16 0.26 0.55 0.68 0.66 0.68 0.71 0.66 0.74 0.74 0.74 0.74 0.76 0.79 0.92 0.84 0.87 0.92 0.87 0.05 0.26 0.45 0.66 0.66 0.63 0.61 0.55 0.66 0.66 0.63 0.66 0.74 0.82 0.87 0.84 0.82 0.84 0.82 0.11 0.26 0.32 0.34 0.55 0.68 0.68 0.50 0.71 0.76 0.87 0.82 0.76 0.71 0.74 0.76 0.82 0.76 0.82 0.08 0.26 0.34 0.34 0.45 0.68 0.76 0.50 0.66 0.79 0.84 0.79 0.74 0.68 0.76 0.74 0.79 0.76 0.79 0.08 0.24 0.32 0.37 0.32 0.32 0.58 0.50 0.61 0.76 0.79 0.87 0.71 0.68 0.76 0.76 0.79 0.76 0.79 0.08 0.24 0.29 0.39 0.32 0.24 0.42 0.53 0.55 0.74 0.76 0.84 0.74 0.68 0.71 0.74 0.79 0.74 0.76 0.11 0.16 0.34 0.45 0.50 0.50 0.50 0.47 0.55 0.50 0.55 0.58 0.74 0.66 0.71 0.82 0.82 0.76 0.82 0.11 0.21 0.26 0.34 0.29 0.34 0.39 0.45 0.45 0.55 0.58 0.61 0.68 0.66 0.61 0.71 0.74 0.71 0.74 0.08 0.24 0.26 0.34 0.24 0.21 0.24 0.26 0.50 0.45 0.61 0.82 0.68 0.68 0.68 0.76 0.82 0.74 0.76 0.08 0.24 0.26 0.37 0.13 0.16 0.21 0.24 0.45 0.42 0.39 0.74 0.71 0.68 0.68 0.74 0.79 0.71 0.76 0.08 0.16 0.26 0.34 0.18 0.21 0.13 0.16 0.42 0.39 0.18 0.26 0.63 0.68 0.68 0.71 0.74 0.71 0.74 0.16 0.05 0.24 0.26 0.24 0.26 0.29 0.26 0.26 0.32 0.32 0.29 0.37 0.55 0.53 0.63 0.74 0.68 0.76 0.11 0.03 0.21 0.18 0.29 0.32 0.32 0.32 0.34 0.34 0.32 0.32 0.32 0.45 0.50 0.61 0.61 0.71 0.68 0.05 0.03 0.08 0.13 0.26 0.24 0.24 0.29 0.29 0.39 0.32 0.32 0.32 0.47 0.50 0.55 0.55 0.58 0.55 0.08 0.03 0.16 0.16 0.24 0.26 0.24 0.26 0.18 0.29 0.24 0.26 0.29 0.37 0.39 0.45 0.66 0.53 0.74 0.08 0.05 0.13 0.18 0.18 0.21 0.21 0.21 0.18 0.26 0.18 0.21 0.26 0.26 0.39 0.45 0.34 0.61 0.66 0.08 0.03 0.08 0.16 0.24 0.24 0.24 0.26 0.24 0.29 0.26 0.29 0.29 0.32 0.29 0.42 0.47 0.39 0.47 0.05 0.00 0.13 0.18 0.18 0.21 0.21 0.24 0.18 0.26 0.24 0.24 0.26 0.24 0.32 0.45 0.26 0.34 0.53 
+
+Win-rate matrix Top 20 models Classification only (fraction of datasets where row beats column) 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Win rate (row beats column)
+
+Figure 17: Pairwise win rates on TabArena classification (top-20 models). Each cell shows the fraction of datasets where the row model outperforms the column model. TabFM EXAONE-Tabular 
+
+> LoopICL-10L LoopICL-12L LoopICL-8L LoopICL-14L LoopICL-EE (  =70)
+> TabICLv2 TabPFN-v3
+> LoopICL-6L LoopICL-16L LoopICL-EE (  =50)
+> LoopICL-4L
+> TabPFN-2.5 LimiX
+> LoopICL-2L
+> CatBoost
+> LoopICL-1L
+> ModernNCA FT-Transformer XGBoost ExcelFormer
+
+1200 1300 1400 1500 1600 1700 1800 
+
+> ELO score
+
+1783 1783 1720 1719 1697 1687 1666 1664 1663 1645 1642 1616 1554 1549 1462 1437 1359 1312 1302 1258 1244 1211 
+
+ELO Classification (binclass + multiclass, >1200) 
+
+Figure 18: Elo ratings for classification on TALENT . Higher is better. 22 12345678910 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 AutoInt RealMLP RandomForest ExcelFormer XGBoost FT-Transformer ModernNCA 
+
+LoopICL-1L 
+
+CatBoost 
+
+LoopICL-2L 
+
+LimiX 
+
+LoopICL-4L 
+
+TabPFN-2.5 
+
+LoopICL-EE ( =50) 
+
+LoopICL-16L LoopICL-6L 
+
+TabPFN-v3 TabICLv2 
+
+LoopICL-EE ( =70) 
+
+LoopICL-14L LoopICL-8L LoopICL-12L LoopICL-10L 
+
+EXAONE-Tabular TabFM CD 
+
+Autorank CD Diagram Classification Figure 19: Critical difference diagram for classification on TALENT , computed via the autorank 
+
+framework (Herbold, 2020) using a Wilcoxon signed-rank test with Holm correction ( α = 0 .05 ). Models connected by a horizontal bar are not significantly different. EXAONE-Tabular TabFM 
+
+> LoopICL-10L LoopICL-12L LoopICL-8L LoopICL-14L LoopICL-EE (  =70)
+> TabICLv2 TabPFN-v3
+> LoopICL-6L LoopICL-16L LoopICL-EE (  =50)
+> LoopICL-4L
+> TabPFN-2.5
+> LoopICL-2L
+> LimiX CatBoost ModernNCA
+> LoopICL-1L
+> FT-Transformer
+
+EXAONE-Tabular TabFM 
+
+LoopICL-10L LoopICL-12L LoopICL-8L LoopICL-14L LoopICL-EE ( =70) 
+
+TabICLv2 TabPFN-v3 
+
+LoopICL-6L LoopICL-16L LoopICL-EE ( =50) 
+
+LoopICL-4L 
+
+TabPFN-2.5 
+
+LoopICL-2L 
+
+LimiX CatBoost ModernNCA 
+
+LoopICL-1L 
+
+FT-Transformer 
+
+0.50 0.62 0.64 0.63 0.64 0.66 0.70 0.73 0.64 0.68 0.66 0.74 0.80 0.83 0.86 0.93 0.92 0.92 0.93 0.49 0.61 0.59 0.61 0.60 0.61 0.70 0.69 0.61 0.61 0.63 0.66 0.78 0.74 0.84 0.85 0.86 0.81 0.85 0.36 0.39 0.48 0.60 0.56 0.63 0.51 0.52 0.71 0.61 0.73 0.79 0.74 0.86 0.84 0.85 0.83 0.92 0.89 0.34 0.40 0.50 0.55 0.61 0.64 0.50 0.53 0.67 0.68 0.70 0.77 0.72 0.86 0.82 0.85 0.84 0.93 0.88 0.35 0.38 0.38 0.42 0.51 0.56 0.49 0.51 0.68 0.57 0.71 0.80 0.75 0.87 0.85 0.85 0.83 0.92 0.88 0.35 0.39 0.42 0.36 0.48 0.56 0.52 0.52 0.58 0.70 0.62 0.75 0.69 0.84 0.82 0.83 0.83 0.92 0.88 0.33 0.38 0.35 0.35 0.42 0.43 0.48 0.51 0.57 0.54 0.70 0.76 0.71 0.85 0.83 0.83 0.82 0.91 0.86 0.29 0.29 0.47 0.48 0.49 0.47 0.51 0.50 0.51 0.49 0.52 0.59 0.72 0.72 0.78 0.86 0.89 0.85 0.91 0.26 0.30 0.47 0.46 0.48 0.47 0.48 0.49 0.49 0.49 0.52 0.57 0.71 0.74 0.83 0.88 0.89 0.88 0.92 0.34 0.38 0.27 0.31 0.30 0.40 0.42 0.48 0.50 0.45 0.54 0.79 0.70 0.86 0.84 0.84 0.82 0.92 0.87 0.30 0.38 0.37 0.30 0.41 0.28 0.44 0.49 0.50 0.53 0.58 0.69 0.67 0.82 0.81 0.82 0.81 0.91 0.86 0.32 0.36 0.26 0.28 0.26 0.35 0.29 0.47 0.47 0.43 0.40 0.70 0.68 0.84 0.82 0.82 0.80 0.90 0.86 0.25 0.34 0.20 0.22 0.18 0.24 0.23 0.40 0.42 0.20 0.30 0.29 0.57 0.83 0.80 0.80 0.80 0.91 0.86 0.18 0.15 0.24 0.27 0.23 0.29 0.28 0.27 0.28 0.28 0.32 0.30 0.41 0.62 0.62 0.76 0.79 0.72 0.80 0.15 0.26 0.12 0.12 0.12 0.15 0.14 0.27 0.24 0.13 0.17 0.15 0.17 0.37 0.53 0.67 0.70 0.86 0.82 0.13 0.09 0.15 0.17 0.14 0.17 0.16 0.21 0.16 0.15 0.18 0.17 0.20 0.30 0.46 0.71 0.71 0.67 0.76 0.05 0.14 0.14 0.14 0.14 0.16 0.16 0.12 0.11 0.15 0.17 0.17 0.20 0.22 0.32 0.28 0.61 0.46 0.68 0.07 0.13 0.16 0.15 0.16 0.16 0.17 0.10 0.10 0.17 0.18 0.18 0.20 0.20 0.29 0.28 0.38 0.38 0.54 0.07 0.16 0.07 0.06 0.07 0.07 0.08 0.14 0.11 0.07 0.08 0.08 0.09 0.24 0.13 0.27 0.53 0.61 0.66 0.06 0.14 0.10 0.10 0.10 0.11 0.12 0.07 0.07 0.11 0.12 0.12 0.13 0.17 0.17 0.21 0.30 0.45 0.33 
+
+Win-rate matrix Top 20 models (fraction of datasets where row beats column) 
+
+0.0 0.2 0.4 0.6 0.8 1.0 
+
+> Win rate (row beats column)
+
+Figure 20: Pairwise win rates on TALENT classification (top-20 models). Each cell shows the fraction of datasets where the row model outperforms the column model. 23

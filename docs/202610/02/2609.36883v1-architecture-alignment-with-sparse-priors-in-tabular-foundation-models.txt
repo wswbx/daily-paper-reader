@@ -1,0 +1,3391 @@
+Title: Architecture Alignment With Sparse Priors in Tabular Foundation Models
+
+URL Source: https://arxiv.org/pdf/2609.36883v1
+
+Published Time: Wed, 30 Sep 2026 01:26:36 GMT
+
+Number of Pages: 51
+
+Markdown Content:
+# ARCHITECTURE ALIGNMENT WITH SPARSE PRIORS IN TABULAR 
+
+# FOUNDATION MODELS 
+
+Tianqi Zhao *
+
+Renmin University of China 
+
+Tianyi Zhuang *
+
+National University of Singapore 
+
+Shuo Duan *
+
+National University of Singapore 
+
+Guanyang Wang 
+
+Rutgers University 
+
+Yan Shuo Tan †
+
+National University of Singapore 
+
+Qiong Zhang †
+
+Renmin University of China 
+
+## ABSTRACT 
+
+Tabular foundation models (TFMs) are increasingly popular because they deliver strong predictions on new datasets through in-context learning, without task-specific training or extensive tuning. Yet released TFMs differ simultaneously in their pretraining priors, architectures, and objectives, obscuring their respective inductive biases. We therefore examine one concrete capability: irrelevant-feature suppression. Across synthetic tasks and real-world datasets, adding null features causes substantially greater predictive degradation in the row-token model TabDPT, whereas the cell-token alternating-axis model TabPFN v2 and other TFMs remain comparatively stable. This gap motivates us to ask whether architecture contributes to irrelevant-feature suppression. Because released TFMs remain confounded by other design choices, we train streamlined row-token and alternating-axis transformers under identical sparse-to-dense linear priors. Exact Bayes analysis shows that sparse prediction requires context-dependent feature gating, whereas the dense endpoint requires only uniform feature weighting. Consistent with this distinction, the alternating-axis model is substantially closer to the Bayesian optimal predictor on sparse tasks, while the architecture gap becomes negligible on dense tasks; almost all of the sparse gap arises from linear coefficient-estimation error. Finally, in both the controlled model and frozen TabPFN v2, we examine the effect of interventions on the feature-attention outputs on the linear coefficients, finding evidence of task-dependent selective routing of computation through feature-indexed pathways. Together, these results support architecture– prior alignment: preserving an addressable feature axis provides an inductive bias for task-adaptive relevance inference. Code is available here. 
+
+## 1 Introduction 
+
+Tabular foundation models (TFMs) are pretrained predictors that condition on a labeled table and predict labels for new rows in context without updating their parameters. On small- and medium-sized tabular tasks, recent TFMs achieve state-of-the-art or competitive accuracy, often without task-specific hyperparameter tuning (Hollmann et al., 2025; Erickson et al., 2025). By replacing dataset-specific fitting and tuning with in-context adaptation, TFMs greatly reduce deployment costs on new datasets, driving rapid development of increasingly capable systems. Each TFM couples two central design choices: a distribution of pretraining tasks, often called its data prior , and an architecture for learning from the sampled context. TabPFN v2 marked a major change in both choices (Hollmann et al., 2025). Whereas TabPFN v1—and later TabDPT—principally represented entire observations as tokens (Hollmann et al., 2023; Ma et al., 2025), TabPFN v2 adopted a cell-based design with alternating attention along the observation and feature axes. It paired this alternating-axis architecture with a richer pretraining pipeline and delivered a large improvement in benchmark performance. Subsequent systems have continued to modify both architecture and the data 
+
+> *
+
+Equal contribution. 
+
+> †
+
+Equal supervision. Correspondence to: Yan Shuo Tan ( yanshuo@nus.edu.sg ) and Qiong Zhang (qiong.zhang@ruc.edu.cn ). arXiv:2609.36883v1 [cs.LG] 29 Sep 2026 prior (Qu et al., 2025; 2026; Grinsztajn et al., 2025; 2026; Kong & Das, 2026; Ma et al., 2025; Hosseinzadeh et al., 2026). This joint evolution makes architectural progress difficult to interpret. First, released models typically change the pretraining prior and architecture together, so performance differences cannot be cleanly attributed to either ingredient. Second, aggregate benchmark scores reveal which model predicts better on average but not which predictive capabilities or inductive biases have changed. Recent work has begun to isolate the role of the prior by comparing several priors under a fixed architecture and training protocol (Zhang et al., 2025b; Türkmen et al., 2026). By contrast, studies of TFM architecture have primarily analyzed released checkpoints through layerwise probing, representation analysis, attention interventions, and ablations (Rezaei Balef et al., 2026; Biloš et al., 2026; Gupta et al., 2026). These studies illuminate how trained TFMs compute, but they do not isolate architecture as an experimental variable. The resulting open question is not simply which architecture performs best, but whether architecture itself affects a specific predictive capability under a matched task prior. In this paper, we study that question through the following hypothesis: 
+
+Cell-token architectures with alternating feature- and observation-axis attention provide a stronger inductive bias toward irrelevant-feature suppression than row-token architectures. 
+
+Two observations motivate this hypothesis. TabPFN v2 is robust to injected irrelevant features (Hu & Ghelichi, 2026) and can sometimes outperform LASSO on sparse linear prediction tasks (Zhang et al., 2025a). We first broaden this evidence by comparing irrelevant-feature robustness across released TFMs. Across the tested systems, TabPFN v2+ and TabICL v2 remain close to their clean-task performance as null features are added, whereas TabDPT is substantially more sensitive. The sensitivity decreases across TabDPT releases v1.0–v1.3 but remains well above that of TabPFN v2 in every release (Section 2 and App. C.4). Because these systems also differ in their pretraining priors and procedures, this comparison establishes a capability gap but cannot attribute it to architecture. Motivated by this gap, we isolate architecture in a controlled setting. We construct a matched family of orthogonal linear-regression priors that varies only the number of active features and admits exact posterior predictive means. At the dense endpoint, the Bayes optimal predictor reduces to a fixed isotropic linear kernel over context observations. Under every sparse prior, however, each feature–response statistic is modulated by a context-dependent posterior inclusion probability, producing a diagonal feature gate that depends on the full labeled context. We show that predictors affine in the context responses attain the dense Bayes optimal predictor but incur a strict approximation gap under sparsity, whereas an idealized alternating-axis network can directly approximate the sparse computation. This contrast identifies a computational alignment rather than an impossibility result for general deep row-token transformers: preserving a feature axis provides an explicit route for inferring and applying task-specific relevance. We test the resulting prediction—that the architectural advantage should track the need for context-dependent feature gating—by training streamlined row-token and cell-token alternating-axis transformers under identical priors and training protocols. Against the exact Bayes targets, the alternating-axis model has substantially lower excess prediction error than the row-token model on sparse tasks, while the architecture gap becomes negligible at the dense endpoint. An exact functional decomposition attributes almost all of the sparse gap to errors in the estimated linear coefficients rather than to intercept or nonlinear query effects, tying the advantage to context-dependent allocation of predictive mass across coordinates. Finally, towards explaining this sparse gap, we investigate how the alternating-axis architecture may enable computation that is more suited to sparse priors. Specifically, we use interventions on the feature-attention outputs, stratified by layer, feature, and row-type, and examine its effect on individual linear coefficients. Across the controlled model and frozen TabPFN v2, we observe evidence of selective computational routing through the feature-indexed pathways provided by feature-attention, that this routing is task dependent, and that computation is heterogeneous across layers. Together, the observational, controlled, and interventional evidence supports architecture–prior alignment rather than a universal ranking of tabular transformers. Preserving an explicit feature axis offers a direct route to task-adaptive coordinate gating when the task determines which features matter, while conferring little advantage when the optimal rule weights all coordinates uniformly. 
+
+## 2 Released TFMs respond differently to irrelevant features 
+
+We first ask how strongly irrelevant features affect released TFMs. We distinguish two questions: whether adding irrelevant features reduces predictive performance, and whether the fitted predictor remains functionally sensitive to those features. Our primary contrast is between the row-token model TabDPT and the classical alternating-axis model TabPFN v2; TabICL v2 and TabPFN v3 broaden the comparison beyond these two models. We consider models released 20 1 2 4 7
+
+# Null-feature ratio ρ
+
+## 0.00 0.02 
+
+> R2 drop
+
+# a Friedman 
+
+TabDPT v1.2 TabPFN v2 TabICL v2 TabPFN v3 0 1 2 4 7
+
+# Null-feature ratio ρ
+
+## 0.000 0.025 0.050 0.075 
+
+# b OpenML Figure 1: Adding null features degrades TabDPT v1.2 more than the other released TFMs . Median query-set R2 drop on (a) synthetic and (b) OpenML datasets as the ratio ρ increases. 
+
+before August 1, 2026. The appendix adds TabPFN v2.5 (App. C.2) and repeats the analysis across TabDPT releases (App. C.4). 
+
+Paired design and metrics. We evaluate each TFM on paired versions of synthetic and real-world regression datasets. Each pair contains a clean dataset with only the raw features and an augmented dataset with additional features constructed to carry no information about the response; we call these added features null features . We vary the null-to-original feature ratio ρ from zero to seven. For the synthetic datasets, we add independent null features to randomly generated Friedman datasets (Friedman, 1991), whose nonlinear response depends on five known relevant features and therefore provides ground-truth relevance. For the real-world evaluation, we add row-permuted copies of raw columns to 42 OpenML regression datasets (Vanschoren et al., 2014), preserving their empirical distributions while breaking their association with the target. We evaluate TabDPT v1.2 without retrieval (Hosseinzadeh et al., 2026), TabPFN v2/v3 (Hollmann et al., 2025; Grinsztajn et al., 2026), and TabICL v2 (Qu et al., 2026). Across both settings, the R2 drop relative to the paired clean task measures predictive degradation. To measure functional dependence, we permute one null query feature while holding the context and all other query features fixed. We normalize the resulting prediction change by the standard deviation of the query targets and call this measure the null-feature shift . An ideal relevance-adaptive predictor should incur little R2 drop when null features are added and little prediction shift when a null coordinate is permuted. App. C gives the data construction, evaluated values of ρ, metrics, and inference settings. 
+
+Predictive degradation under null features. All models perform similarly on the clean tasks; their robustness separates only as null features are added (App. Fig. 9). At ρ = 7 , TabDPT’s median R2 drop is 0.0370 on Friedman and 0.0713 
+
+on OpenML, compared with 0.0008 and 0.0014 , respectively, for TabPFN v2. Thus, TabDPT’s median degradation exceeds TabPFN v2’s by factors of more than 46 on Friedman and more than 50 on OpenML, while TabICL v2 and TabPFN v3 also remain close to their clean-task performance (Fig. 1). A performance gap alone does not show that the fitted predictor depends on the added coordinates. We therefore turn to the null-feature shift, which directly measures the prediction change caused by perturbing a null query feature. 
+
+Functional dependence on null features. The paired comparison shows that the performance gap is widespread rather than driven by a few tasks. At ρ = 7 , TabDPT’s R2 drop exceeds TabPFN v2’s on 98 .9% of the 350 Friedman task settings and 95 .2% of the 42 OpenML datasets (Fig. 2(a)). Both models respond much more strongly to known relevant Friedman features or raw OpenML covariates than to the added nulls, providing positive controls for the sensitivity measure (App. Fig. 12). Nevertheless, TabDPT is consistently more sensitive to the null coordinates (Fig. 2(a, b)). At 
+
+ρ = 7 on OpenML, its median null-feature shift is more than 8.5 times that of TabPFN v2, and it exceeds TabPFN v2’s on all 42 datasets. An additional partial-dependence analysis likewise shows that TabDPT depends more strongly on the added null features than TabPFN v2 (App. Fig. 13). Together, the predictive and functional results show that this difference is large and widespread. 3.2 1 2 4 7
+
+# Null-feature ratio ρ
+
+## 60 80 100 
+
+> TabDPT worse (%)
+
+# a
+
+# R2 drop Null shift .2 1 2 4 7
+
+# Null-feature ratio ρ
+
+## 0.00 0.01 0.02 0.03 
+
+> Null-feature shift
+
+# b
+
+TabDPT v1.2 TabPFN v2 Figure 2: Null features affect TabDPT more often and more strongly than TabPFN. (a) Fraction of paired tasks on which TabDPT v1.2 has a larger R2 drop or null-feature shift than TabPFN v2. (b) Median null-feature shift for both models across values of ρ. Solid: OpenML; dashed: Friedman. 
+
+## 3 Isolating the architectural contrast with controlled priors 
+
+The preceding released-model comparison shows that TabDPT is much more sensitive to irrelevant features than TabPFN v2, but differences in their pretraining data and procedures prevent us from attributing this gap to architecture. To isolate the architectural contrast, we train streamlined row-token and alternating-axis models under identical task priors and training protocols and evaluate them against exact Bayes targets. 
+
+3.1 Sparse and dense priors require different computations 
+
+To make the sparse–dense comparison precise, we seek a task family spanning sparse settings and a dense endpoint for which the Bayes-optimal predictor is available in closed form. We construct such a family by varying the number of active features in an orthogonal fixed design regression model. 
+
+Matched priors. Fix n ≥ d ≥ 2, v2, σ 2 > 0, and consider fixed design regression tasks of the form 
+
+y = Xβ + ε, ε ∼ N (0 , σ 2In), X⊤X = nI d. (1) Write [d] = {1, . . . , d }. For k ∈ [d], let Sk = {A ⊆ [d] : |A| = k} and define a prior Pk by drawing 
+
+S ∼ Unif( Sk), βS |S ∼ N (0 , (v2/k )Ik), βSc = 0 . (2) Here k is the number of active features. Throughout the controlled analysis, active and inactive refer specifically to membership in the realized support S, whereas relevant and irrelevant are reserved for broader statements about predictive dependence. The prior is sparse when k < d and dense when k = d. The scaling by 1/k gives E[β] = 0 ,
+
+E∥β∥22 = v2, and E[ββ ⊤] = ( v2/d )Id for every k. Thus, changing k changes the support structure but not the coefficient covariance or expected signal energy. We therefore call {Pk} a matched prior family. Together with (1), each Pk specifies a hierarchical Bayesian linear regression model. 
+
+Posterior predictive means. Given observed data D = ( X, y ) from (1), consider prediction at a fixed covariate vector x ∈ Rd. For yq = x⊤β + εq , where εq ∼ N (0 , σ 2) is independent of the observed data, the Bayes-optimal predictor under squared loss is the posterior predictive mean f ∗ 
+
+> k
+
+(D, x ) = E[yq |D, x ] = x⊤E[β|D]. Orthogonality makes c = c(D) := X⊤y/n sufficient for β and yields the closed-form posterior coefficient mean 
+
+η∗
+
+> k
+
+(c) := E[β|D] = E[β|c] = λkqk(c) ⊙ c, (3) where qk,j (c) = P(j ∈ S|c) is the jth element of the posterior inclusion vector qk(c), λk = nv 2/(nv 2 + kσ 2) is a shrinkage factor, and ⊙ denotes coordinatewise multiplication. See App. D.2 for details. 
+
+Computational difference between dense and sparse priors. The posterior predictive mean in (3) exposes a computational difference between the dense and sparse priors. • Under the dense prior Pd, qd(c) = 1d and η∗ 
+
+> d
+
+(c) = λdc, so the Bayes rule applies the same shrinkage factor to every feature. Its prediction f ∗ 
+
+> d
+
+(D, x ) can be implemented as the linear-kernel regression (λd/n ) P
+
+> i
+
+⟨x, x i⟩yi.4• Under a sparse prior Pk with k < d , the posterior predictive mean instead uses the context-dependent feature gate 
+
+qk(c). Although c = X⊤y/n is linear in y, the exponential normalization in (17)–(18) makes qk(c) nonlinear in c.
+
+3.2 Attention architectures and alignment with posterior mean computation 
+
+To test whether keeping features separate provides a more direct route to the feature weights required by sparse prediction, we compare controlled row-token and alternating-axis models. Fig. 3(a,b) summarizes the streamlined row-token and cell-token alternating-axis architectures used in the controlled comparison. Details about the architectures are Architectures trained (a) Alternating-axis model                                               
+
+> y
+> one token per cell, plus a response token feature attn obs attn MLP
+> ×3ˆy
+> (b) Row-token model
+> one token per observation,
+> φx(xi) + φy(yi); query φx(x)
+> obs attn MLP
+> ×5ˆy
+> Idealized computation (c) One-sparse posterior predictive mean
+> yxi j in feature tokens,
+> yiin the response token feature-axis attention xi j yi
+> xi j yiat cell (i,j)
+> observation-axis attention
+> sj=θ1c2
+> j
+> vj=λ1cjxj
+> cj
+> xj
+> cj=1
+> n∑ixi j yi
+> softmax over j:logits sj, values vj
+> f∗
+> 1(D,x) =
+> ∑jsoftmax j(s)vj
+
+Figure 3: Architectures and an idealized one-sparse Bayes posterior predictive mean. (a–b) The alternating-axis and row-token models used in the controlled comparison. (c) For k = 1 , response routing and within-feature aggregation form 
+
+cj , and feature-axis softmax combines λ1cj xj using logits proportional to c2 
+
+> j
+
+. Panel (c) is a mathematical construction, not an identified circuit in the trained models (App. D.5). Colors denote features; dashed and heavy outlines mark query and readout tokens, respectively; shading denotes pointwise maps. 
+
+given in App. E.1. Both models use the same embedding width and similar parameter counts, providing representative implementations of the two attention layouts at a comparable model scale. Differences in depth, token count, and computational cost remain inherent to the comparison. App. E.2 gives the full configurations and parameter counts. 
+
+Why row-token architecture can handle dense priors but may struggle with sparse ones. We show below that any fixed-kernel regression cannot express the posterior predictive mean under a sparse prior. 
+
+Theorem 1 (Response-affine barrier) . Fix X⊤X = nI d and a nonzero prediction point x. Let 
+
+Faff (x) = {f (D, x ) = a(X, x ) + b(X, x )⊤y : a(X, x ) ∈ R, b (X, x ) ∈ Rn}, (4) 
+
+where a and b may depend arbitrarily on X, x, and known prior parameters, but not on y. Under every Pk, the unique minimizer of squared prediction risk in Faff (x) is f ∗ 
+
+> aff
+
+(D, x ) = λdx⊤c. It equals f ∗ 
+
+> d
+
+(D, x ), whereas for every k < d ,
+
+inf    
+
+> f∈F aff (x)
+
+ED
+
+{f (D, x ) − f ∗ 
+
+> k
+
+(D, x )}2 > 0. (5) See proof details in App. D.4. The theorem shows that when the number of active features is strictly smaller than the feature dimension, no function in the affine class can approximate f ∗ 
+
+> k
+
+(D, x ) arbitrarily well. To connect this barrier to row-token architectures, note that linear-kernel regression corresponds to an idealized one-layer row-token attention computation without softmax (von Oswald et al., 2023). Since linear-kernel regression is an instance of the fixed-kernel class covered by Thm. 1, this correspondence suggests that the same barrier applies to that idealized row-token model. Although nonlinearities and multiple layers can improve expressivity, the expressivity of linear-kernel regression remains a useful baseline heuristic for row-token architectures. 
+
+Why alternating-axis architecture is more aligned with sparse priors. For the sparse prior with k = 1 , an alternating-axis circuit implements the Bayes predictor as shown in Fig. 3(c). 
+
+Step 1. Response routing makes each context response yi available to each feature. 
+
+Step 2. Observation-axis aggregation forms cj .
+
+Step 3. Feature-axis softmax combines values λ1cj xj using logits proportional to c2 
+
+> j
+
+. Because feed-forward networks can approximate the required continuous pointwise maps on compact domains, an idealized alternating-axis network 51 d/2 d
+
+Support size k 
+
+> 0.02 0.1 0.5
+> a, k
+> Row-token Alternating-axis
+
+Figure 4: The sparse advantage contracts at the dense endpoint. Task-normalized Bayes approximation error (log scale) for the row-token and alternating-axis models. denotes d = 10 ; denotes d = 20 . Markers and error bars show the mean ± SD across three training seeds, each evaluated on 32,000 shared test tasks. 
+
+can approximate this one-sparse construction arbitrarily well (Prop. 3, App. D.5). The appendix extends the construction to every k using three routing and aggregation stages and O(k) pooled statistics. 
+
+3.3 Controlled experiments to test the architectural contrast Setup. For each (d, k ) pair, with d ∈ { 10 , 20 } and k ∈ { 1, d/ 2, d }, we train separate row-token and alternating-axis models on tasks drawn from Pk. We set v2 = 1 and σ = 1 .5. This choice keeps the prior-averaged signal-to-noise ratio fixed across values of k and d. We evaluate both architectures on the same T = 32 ,000 tasks per condition. Each task has an orthogonal context with 50–100 observations and independent queries x ∼ N (0 , I d). See App. E.2 for pretraining details. 
+
+Error relative to Bayes target. Let bfa,k denote the predictor with architecture a trained under Pk. We now describe how to define an aggregate measure of excess prediction error of bfa,k relative to the posterior predictive mean f ∗ 
+
+> k
+
+. For each test context D, we evaluate its mean squared error to f ∗ 
+
+> k
+
+(where the mean is taken with respect to an independent query x ∼ N (0 , I d)), normalized by the energy of f ∗ 
+
+> k
+
+, and then take a further expectation over contexts: 
+
+Ea,k := ED
+
+ Ex
+
+h
+
+∥ bfa,k (D, x ) − f ∗ 
+
+> k
+
+(D, x )∥2
+
+i
+
+Ex[∥f ∗ 
+
+> k
+
+(D, x )∥2]
+
+ . (6) App. E.2.3 gives the empirical estimator of this quantity. The empirical error values, averaged over 32,000 test tasks, are shown in Fig. 4. We see that the alternating-axis model has substantially lower excess error under sparse priors, with a gap of Erow ,k − E alternating ,k ≈ 0.34 (respectively 
+
+≈ 0.627) at k = 1 and d = 10 (respectively d = 20 ). The gap is positive for all three training seeds, and also holds conditioned on D across nearly all test tasks (App. E.3). However, for dense priors, this gap becomes essentially negligible. 
+
+Error gap is due to linear coefficient estimation. Since f ∗ 
+
+> k
+
+(D, x ) is a linear function of x, it is insightful to decompose the difference bfa,k (D, x ) − f ∗ 
+
+> k
+
+(D, x ) into a linear term and a nonlinear residual. This allows us to examine how much inaccuracy is due to failing to estimate the coefficients correctly, and how much is due to lying outside the linear model class. Aggregating this analysis across architectures then gives further insight into what contributes to their performance gap over sparse priors. We first state a general decomposition. 
+
+Lemma 2 (Prediction error decomposition) . Let f be square-integrable, and let x ∼ N (0 , I d) be independent of D.For any context D, define the best linear predictor coefficients 
+
+(ζf (D), η f (D)) := arg min 
+
+> ζ∈R, η ∈Rd
+
+Ex
+
+(f (D, x ) − ζ − x⊤η)2 , (7) 
+
+and the nonlinear residual rf (D, x ) = f (D, x ) − ζf (D) − x⊤ηf (D). Then we have 
+
+Ex[( f (D, x ) − f ∗ 
+
+> k
+
+(D, x )) 2] = ∥ηf (D) − η∗
+
+> k
+
+(c)∥22
+
+| {z }
+
+> coefficient error
+
++ ζf (D)2
+
+| {z }
+
+> intercept error
+
++ Ex[rf (D, x )2]
+
+| {z }
+
+> nonlinearity error
+
+. (8) 6The proof and its connection to excess prediction risk appear in App. D.6. We estimate the three terms for each context and normalize them as in (6). App. E.4.1 gives the estimation details. 0.00 0.25 0.50 
+
+> a, k
+> Row-token Alternating-axis
+
+k = 1 a0.00 0.05 0.10 
+
+> a, k
+> Row-token Alternating-axis
+
+k = 5 b0.00 0.01 0.02 0.03 
+
+> a, k
+> Row-token Alternating-axis
+
+k = 10 c
+
+Figure 5: Task-normalized error components at d = 10 . coefficient; squared intercept; residual. Bars stack these components for one architecture. Each component is averaged equally over 32,000 shared test datasets per seed. Bars show three-seed means, and points show seed averages. The total bar height equals the sum of the three components. 
+
+Sparse priors. At d = 10 , the between-architecture coefficient-error difference accounts for 98.4% of the mean prediction-error gap at k = 1 and 97.5% at k = 5 (Fig. 5; App. Fig. 24). App. E.4.3 further separates coefficient error over active and inactive features. The sparse architecture gap therefore comes almost entirely from the row-token architecture’s much larger coefficient error. 
+
+Dense prior. At k = d, the Bayes coefficient map is the uniform rule η∗ 
+
+> d
+
+(c) = λdc. The row-token model has slightly lower mean coefficient error than the alternating-axis model at both d = 10 and d = 20 . Its larger intercept and residual errors offset this coefficient advantage. The alternating-axis model therefore retains a small overall prediction advantage (App. E.4.2). In summary, the alternating-axis advantage under sparse priors lies primarily in estimating the context-dependent coefficients, rather than in representing the prediction’s linear dependence on the query. At the dense endpoint, where the Bayesian coefficient map reduces to uniform shrinkage, the coefficient advantage disappears. We next try to understand why there is such an accuracy gap in coefficient estimation. 
+
+## 4 Tracing attention-mediated computation of linear coefficients 
+
+Section 3.3 shows that alternating-axis models approximate the sparse Bayesian predictor more accurately, primarily through better estimation of its context-dependent coefficients. We now investigate how feature attention contributes to this computation. We hypothesize that feature-axis attention supports task-dependent, selectively routed computation of linear coefficients : attenuating messages associated with a feature should preferentially affect its own coefficient, with stronger effects for active features. We further examine where this control is concentrated across layers and between context and query messages. We test this in the simplified alternating-axis model and then apply the same analysis to pretrained TabPFN v2. 
+
+4.1 Feature-message interventions and coefficient responses 
+
+To examine the hypothesis, we define interventions on internal quantities of the computation graph and observe their effect on the fitted linear coefficients, as defined in (7). We perform this analysis for both the simplified alternating-axis architecture from Section 3.2 as well as frozen TabPFN v2. 
+
+Intervention. For one feature-attention head within a row, let αpg be the attention weight from source token g to receiver p, and let vg be its value vector. Attenuating source feature j replaces the weighted sum by 
+
+X
+
+> g
+
+αpg vg 7 −→ X 
+
+> g̸=j
+
+αpg vg + (1 − δ)αpj vj .
+
+We apply this change to every receiver and head at one selected layer ℓ, using δ = 0 .1 unless stated otherwise. The 
+
+context-only intervention changes context rows only; the query-only intervention changes query rows only. Attention weights are unchanged and not renormalized, residual connections remain intact, and downstream computation is rerun. App. F.1 gives the equivalent implementation after the output projection. The operation is illustrated in Fig. 6. 7one feature-axis attention step (layer ℓ)     
+
+> feature j
+> any one of these tokens receives a message from each
+> that token’s update, split by sender
+> before feature j’s message remove a fraction
+> δof that message attention weights unchanged after the update total shrinks; nothing is redistributed
+> which rows it is applied in
+> the same feature j
+> context-only query-only rerun the rest of the network, refit the BLP, and record the coefficient response ̂Jr j
+
+Figure 6: Feature-message attenuation in the simplified alternating-axis model. Source feature j’s contribution is scaled by 1 − δ at every receiver and head, either in context rows or in query rows. Other sources’ contributions at that operation and the residual pathway are unchanged. Bar sizes are schematic; App. F.1 gives implementation details. 
+
+Coefficient response. Because the fitted model is almost perfectly linear, as shown in Fig. 5, we investigate the effect of the intervention on the estimated linear coefficients. Let a ∈ { context , query } denote the intervened row type. Let 
+
+bη0,r (D) and bη aδ,ℓ,j,r (D) be the baseline and intervened coefficients for query feature r, estimated on the same queries, and define the coefficient response per unit attenuation by 
+
+bJ(ℓ,a ) 
+
+> rj
+
+= {bη0,r (D) − bη aδ,ℓ,j,r (D)}/δ. (9) We call j the source feature index and r the target feature index. 
+
+An illustrative coefficient-response matrix. Fig. 7 shows query-only interventions for one task, selected by proximity to the median Bayes coefficient norm. Column j corresponds to the attenuated feature and row r to the affected coefficient: diagonal entries indicate own-feature effects, while off-diagonal entries indicate effects on other features. In this example, the largest final-layer response lies on the active source’s own coefficient. The separate color scales show localization within each layer, not relative response magnitudes across layers. Context-only matrices are reported in App. F.2. 1 5 10 
+
+Source g  
+
+> 1510
+> Coefficient  r
+> Query | Layer 1
+> -0.03 00.03 1510
+
+Source g  
+
+> 1510
+> Coefficient  r
+> Query | Layer 2
+> -0.02 00.02 1510
+
+Source g
+
+> 1510
+> Coefficient  r
+> Query | Layer 3
+> -0.08 00.08
+
+Figure 7: Coefficient responses to query-message attenuation. Alternating-axis model, d = 10 , k = 1 , δ = 0 .1. The task is nearest the median Bayes coefficient norm among the 128 tasks. Each matrix column attenuates one source on query rows; matrix rows index affected coefficients. Color shows signed bJ(ℓ) 
+
+> rj
+
+with a symmetric scale per layer. Gold outlines mark the active source and its own coefficient. 
+
+4.2 Evaluating and interpreting selective routing 
+
+To determine whether these patterns persist across tasks, we quantify where the coefficient response occurs and how strong it is, computing each metric separately for context and query interventions and suppressing a below: 1. Specificity , p(ℓ) 
+
+> j
+
+= | bJ(ℓ) 
+
+> jj
+
+|/ P 
+
+> r
+
+| bJ(ℓ) 
+
+> rj
+
+|, is the fraction of the total absolute coefficient response occurring on feature j
+
+itself. A high value indicates that attenuating source j mainly changes the prediction’s linear dependence on that same feature, rather than other features. 2. Sensitivity , w(ℓ) 
+
+> j
+
+= | bJ(ℓ) 
+
+> jj
+
+|/|cj |, is the magnitude of the own-feature coefficient response per unit attenuation, normalized by the observed feature–response statistic |cj |. A high value indicates stronger control over that coefficient relative to this statistic. 8For d ∈ { 10 , 20 }, we compute specificity and sensitivity values on a collection same 128 datasets with sparsity k = 1 .We summarize effects separately over active and inactive features. App. F.1 gives the estimators, denominator handling, and aggregation. 
+
+Extension to TabPFN v2. Each source token in TabPFN v2 represents a native group of two features. We therefore attenuate a source group and aggregate its own-feature responses over both constituent coefficients. A group is active if it contains an active coordinate. The grouped definitions are given in App. F.1; below, a source denotes an individual feature in the simplified model or a feature group in TabPFN v2. 1 2 3
+
+Layer ℓ 
+
+> 0.0 0.5 1.0
+
+PR  
+
+> (a) 123
+
+Layer ℓ
+
+> 0.00 0.15 0.30
+
+w   
+
+> (b) 14812
+
+Layer ℓ 
+
+> 0.0 0.5 1.0
+
+PR   
+
+> (d) 14812
+
+Layer ℓ
+
+> 0.0 0.1 0.2
+
+w
+
+> (e)
+
+Figure 8: Support-selective message effects in context and query rows. Panels (a,b): alternating-axis model; (d,e): frozen TabPFN v2. d = 10 , k = 1 , δ = 0 .1; the same 128 tasks are used throughout. denotes context-row interventions; denotes query-row interventions. and denote active and inactive sources, respectively. For each model, panels show mean specificity PR and median sensitivity w, after averaging sources within each role and task. Prediction-error panels (c,f) appear in Fig. 32. Bands are pointwise 95% intervals from 2,000 generator-batch bootstrap resamples. 
+
+The results in Fig. 8 show similar patterns in the simplified alternating-axis model and TabPFN v2: • Selective computational routing. Active sources have high specificity, particularly for final-layer query messages (panels a, d): attenuating a feature’s messages predominantly changes its own coefficient. This supports selective computational routing through feature-indexed pathways. • Routing is task dependent. Active sources have higher specificity than inactive sources at every tested layer under both interventions. Their final-layer query sensitivities are also 5.1× and 2.3× the inactive-source values in the simplified model and TabPFN v2, respectively (panels b, e); both contrasts persist at d = 20 (App. F.3). • Computation is heterogeneous across layers. Own-feature sensitivity peaks in final-layer query messages; for active sources, the query median is 15 .5× and 8.9× the context median in the two models, respectively. Earlier messages exert weaker own-feature control, although this does not imply that those layers are dispensable. The signs of bJjj and cj do not always agree (App. F.4), suggesting that the computation is more complex than simply transmitting a positively weighted feature contribution. Coefficient changes nevertheless closely reconstruct the centered prediction response for final-layer active query interventions (median fidelity 0.976 and 0.969 ; App. F.2). Predictive consequences and robustness across attenuation strengths and support sizes are reported in Apps. F.3–F.6. Selective computational routing is a candidate mechanism underlying the alternating-axis advantage, but these experiments do not establish where relevance is inferred or whether reduced inactive-source influence reflects suppression within attention itself. 
+
+## 5 Conclusion 
+
+Irrelevant features expose differences among tabular foundation models that are less apparent on clean tasks. Controlled pretraining under matched sparse and dense linear priors shows that architecture contributes to this contrast: the alternating-axis model more accurately approximates the sparse Bayesian predictor, while its advantage contracts sharply at the dense endpoint. Almost all of the sparse prediction gap is attributable to coefficient error rather than intercept or nonlinear query effects. The analytical targets motivate this prior-dependent advantage: sparse prediction requires context-dependent feature weighting, whereas dense prediction requires only uniform shrinkage. Feature-message interventions provide evidence of selective computational routing in both the simplified alternating-axis model and pretrained TabPFN v2. Messages associated with active features exert more feature-specific coefficient control, with strong own-feature effects concentrated in final-layer query messages. These findings identify pathways 9that regulate predictive dependence on individual features, without establishing where relevance is inferred or fully explaining the architecture gap. Together, the results support studying architectural inductive biases through controlled task families and explicit computational targets, rather than seeking a universal ranking of tabular architectures. 
+
+## Acknowledgments 
+
+Tianqi Zhao and Qiong Zhang are supported by the National Key R&D Program of China Grant 2024YFA1015800. Y.S. Tan was supported by NUS Startup Grant A-8000448-00-00 and the Singapore Ministry of Education (MOE) AcRF Tier 1 Grants A-8002498-00-00 and A-8004458-00-00. 
+
+## References 
+
+Marin Biloš, James T. Wilson, Anderson Schneider, and Yuriy Nevmyvaka. A mechanistic study of tabular foundation models. arXiv preprint arXiv:2605.21288 , 2026. URL https://arxiv.org/abs/2605.21288 .Xiang Cheng, Yuxin Chen, and Suvrit Sra. Transformers implement functional gradient descent to learn non-linear functions in context. In International Conference on Machine Learning , 2024. URL https://proceedings.mlr. press/v235/cheng24a.html .Zi-Jian Cheng, Ziyi Jia, Zhi Zhou, Yu-Feng Li, and Lan-Zhe Guo. TabFSBench: Tabular benchmark for feature shifts in open environments. In International Conference on Machine Learning , 2025. URL https://proceedings.mlr. press/v267/cheng25e.html .Nick Erickson, Lennart Purucker, Andrej Tschalzev, David Holzmüller, Prateek Mutalik Desai, David Salinas, and Frank Hutter. TabArena: A living benchmark for machine learning on tabular data. In Advances in Neural Information Processing Systems , volume 38, 2025. URL https://proceedings.neurips.cc/paper_files/paper/ 2025/hash/1697e3fb412da11dc9488249f9e7bbc9-Abstract-Datasets_and_Benchmarks_Track.html .Datasets and Benchmarks Track. João Fonseca and Julia Stoyanovich. ExplainerPFN: Towards tabular foundation models for model-free zero-shot feature importance estimations. arXiv preprint arXiv:2601.23068 , 2026. URL https://arxiv.org/abs/2601.23068 .Jerome H. Friedman. Multivariate adaptive regression splines. The Annals of Statistics , 19(1):1–67, 1991. doi: 10.1214/aos/1176347963. Léo Grinsztajn, Klemens Flöge, Oscar Key, Felix Birkel, Philipp Jund, Brendan Roof, Benjamin Jäger, Dominik Safaric, Simone Alessi, Adrian Hayler, Mihir Manium, Rosen Yu, Felix Jablonski, Shi Bin Hoo, Anurag Garg, Jake Robertson, Magnus Bühler, Vladyslav Moroshan, Lennart Purucker, Clara Cornu, Lilly Charlotte Wehrhahn, Alessandro Bonetto, Bernhard Schölkopf, Sauraj Gambhir, Noah Hollmann, and Frank Hutter. TabPFN-2.5: Advancing the state of the art in tabular foundation models. arXiv preprint arXiv:2511.08667 , 2025. doi: 10.48550/arXiv.2511.08667. URL 
+
+https://arxiv.org/abs/2511.08667 .Léo Grinsztajn, Klemens Flöge, Oscar Key, Felix Birkel, Philipp Jund, Brendan Roof, Mihir Manium, Shi Bin Hoo, Magnus Bühler, Anurag Garg, Dominik Safaric, Jake Robertson, Benjamin Jäger, Simone Alessi, Adrian Hayler, Vladyslav Moroshan, Lennart Purucker, Philipp Singer, Alan Arazi, Julien Siems, Jan Hendrik Metzen, Georg Grab, Nick Erickson, Siyuan Guo, Eliott Kalfon, Simon Bing, David Salinas, Clara Cornu, Lilly Charlotte Wehrhahn, Diana Kriuchkova, Kursat Kaya, Lydia Sidhoum, Marie Salmon, Jerry Chen, Madelon Hulsebos, Yann LeCun, Samuel Müller, Bernhard Schölkopf, Sauraj Gambhir, Noah Hollmann, and Frank Hutter. TabPFN-3: Technical report. arXiv preprint arXiv:2605.13986 , 2026. URL https://arxiv.org/abs/2605.13986 .Atharva Gupta, Dhruv Kumar, Murari Mandal, and Saurabh Deshpande. Where computation lives inside TabPFN: Causal localisation of attention head function. arXiv preprint arXiv:2606.12917 , 2026. URL https://arxiv.org/ abs/2606.12917 . 2nd ICML Workshop on Foundation Models for Structured Data. Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. TabPFN: A transformer that solves small tabular classification problems in a second. In International Conference on Learning Representations , 2023. URL 
+
+https://openreview.net/forum?id=cp5PvcI6w8_ .Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo, Robin Tibor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular foundation model. Nature , 637: 319–326, 2025. doi: 10.1038/s41586-024-08328-6. Rasa Hosseinzadeh, Alex Labach, Zexin Xue, Shuyi Han, Valentin Thomas, and Anthony L. Caterini. TabDPT-Turbo: Efficient in-context learning for tabular prediction. arXiv preprint arXiv:2608.01400 , 2026. URL https: //arxiv.org/abs/2608.01400 . 2nd ICML Workshop on Foundation Models for Structured Data. 10 James Hu and Mahdi Ghelichi. Noise immunity in in-context tabular learning: An empirical robustness analysis of TabPFN’s attention mechanisms. arXiv preprint arXiv:2604.04868 , 2026. URL https://arxiv.org/abs/2604. 04868 .Sarthak Jain and Byron C. Wallace. Attention is not explanation. In Conference of the North American Chapter of the Association for Computational Linguistics , 2019. doi: 10.18653/v1/N19-1357. Christopher Kolberg, Jules Kreuer, Jonas Huurdeman, Sofiane Ouaari, Katharina Eggensperger, and Nico Pfeifer. TabPFN-Wide: Continued pre-training for extreme feature counts. arXiv preprint arXiv:2510.06162 , 2025. URL 
+
+https://arxiv.org/abs/2510.06162 .Weihao Kong and Abhimanyu Das. Introducing TabFM: A zero-shot foundation model for tab-ular data. Google Research Blog, June 2026. URL https://research.google/blog/ introducing-tabfm-a-zero-shot-foundation-model-for-tabular-data/ .Junwei Ma, Valentin Thomas, Rasa Hosseinzadeh, Alex Labach, Hamidreza Kamkari, Jesse C. Cresswell, Key-van Golestan, Guangwei Yu, Anthony L. Caterini, and Maksims Volkovs. TabDPT: Scaling tabular foun-dation models on real data. In Advances in Neural Information Processing Systems , volume 38, 2025. doi: 10.52202/085713-5748. URL https://proceedings.neurips.cc/paper_files/paper/2025/hash/ fc0e3f908a2116ba529ad0a1530a3675-Abstract-Conference.html .Alexander Pfefferle, Johannes Hog, Lennart Purucker, and Frank Hutter. nanoTabPFN: A lightweight and educational reimplementation of TabPFN. In EurIPS 2025 Workshop: AI for Tabular Data , 2025. URL https://openreview. net/forum?id=kYUf6HwAsM .Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. TabICL: A tabular foundation model for in-context learning on large data. In International Conference on Machine Learning , 2025. URL https: //proceedings.mlr.press/v267/qu25d.html .Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. TabICLv2: A better, faster, scalable, and open tabular foundation model. In International Conference on Machine Learning , 2026. URL https: //arxiv.org/abs/2602.11139 .Amir Rezaei Balef, Mykhailo Koshil, and Katharina Eggensperger. Is one layer enough? understanding inference dynamics in tabular foundation models. In International Conference on Machine Learning , 2026. URL https: //arxiv.org/abs/2605.06510 .Zeynep Türkmen, Kür¸ sat Kaya, Alexander Pfefferle, and Frank Hutter. Towards evaluating data priors for tabular foundation models. arXiv preprint arXiv:2606.29241 , 2026. URL https://arxiv.org/abs/2606.29241 . 2nd ICML Workshop on Foundation Models for Structured Data. Joaquin Vanschoren, Jan N. van Rijn, Bernd Bischl, and Luis Torgo. OpenML: Networked science in machine learning. 
+
+SIGKDD Explorations , 15(2):49–60, 2014. doi: 10.1145/2641190.2641198. Johannes von Oswald, Eyvind Niklasson, Ettore Randazzo, João Sacramento, Alexander Mordvintsev, Andrey Zh-moginov, and Max Vladymyrov. Transformers learn in-context by gradient descent. In International Conference on Machine Learning , 2023. URL https://proceedings.mlr.press/v202/von-oswald23a.html .Sarah Wiegreffe and Yuval Pinter. Attention is not not explanation. In Conference on Empirical Methods in Natural Language Processing , 2019. doi: 10.18653/v1/D19-1002. Qiong Zhang, Yan Shuo Tan, Qinglong Tian, and Pengfei Li. TabPFN: One model to rule them all? arXiv preprint arXiv:2505.20003 , 2025a. URL https://arxiv.org/abs/2505.20003 .Xiyuan Zhang, Danielle C. Maddix, Junming Yin, Nick Erickson, Abdul Fatir Ansari, Boran Han, Shuai Zhang, Leman Akoglu, Christos Faloutsos, Michael W. Mahoney, Cuixiong Hu, Huzefa Rangwala, George Karypis, and Yuyang Wang. Mitra: Mixed synthetic priors for enhancing tabular foundation models. In Advances in Neural Information Processing Systems , volume 38, 2025b. doi: 10.52202/085713-0535. URL https://proceedings.neurips.cc/ paper_files/paper/2025/hash/177d68f4adef163b7b123b5c5adb3c60-Abstract-Conference.html .
+
+## A Related work 
+
+Tabular foundation models and architectural axes. Prior-data fitted networks learn to approximate Bayesian prediction under a pretraining distribution and apply the learned procedure to new datasets in context (Hollmann et al., 2023; 2025). Modern TFMs differ not only in scale and pretraining data but also in how they represent a table. TabPFN v2 combines attention over observations with attention over randomized feature groups (Hollmann et al., 2025); TabICL and TabICL v2 use dedicated column embedding and compression stages before in-context processing (Qu et al., 2025; 11 2026). TabDPT emphasizes row tokens, learned dataset preprocessing, real-data pretraining, and retrieval for scaling the context (Ma et al., 2025). These systems confound architecture with prior, scale, and preprocessing, motivating our paired production stress test followed by common-prior training of streamlined architectures. Feature processing also determines how models scale to wide tables. TabPFN-Wide uses continued prior-informed pretraining to extend TabPFN to extreme feature counts and reports improved robustness to feature noise (Kolberg et al., 2025). This demonstrates that robustness depends on pretraining exposure as well as architecture. Our objective is complementary: we hold the prior fixed when comparing architectures, and then vary only the support structure of that common prior. 
+
+In-context learning as kernel aggregation or learned optimization. Theory for transformer in-context learning has connected attention to linear regression and gradient-based learning algorithms (von Oswald et al., 2023). For nonlinear targets, transformers can implement functional gradient descent, yielding similarity-weighted or kernel-like updates over context examples (Cheng et al., 2024). Such accounts make row attention a natural mechanism for aggregating labels from similar context observations. They do not by themselves explain how the similarity should adapt when most coordinates are irrelevant. In our controlled family, the dense Bayes rule is exactly a fixed row kernel, while the sparse Bayes rule requires its coordinate metric to depend on support evidence from the current task. This places feature suppression inside the kernel rather than treating a generic kernel interpretation as either sufficient or deficient. 
+
+Robustness to noisy and irrelevant features. The closest empirical study evaluates TabPFN under injected random and correlated features, label noise, and varying sample size, finding stable accuracy and increasingly concentrated feature attention (Hu & Ghelichi, 2026). Our production experiments broaden the comparison across five released TFMs and use paired regression tasks, while the controlled experiments separate architecture from pretraining and evaluate against known Bayes functions. Most importantly, attention concentration is not treated as mechanistic evidence: our source-route intervention tests whether a route has a feature-aligned effect on the fitted predictor. Work on feature shift benchmarks studies robustness to changing feature spaces more generally (Cheng et al., 2025); we focus specifically on task-irrelevant coordinates whose addition should leave the oracle prediction rule unchanged. 
+
+Mechanistic interpretation of TFMs. Recent studies show that similar benchmark accuracy can conceal different in-context algorithms. Biloš et al. (2026) find evidence for attention-weighted row voting in TabPFN v2 and a prototype-like representation in TabICL v2. Layerwise probing and structural interventions further suggest that TFM inference proceeds through iterative refinement, with substantial but non-interchangeable redundancy across depth (Rezaei Balef et al., 2026). At a finer scale, Gupta et al. (2026) use activation patching, head ablation, and attention entropy to localize task-dependent computation in TabPFN v2.5. These works ask where predictions or readout algorithms emerge. We instead start from a statistically defined computation—context-dependent coordinate gating—and measure how interventions change the fitted coefficient map. Because later representations may repair or redistribute an intervention, we use small dose responses and propagate every perturbation through the complete remaining network rather than equating a large one-shot ablation with a specific mechanism. 
+
+Feature attribution. Attribution and mechanism are related but distinct. ExplainerPFN predicts Shapley-style feature importance from the data distribution without access to the target model (Fonseca & Stoyanovich, 2026), while conventional post-hoc methods explain a fixed model through perturbations, gradients, or surrogate functions. Raw attention weights describe routing mass but omit the routed values, residual pathways, and downstream transformations; they therefore need not equal feature contributions (Jain & Wallace, 2019; Wiegreffe & Pinter, 2019). Our route-to-coefficient matrix is an intervention diagnostic, not a proposed replacement for SHAP. In full TabPFN v2 it is reported at token-group resolution because the tokenizer does not expose a one-to-one raw-feature route. 
+
+## B Discussion and limitations 
+
+Architecture–prior alignment, not a universal winner. The paper’s three stages support a conditional architectural claim. The released-model comparison identifies a practically relevant difference in irrelevant-feature suppression, the exact Bayes rules explain why sparse and dense priors demand different computations, and the controlled experiments test whether the two architectures learn those computations equally well. The alternating-axis advantage under sparsity, together with its contraction at the dense endpoint, is consistent with feature-indexed computation being aligned with context-dependent support inference. The coefficient decomposition further shows that the sparse prediction gap arises primarily from the learned coefficient map rather than from intercept or nonlinear query effects. This evidence does not make two-dimensional attention either necessary or sufficient for irrelevant-feature suppression. Deep row-token models can construct context-dependent metrics, and the fixed-kernel theorem does not cover that unrestricted class. Conversely, TabPFN v2, TabPFN v2.5, TabICL v2, and TabPFN v3 differ substantially in their tokenization and feature-processing pathways even though all are robust in the null-column experiment. The supported 12 conclusion is narrower: a coordinate-indexed computational route directly represents the sufficient statistics and posterior gates required for sparse task adaptation, and this alignment can improve learning under a matched training protocol. 
+
+Functional suppression and internal mechanism. We define suppression by the fitted predictor’s behavior rather than by exact support recovery. A null feature is functionally suppressed when changing its query value has little effect on the prediction and when adding many such features produces little loss in predictive performance. Under the sparse prior, the realized support is hidden, so even a generated inactive coordinate can have nonzero posterior inclusion probability and a nonzero posterior-mean coefficient. For this reason, the primary coefficient analysis compares the learned map with the posterior mean, while the active–inactive split serves as a secondary diagnostic for locating approximation error. The input–output diagnostics establish functional dependence but do not locate its internal implementation. Raw attention weights are also insufficient because a large weight may carry a small value vector, be canceled downstream, or be bypassed by a residual stream. The route-to-coefficient intervention instead asks how attenuating a specific feature message changes the fitted coefficient map after the perturbation propagates through the remaining network. Specificity locates the coefficient response, normalized sensitivity measures its magnitude, and ∆E tests whether the message improves Bayes approximation. Under the one-sparse prior, active sources have higher specificity throughout the network and greater final-layer sensitivity in both context and query processing. At intermediate sparsity, the active-source advantage persists in specificity and prediction-error changes. Across support sizes, feature-specific responses persist even at the dense endpoint, whereas active–inactive contrasts identify support selectivity only in sparse settings (App. F.6). These are local effects in fixed networks rather than a complete circuit identification, and norm-matched perturbation controls and replication across alternating-axis training seeds remain outside the present experiments. 
+
+Tokenization limits raw-feature conclusions. The controlled alternating-axis model assigns one address to each raw feature, whereas TabPFN v2 may place multiple raw features in the same token. A token-level intervention can therefore identify the causal role of a group route but cannot determine which member generated that role. Padding, singleton passes, and post-hoc splitting could create apparent member-level scores, but each option introduces an additional assumption or changes the model input. We consequently retain group-level claims for the frozen checkpoint under the evaluated single-estimator configuration and do not extend the intervention result to its full production ensemble. Any use of these interventions for raw-feature attribution would require a separate identification and validation argument. 
+
+Statistical and experimental scope. The exact theory assumes Gaussian queries, orthogonal context columns, a known support size, and a linear response. These assumptions remove feature correlation, support-size uncertainty, and nonlinear approximation so that the posterior inclusion calculation is explicit and learned predictors can be compared with the full Bayes function. The Friedman and OpenML experiments show that the motivating phenomenon extends beyond the orthogonal model, but they do not validate every step of the proposed mechanism outside that model. With correlated features, relevance can be shared among substitutes and the diagonal metric is no longer the complete statistical object. The released-model comparison is also observational with respect to architecture because the systems differ in pretraining data, preprocessing, scale, feature limits, and ensemble procedures. We disable TabDPT retrieval to avoid a separate full-space retrieval failure, while TabPFN v2 uses its native feature subsampling beyond the declared width limit. The controlled protocol removes many of these confounders by fixing the task prior and evaluation distribution, but differences in depth, token count, and computation remain inherent to the architectures. A fuller optimization-level comparison would additionally require explicit control of model capacity, training compute, seed variability, feature order, and checkpoint selection. Sensitivity to these choices and to intermediate support sizes determines how broadly the observed architectural advantage generalizes. 
+
+Implications. The sparse–dense comparison suggests that TFM evaluation should vary the structure of the task prior rather than report only average benchmark accuracy. It also suggests a design principle: when relevance changes across tasks, preserve an addressable feature axis long enough to accumulate evidence and modulate feature contributions. This primitive need not be implemented through dense feature attention, because shared feature gates, structured sparse attention, or other permutation-equivariant coordinate modules may provide cheaper routes to the same computation. The theory identifies the required statistical map, not a single mandatory architecture. 13 C Details for the pretrained production-model experiments 
+
+C.1 Shared paired data construction Synthetic tasks. We use seven unique Friedman configurations. A sample-size sweep sets N ∈ { 250 , 500 , 1000 , 2000 }
+
+at noise standard deviation σ = 1 , while a noise sweep sets σ ∈ { 0.5, 1, 2, 4} at N = 1000 ; the shared (N, σ ) = (1000 , 1) configuration is evaluated once. Each configuration contains 50 independently generated tasks with an 80/20 context/query split and five relevant features sampled from Unif(0 , 1) . Both benchmarks use the null-to-original feature ratios ρ ∈ { 0, 0.2, 0.4, 1, 2, 4, 7}. At the largest dose, we generate 35 null features drawn i.i.d. from Unif(0 , 1) ,the same marginal distribution as the relevant features, so a null column differs from a relevant one only in being independent of the response; context and query rows use separate random streams. Smaller doses take nested prefixes of the same feature bank, so the relevant-feature values, targets, response noise, split, and previously introduced null columns are identical within a paired comparison. 
+
+Real tasks and preprocessing. We use the 42 OpenML regression datasets listed in Table 1. A deterministic permutation selects at most 1,000 rows, followed by an approximately 80/20 context/query split; smaller tables use all available rows without resampling. Feature preprocessing is fit only on the context partition. Constant columns are removed, numeric missing values are median-imputed, and categorical features are ordinal-encoded, with a finite extra code for categories observed only in the query partition. This experiment-level preprocessing retains at most one numeric column per original feature. After the null-feature construction below, the resulting matrix is passed directly to each model, whose native inference pipeline may apply additional data-dependent preprocessing or feature expansion internally. For a real table with d retained features, we add r = ⌈ρd ⌉ null columns. At fractional doses, a seeded ordering selects 
+
+r original columns; at integer doses, we concatenate complete copies of the table. Each copy is permuted by whole rows, preserving dependence among its columns, with independent permutations for context and query. Smaller doses are nested within larger ones, and a final seeded column permutation removes positional distinctions between original and null features. Because r is integer-valued, the realized r/d can slightly exceed the requested ρ on narrow tables; cross-dataset summaries use the requested ρ.
+
+Construction repeats. Every Friedman task and every OpenML dataset is augmented five times independently, and these five construction repeats are used in every analysis in this section. A repeat redraws only the augmentation: the synthetic null columns, and, on real tables, the column selection and the whole-row permutations. The underlying task is held fixed, so the relevant features, targets, response noise, and context/query split are identical across the five repeats of a given task or dataset. All randomness is derived deterministically from a single run seed together with the source, the dataset identifier, and the repeat index, so one repeat presents identical inputs to every model and nests across doses; the five repeats are therefore paired across models and mutually independent. Unless stated otherwise, every summary below averages the five repeats within a task or dataset before aggregating across tasks or datasets. 
+
+> Table 1: OpenML regression datasets used in the irrelevant-feature experiments of Section 2. Numbers are OpenML dataset IDs.
+
+41021 Moneyball 44971 White Wine 44989 King County 44956 Abalone 44972 Red Wine 44990 Brazilian Houses 44957 Airfoil Self Noise 44973 Grid Stability 44992 FPS Benchmark 44958 Auction Verification 44974 Video Transcoding 44993 Health Insurance 44959 Concrete Strength 44975 Wave Energy 44994 Cars 44960 Energy Efficiency 44976 SARCOs 45012 FIFA 44962 Forest Fires 44977 California Housing 45402 Space GA 44963 Physicochemical Protein 44978 CPU Activity 196 Auto MPG 44964 Superconductivity 44979 Diamonds 230 Machine CPU 44965 Geographical Origin of Music 44980 Kin8nm 560 Body Fat 44966 Solar Flare 44981 PumaDyn32NH 42370 Yacht Hydrodynamics 44967 Student Performance 44983 Miami Housing 44146 Medical Charges 44969 Naval Propulsion 44984 CPS88 Wages 46286 Communities and Crime 44970 QSAR Fish Toxicity 44987 Socmob 46292 Servo 
+
+14 C.2 Predictive degradation under null features Released checkpoints and inference. We use the official released regression checkpoints in Table 2 and the de-fault inference settings of the package versions listed there, including native preprocessing and target handling. We make two exceptions. First, we disable TabDPT retrieval while retaining the full context. Second, we set 
+
+ignore_pretraining_limits=true for TabPFN v2 because its declared 500-feature limit is below the maximum experimental width of 976; its native pipeline then performs estimator-level feature subsampling in these wide condi-tions. TabPFN v2.5 and v3 have 2,000-feature limits and require no override. This subsampling therefore affects only TabPFN v2 on the widest OpenML conditions: the largest Friedman width is 40 features, and TabPFN v2.5 and v3 reach comparable OpenML robustness without any override. TabPFN v2’s stability is thus not an artifact of discarding the added columns. 
+
+Table 2: Official released regression checkpoints and departures from their package-default inference settings.                   
+
+> System Package Official checkpoint Departure from default TabDPT (retrieval off) tabdpt 1.2.0 tabdpt1_2.safetensors retrieval disabled TabPFN v2 tabpfn 8.0.8 tabpfn-v2-regressor.ckpt width-limit override TabPFN v2.5 tabpfn 8.0.8 tabpfn-v2.5-regressor-v2.5_default.ckpt none TabICL v2 tabicl 2.1.1 tabicl-regressor-v2-20260212.ckpt none TabPFN v3 tabpfn 8.0.8 tabpfn-v3-regressor-v3_default.ckpt none
+
+All reported inference used PyTorch 2.7.1 (CUDA 12.8 build) and NVIDIA GeForce RTX 5090 GPUs. 
+
+Metrics and aggregation. We use the query-set R2 drop Drop a,t (ρ) = R2
+
+> a,t
+
+(0) − R2
+
+> a,t
+
+(ρ). We first average the five construction repeats within each task or dataset and then report medians; the appendix figures below add the corresponding IQRs, which the main-text figure omits because they describe the spread of the benchmark collection rather than the model comparison. For the primary two-model comparison, we subtract these repeat-averaged drops within each task: ∆t(ρ) = Drop TabDPT ,t (ρ) − Drop TabPFN v2 ,t (ρ). Each Friedman configuration contributes 50 tasks, so the pooled synthetic summary weights the seven configurations equally. 
+
+Table 3: Median paired R2 drop at the maximum dose ρ = 7 . Friedman pools seven configurations with 50 tasks each; OpenML contains 42 datasets. Brackets contain the 25th and 75th percentiles.             
+
+> System Friedman OpenML TabDPT (retrieval off) 0.0370 [0.0246, 0.0562] 0.0713 [0.0291, 0.1584] TabPFN v2 0.0008 [ −0.00003, 0.0018] 0.0014 [0.0001, 0.0096] TabPFN v2.5 −0.0002 [ −0.0012, 0.0002] 0.0011 [ −0.0010, 0.0063] TabICL v2 0.0021 [0.0011, 0.0055] 0.0026 [0.0000, 0.0084] TabPFN v3 0.0014 [0.0005, 0.0034] 0.0017 [ −0.0001, 0.0057]
+
+Table 4: Paired R2-drop difference ∆t(ρ) between TabDPT (retrieval off) and TabPFN v2. Entries are medians [25th, 75th percentiles] across 350 Friedman task-settings or 42 OpenML datasets, after averaging five construction repeats within each task. Positive values mean greater degradation for TabDPT.               
+
+> ρFriedman OpenML 0.2 0.0001 [ −0.0004, 0.0007] 0.0003 [ −0.0011, 0.0040] 0.4 0.0002 [ −0.0005, 0.0011] 0.0005 [ −0.0015, 0.0083] 10.0006 [ −0.0002, 0.0020] 0.0022 [ −0.0004, 0.0214] 20.0020 [0.0008, 0.0051] 0.0117 [0.0020, 0.0476] 40.0107 [0.0049, 0.0213] 0.0270 [0.0120, 0.1143] 70.0363 [0.0238, 0.0550] 0.0698 [0.0280, 0.1525]
+
+Friedman setting sweeps. Figure 10 resolves the Friedman dose response by observation noise and by total sample size, and repeats the OpenML summary with its IQR. TabDPT degrades in every setting, most strongly at small N . The other systems stay close to their clean baselines, except that TabICL v2 degrades noticeably at the smallest sample size (N = 250 ). 
+
+OpenML width stratification. Figure 11 separates the OpenML datasets by their pre-augmentation feature count. The dose-dependent TabDPT degradation is visible in all three strata and is not driven only by the naturally widest tables. 15 0 1 2 4 7
+
+Null-feature ratio ρ
+
+> 0.90 0.91 0.92 0.93 0.94 0.95
+> Median  R2
+
+a Friedman (350 task-settings)     
+
+> 01247
+
+Null-feature ratio ρ
+
+> 0.65 0.70 0.75 0.80 0.85 0.90
+
+b OpenML (42 datasets) 
+
+> TabDPT v1.2 (retrieval off) TabPFN v2 TabPFN v2.5 TabICL v2 TabPFN v3
+
+Figure 9: Raw query-set R2 without subtracting the ρ = 0 baseline. Points show medians across tasks or datasets after averaging construction repeats. The five models have comparable clean performance within each benchmark setting. 0 1 2 4 7
+
+Null-feature ratio ρ
+
+> 0.00 0.05 0.10 0.15
+> Median  R2 drop
+
+a
+
+Friedman: noise sweep (N = 1000 )     
+
+> Noise std. σ
+> 0.5 12401247
+
+Null-feature ratio ρ
+
+b
+
+Friedman: sample-size sweep (σ = 1 )     
+
+> Total samples N
+> 2000 1000 500 250 01247
+
+Null-feature ratio ρ
+
+c OpenML (42 datasets) 
+
+> TabDPT v1.2 (retrieval off) TabPFN v2 TabPFN v2.5 TabICL v2 TabPFN v3
+
+Figure 10: Friedman noise and sample-size sweeps for the R2 drop. Panels (a) and (b) vary observation noise and total sample size, respectively; shade and line width encode the setting, and ribbons span the IQR across 50 tasks. Panel (c) reports the median and IQR across 42 OpenML datasets. 
+
+16 0 1 2 4 7 
+
+> Null-feature ratio ρ
+> 0.0 0.1 0.2 0.3
+> R2 drop from clean baseline
+
+a        
+
+> Low-dimensional
+> dbase ≤ 8 (n= 16 )
+> 01247
+> Null-feature ratio ρ
+
+b         
+
+> Mid-dimensional
+> 9 ≤ dbase ≤ 18 (n= 15 )
+> 01247
+> Null-feature ratio ρ
+
+c   
+
+> High-dimensional
+> dbase ≥ 21 (n= 11 )
+> TabDPT v1.2 (retrieval off) TabPFN v2 TabPFN v2.5 TabICL v2 TabPFN v3
+
+Figure 11: OpenML R2 drop stratified by the number of retained features before augmentation, dbase . Points and ribbons show medians and IQRs across datasets in each stratum. 
+
+C.3 Functional dependence on null features Setup. This analysis uses the same seven Friedman configurations and 42 OpenML datasets as the dose response above, at all seven ratios and all five construction repeats. The primary comparison is between TabDPT with retrieval disabled and TabPFN v2, with the checkpoints and inference settings in Table 2. 
+
+Single-feature permutation shift. Let yquery denote the held-out query targets, by the query predictions, and byperm( j)
+
+the predictions after permuting query feature j while holding the context and all other query features fixed. We define the normalized prediction shift as 
+
+Sperm  
+
+> j
+
+= RMSE( byperm( j), by)SD( yquery ) , (10) and call it the null-feature shift when j is an added null coordinate. Corresponding features use the same permutation across models and nested doses. The five construction repeats already provide independent draws of the null features, so we do not add a second permutation loop within each repeat. The known relevant features in the synthetic tasks provide positive controls. For real data, we compare added null features with original features, whose relevance is unknown. 
+
+One-way PDP variation. We additionally evaluate one-way partial-dependence curves at the empirical quantiles 5% ,
+
+27 .5% , 50% , 72 .5% , and 95% . Each synthetic condition includes all five relevant features. Real conditions include at most five original features, and both benchmarks include at most five null features. Grids are fixed across models and doses. Relevant-feature and original-feature grids come from the clean context; a real null feature uses the grid of the original feature from which it was copied. We summarize feature j by 
+
+SPDP  
+
+> j
+
+=SD u∈G j
+
+h
+
+Q−1eval 
+
+PQeval  
+
+> q=1
+
+bf (D, x j←uq )
+
+i
+
+SD( yquery ) , (11) where Gj is its five-point grid, Qeval is the number of query rows, and xj←uq replaces coordinate j of xq with u while keeping all other coordinates fixed. The context D and fitted model remain fixed throughout. We report this summary over two sets of null features. The first is all null features present at the current dose, so its membership grows with ρ.The second is restricted to the null features introduced at the smallest positive dose ρ = 0 .2; because doses are nested, these same columns are still present at every larger dose, and the restriction is the same for both models. A change in the first summary can come either from the model’s dependence on a given column or from the changing composition of the set being averaged, whereas the second follows one fixed set of columns across the dose grid. 
+
+Aggregation. For each model, dose, and feature role, we average first across features within each task and repeat, and then across the five repeats. The appendix figures (Figures 12, 13, 16, 17, and 18) report medians and IQRs across tasks or datasets; the main-text figure (Figure 2(b)) reports medians only. 17 .2 1 2 4 7
+
+Null-feature ratio ρ
+
+> 0.0 0.2 0.4 0.6
+> Normalized prediction shift
+
+a Friedman Relevant features    
+
+> .2 1 247
+
+Null-feature ratio ρ
+
+b OpenML Original features    
+
+> .2 1 247
+
+Null-feature ratio ρ
+
+> 0.00 0.01 0.02 0.03 0.04 0.05
+> Normalized prediction shift
+
+c Friedman Null features    
+
+> .2 1 247
+
+Null-feature ratio ρ
+
+d OpenML Null features  
+
+> TabDPT v1.2 (retrieval off) TabPFN v2
+
+Figure 12: Normalized prediction shift from Eq. 10. Panels (a,b) show relevant Friedman features and original OpenML features; panels (c,d) show added null features in the same order. The two feature-role pairs use separate vertical scales. Points show medians and ribbons span the IQR after averaging features and five construction repeats within each task. Friedman panels pool the seven configurations equally; OpenML panels summarize 42 datasets. Panels (c,d) show the null-feature shift plotted in Figure 2(b). .2 1 2 4 7
+
+Null-feature ratio ρ
+
+> 0.0 0.1 0.2 0.3 0.4
+> Normalized PDP variation
+
+a Friedman Relevant features    
+
+> .2 1 247
+
+Null-feature ratio ρ
+
+b OpenML Original features    
+
+> .2 1 247
+
+Null-feature ratio ρ
+
+> 0.000 0.005 0.010 0.015
+> Normalized PDP variation
+
+c Friedman Null features    
+
+> .2 1 247
+
+Null-feature ratio ρ
+
+d OpenML Null features  
+
+> TabDPT v1.2 (retrieval off) TabPFN v2
+
+Figure 13: Normalized one-way PDP variation. Panels (a,b) show relevant Friedman features and original OpenML features; panels (c,d) show added null features in the same order, with a separate vertical scale for each feature-role pair. Points show medians across tasks or datasets and ribbons span the IQR after averaging eligible features and five construction repeats within each task. The ordering agrees with the permutation intervention in Figure 12. 
+
+Relevant-feature controls. Figure 12 places the main-text result next to its positive controls. Both models respond an order of magnitude more strongly to relevant Friedman features or original OpenML covariates than to added null features, so the difference in null-feature sensitivity is not a difference in overall responsiveness. TabDPT’s response to the relevant Friedman features also decreases with dose, whereas TabPFN v2 remains stable. Restricting the PDP summary to the null features introduced at ρ = 0 .2, and following those same columns as the dose grows, reproduces the ordering obtained over all null features: TabDPT keeps depending on them, while TabPFN v2 suppresses them further at larger doses. The ordering therefore does not depend on which null features enter the average at each dose. 
+
+Representative PDP curves. Figures 14 and 15 show column-resolved examples at ρ = 7 for one Friedman task and Grid Stability, respectively. Each curve is centered at its 50% grid point. The Friedman example labels the five relevant columns xj and the added null columns zk. For Grid Stability, an added column zk is labeled by the original column from which it was copied; matching colors identify the same source column. Both figures show one deterministic 18 −6 −4 −2 024
+
+> Centered PDP response
+
+a TabDPT v1.2 (retrieval off): relevant columns 
+
+> 0.0 0.1 0.2
+
+b TabDPT v1.2 (retrieval off): added null columns     
+
+> 527.5 50 72.5 95
+> Feature quantile (%)
+> −6 −4 −2 024
+> Centered PDP response
+
+c TabPFN v2: relevant columns     
+
+> 527.5 50 72.5 95
+> Feature quantile (%)
+> 0.0 0.1 0.2
+
+d TabPFN v2: added null columns 
+
+Friedman task 000 ( N = 1000 , σ = 1 , ρ = 7 )          
+
+> Relevant x1
+> Relevant x2
+> Relevant x3
+> Relevant x4
+> Relevant x5
+> Added z1
+> Added z2
+> Added z3
+> Added z4
+> Added z5
+
+Figure 14: Column-resolved PDPs for a fixed Friedman task with N = 1000 and σ = 1 . Both models respond to the relevant features, while TabDPT shows a larger response to the added null features. 
+
+construction repeat, whereas the aggregate results in Figure 13 use all five repeats. Relevant-feature or original-feature panels and null-feature panels use separate vertical scales, each shared across the two models. 
+
+Friedman setting dependence. Figure 16 resolves the permutation result by noise and sample size. The null-feature gap persists in both sweeps from ρ = 1 onward and is largest at smaller sample sizes; the response to relevant features remains substantially larger than the response to null features. 
+
+OpenML width stratification. Stratifying OpenML datasets by their original width preserves the larger TabDPT sensitivity to null features under both interventions (Figures 17 and 18). 
+
+C.4 Replication across TabDPT releases Motivation and protocol. The two analyses above evaluate the TabDPT release that was current when we ran them, v1.2. To test whether the irrelevant-feature sensitivity is specific to that release, we repeat both experiments for the official v1.0, v1.1 and v1.3 checkpoints on exactly the same 350 Friedman task-settings, the same 42 OpenML datasets, the same five construction repeats and the same dose grid. Each release runs with the default inference settings of its own package version (Table 5), with the single departure used throughout this section: the full training context, that is retrieval disabled. Ensembling, preprocessing, outlier clipping, feature reduction and target handling therefore differ between releases exactly as their defaults differ, and the comparison is observational with respect to architecture in the same sense as the cross-system comparison above. Table 5 lists the artifacts and the resulting departures. 19 −0.03 −0.02 −0.01 0.00 0.01 
+
+> Centered PDP response
+
+a TabDPT v1.2 (retrieval off): original columns 
+
+> −0.0015 −0.0010 −0.0005 0.0000 0.0005 0.0010
+
+b TabDPT v1.2 (retrieval off): added null columns     
+
+> 527.5 50 72.5 95
+
+Feature quantile (%) 
+
+> −0.03 −0.02 −0.01 0.00 0.01
+> Centered PDP response
+
+c TabPFN v2: original columns     
+
+> 527.5 50 72.5 95
+
+Feature quantile (%) 
+
+> −0.0015 −0.0010 −0.0005 0.0000 0.0005 0.0010
+
+d TabPFN v2: added null columns 
+
+grid_stability (OpenML 44973, dbase = 12 , ρ = 7 )
+
+Original x2
+
+Original x6
+
+Original x8
+
+Original x9
+
+Original x12 
+
+Added z1 from x8
+
+Added z2 from x9
+
+Added z3 from x2
+
+Added z4 from x6
+
+Added z5 from x12 Figure 15: Column-resolved PDPs for Grid Stability, a medium-dimensional OpenML dataset with 12 original features. Table 5: TabDPT releases used in the replication. The default context of tabdpt 1.1.14 already exceeds every context in our tasks, and tabdpt 1.2.0 and 1.3.0 use the full context by default, so only v1.0 departs from its package default. 
+
+Release Package Official checkpoint Default ensemble Departure from default TabDPT v1.0 tabdpt 0.1.0 tabdpt_76M.ckpt single estimator full context instead of 128-row retrieval TabDPT v1.1 tabdpt 1.1.14 tabdpt1_1.safetensors 8 none in effect TabDPT v1.2 tabdpt 1.2.0 tabdpt1_2.safetensors 8 none TabDPT v1.3 tabdpt 1.3.0 tabdpt1_3.safetensors 8 none 
+
+20 0.0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 
+
+> Relevant features Normalized prediction shift
+
+a Noise sweep ( N = 1000 ) 
+
+> Noise std. σ
+> 0.5 124
+
+b Sample-size sweep ( σ = 1 )      
+
+> Total samples N
+> 2000 1000 500 250 .2 1247
+> Null-feature ratio ρ
+> 0.00 0.01 0.02 0.03 0.04 0.05
+> Null features Normalized prediction shift
+
+c     
+
+> .2 1247
+> Null-feature ratio ρ
+
+d 
+
+> TabDPT v1.2 (retrieval off) TabPFN v2
+
+Figure 16: Friedman permutation sensitivity across noise and sample-size settings. Shade and line width encode the setting; ribbons show IQRs across 50 tasks. Columns vary noise (left) and total sample size (right), while rows show relevant (top) and null (bottom) features. 
+
+Dose response. Figure 19(a, b) shows that every release degrades as null columns accumulate, and that the degradation shrinks monotonically from v1.0 to v1.3 on both benchmarks. At the largest dose the median R2 drop on Friedman falls from 0.1466 for v1.0 to 0.0089 for v1.3, and on OpenML from 0.1205 to 0.0619 ; the TabPFN v2 reference stays at 0.0008 and 0.0014 (Table 6). Even the newest release therefore remains more than an order of magnitude more dose-sensitive than TabPFN v2 on OpenML, and it still has a larger R2 drop than TabPFN v2 on 94 .0% of Friedman task-settings and 92 .9% of OpenML datasets. Panels (c, d) give the absolute medians behind these drops: the releases differ in clean-task accuracy as well, most visibly on OpenML, which is why the paired drop rather than the raw R2 is the comparable quantity. 
+
+Functional sensitivity. Figure 20 repeats the functional analysis for the same releases. Panels (a, b) are the positive controls: all releases respond to relevant Friedman features or original OpenML features about an order of magnitude more strongly than to the added nulls, so the differences in panels (c, d) are not differences in overall responsiveness. On the added null features the ordering matches the dose response, with the median null-feature shift at ρ = 7 falling from 0.0344 (v1.0) to 0.0115 (v1.3) on Friedman and from 0.0276 to 0.0156 on OpenML, against 0.0029 and 0.0021 
+
+for TabPFN v2. Newer releases suppress null coordinates better, and none of them matches the suppression achieved by TabPFN v2. 
+
+Scope. These runs show that the phenomenon is a property of every released TabDPT version rather than of one checkpoint, and that the releases have been reducing it. They do not attribute the trend to any particular architectural change: consecutive releases differ simultaneously in weights and training data, default ensembling, clipping thresholds, preprocessing and output parameterization (see the release notes of each package version). 21 0.0 0.1 0.2 0.3 0.4 0.5 0.6 
+
+> Original features Normalized prediction shift
+
+a
+
+Low-dimensional 
+
+dbase ≤ 8 (n = 16 ) b
+
+Mid-dimensional 
+
+9 ≤ dbase ≤ 18 (n = 15 ) c
+
+High-dimensional 
+
+dbase ≥ 21 (n = 11 )
+
+0 1 2 4 7
+
+Null-feature ratio ρ
+
+0.00 0.01 0.02 0.03 0.04 0.05 0.06 
+
+> Null features Normalized prediction shift
+
+d
+
+0 1 2 4 7
+
+Null-feature ratio ρ
+
+e
+
+0 1 2 4 7
+
+Null-feature ratio ρ
+
+f
+
+TabDPT v1.2 (retrieval off) TabPFN v2 Figure 17: OpenML permutation sensitivity stratified by pre-augmentation feature count. Rows show original and null features; points and ribbons show medians and IQRs across datasets. Table 6: TabDPT releases at the maximum dose ρ = 7 . Entries are medians [25th, 75th percentiles] across 350 Friedman task-settings or 42 OpenML datasets after averaging five construction repeats within each task. The last column is the percentage of paired tasks on which the release exceeds TabPFN v2 in R2 drop, Friedman / OpenML.                                  
+
+> R2drop Null-feature shift Exceeds TabPFN v2 Release Friedman OpenML Friedman OpenML (% of tasks) TabDPT v1.0 0.1466 [0.1213, 0.1780] 0.1205 [0.0547, 0.1661] 0.0344 [0.0324, 0.0367] 0.0276 [0.0194, 0.0431] 100.0 / 97.6 TabDPT v1.1 0.0727 [0.0533, 0.1095] 0.0999 [0.0406, 0.1709] 0.0300 [0.0278, 0.0333] 0.0229 [0.0143, 0.0304] 100.0 / 97.6 TabDPT v1.2 0.0370 [0.0246, 0.0562] 0.0713 [0.0291, 0.1584] 0.0188 [0.0177, 0.0202] 0.0180 [0.0127, 0.0330] 98.9 / 95.2 TabDPT v1.3 0.0089 [0.0039, 0.0233] 0.0619 [0.0162, 0.1130] 0.0115 [0.0096, 0.0135] 0.0156 [0.0088, 0.0272] 94.0 / 92.9 TabPFN v2 (reference) 0.0008 [ −0.00003, 0.0018] 0.0014 [0.0001, 0.0096] 0.0029 [0.0020, 0.0043] 0.0021 [0.0011, 0.0051] —
+
+22 0.0 0.1 0.2 0.3 0.4 
+
+> Original features Normalized PDP variation
+
+a
+
+Low-dimensional 
+
+dbase ≤ 8 (n = 16 ) b
+
+Mid-dimensional 
+
+9 ≤ dbase ≤ 18 (n = 15 ) c
+
+High-dimensional 
+
+dbase ≥ 21 (n = 11 )    
+
+> 01247
+
+Null-feature ratio ρ
+
+> 0.000 0.005 0.010 0.015
+> Null features Normalized PDP variation
+
+d    
+
+> 01247
+
+Null-feature ratio ρ
+
+e    
+
+> 01247
+
+Null-feature ratio ρ
+
+f 
+
+> TabDPT v1.2 (retrieval off) TabPFN v2
+
+Figure 18: OpenML PDP variation stratified by pre-augmentation feature count, using the same aggregation as Figure 13. 
+
+23 0 1 2 4 70.00 0.05 0.10 0.15 
+
+> Median  R2 drop
+
+a Friedman (350 task-settings)     
+
+> 012470.00 0.05 0.10 0.15
+
+b OpenML (42 datasets)     
+
+> 01247
+
+Null-feature ratio ρ
+
+> 0.75 0.80 0.85 0.90 0.95
+> Median  R2
+
+c    
+
+> 01247
+
+Null-feature ratio ρ
+
+> 0.65 0.70 0.75 0.80 0.85 0.90
+
+d
+
+> TabDPT v1.0 TabDPT v1.1 TabDPT v1.2 TabDPT v1.3 TabPFN v2 (reference)
+
+Figure 19: Null-feature dose response of four TabDPT releases with TabPFN v2 as reference. (a, b) Median R2 drop with interquartile bands. (c, d) Median absolute R2 at each dose. Aggregation matches Figure 10: five construction repeats are averaged within each task before taking medians across 350 Friedman task-settings or 42 OpenML datasets. 
+
+24 .2 1 2 4 7
+
+Null-feature ratio ρ
+
+> 0.0 0.2 0.4 0.6
+> Normalized prediction shift
+
+a Friedman Relevant features    
+
+> .2 1 247
+
+Null-feature ratio ρ
+
+b OpenML Original features    
+
+> .2 1 247
+
+Null-feature ratio ρ
+
+> 0.00 0.02 0.04 0.06 0.08
+> Normalized prediction shift
+
+c Friedman Null features    
+
+> .2 1 247
+
+Null-feature ratio ρ
+
+d OpenML Null features 
+
+> TabDPT v1.0 TabDPT v1.1 TabDPT v1.2 TabDPT v1.3 TabPFN v2 (reference)
+
+Figure 20: Normalized prediction shift under single-feature permutation for four TabDPT releases, with TabPFN v2 as reference. (a, b) Relevant Friedman features and original OpenML features as positive controls. (c, d) Added null features. Aggregation matches Figure 12. 
+
+25 D Derivations and proofs for the sparse and dense priors 
+
+We use the model and notation of Section 3. Throughout, n ≥ d ≥ 2, v2, σ 2 > 0, and k ∈ { 1, . . . , d } are fixed. Expectations are taken under Pk and the fixed-design regression model. 
+
+D.1 Sufficiency and matched prior moments 
+
+The design X can be fixed or drawn independently of the coefficient prior subject to X⊤X = nI d. One random construction is X = √nQ , where Q contains the orthonormal columns from a thin QR factorization of an n × d
+
+matrix with independent standard Gaussian entries. Given X, draw S uniformly from Sk, draw its k active coefficients independently with variance v2/k , and draw observation noise independently. Let PX = XX ⊤/n . Orthogonality gives 
+
+∥y − Xβ ∥22 = ∥(In − PX )y∥22 + n∥c − β∥22, c = X⊤yn . (12) The first term is independent of β, so the posterior depends on D only through c. Moreover, 
+
+c = 1
+
+n X⊤y = β + ξ, ξ = X⊤εn ∼ N (0 , τ 2Id), τ 2 = σ2
+
+n . (13) Indeed, Cov( X⊤ε/n | X) = σ2X⊤X/n 2 = τ 2Id. Its noise law is therefore the same for every admissible X.For each coordinate, 
+
+Pr( j ∈ S) = kd , E[βj ] = 0 , E[β2 
+
+> j
+
+] = kdv2
+
+k = v2
+
+d . (14) For distinct j, r , conditional independence and zero conditional means give E[βj βr | S] = 0 . Averaging over S and summing the coordinate variances proves the matched-moment identities stated in Section 3, including the dense endpoint. 
+
+D.2 Support posterior and posterior-mean coefficient map 
+
+Write ak = v2/k . Conditional on a candidate support A ∈ S k, integrating the Gaussian coefficient prior against the likelihood gives independent coordinates with 
+
+cj | S = A ∼
+
+N (0 , a k + τ 2), j ∈ A, 
+
+N (0 , τ 2), j / ∈ A. (15) Their joint density is 
+
+p(c | S = A) = exp 
+
+
+
+− ∥c∥22  
+
+> 2τ2
+
++ θk
+
+P 
+
+> j∈A
+
+c2
+
+> j
+
+
+
+(2 π)d/ 2(ak + τ 2)k/ 2(τ 2)(d−k)/2 , θk = ak
+
+2τ 2(ak + τ 2) . (16) Since all candidate supports have size k and equal prior probability, all factors except the support score cancel in Bayes’ rule, giving 
+
+πk(A | c) = exp 
+
+
+
+θk
+
+P 
+
+> j∈A
+
+c2
+
+> j
+
+P 
+
+> B∈S k
+
+exp  θk
+
+P 
+
+> r∈B
+
+c2
+
+> r
+
+ , A ∈ S k. (17) Marginalizing the support indicators gives 
+
+qk,j (c) = Pr( j ∈ S | c) = X
+
+> A∈S k
+> j∈A
+
+πk(A | c),
+
+> d
+
+X
+
+> j=1
+
+qk,j (c) = E[|S| | c] = k. (18) For an active coordinate, Gaussian conjugacy gives 
+
+βj | c, S = A ∼ N (λkcj , λ kτ 2), λk = ak
+
+ak + τ 2 . (19) Inactive coordinates remain zero. Hence 
+
+E[βj | c] = X
+
+> A∈S k
+
+πk(A | c)λkcj 1{j ∈ A} = λkqk,j (c)cj . (20) Sufficiency and independence of the prediction noise then imply 
+
+E[yq | D, x ] = x⊤E[β | D] = x⊤η∗
+
+> k
+
+(c), (21) which is the unique squared-risk minimizer up to almost-sure equality. 26 D.3 Data dependence of the Bayes feature metric 
+
+We verify the claim in Section 3 that the Bayes predictor is a row kernel with diagonal feature metric diag( qk(c)) ,which is the identity for k = d and varies with the context for every k < d .
+
+Proof. Substituting c = n−1 P 
+
+> i
+
+xiyi into the posterior mean gives 
+
+f ∗ 
+
+> k
+
+(D, x ) = λkx⊤ diag( qk(c)) c = λk
+
+n
+
+> n
+
+X
+
+> i=1
+
+yix⊤ diag( qk(c)) xi. (22) For k = d, the only support is [d], so qd(c) = 1 and the metric is the identity. For k < d , fix a coordinate j and fix c−j . Define the positive finite quantities 
+
+Uj = X
+
+> A⊆[d]\{ j}|A|=k−1
+
+exp θk
+
+X
+
+> r∈A
+
+c2
+
+> r
+
+!
+
+, Vj = X
+
+> A⊆[d]\{ j}|A|=k
+
+exp θk
+
+X
+
+> r∈A
+
+c2
+
+> r
+
+!
+
+. (23) The empty-support term is one. Separating supports according to whether they contain j yields 
+
+qk,j (c) = eθk c2 
+
+> j
+
+Uj
+
+eθk c2 
+
+> j
+
+Uj + Vj
+
+. (24) Because θk, U j , V j > 0, this quantity is strictly increasing in c2 
+
+> j
+
+and converges to one as |cj | → ∞ . The diagonal metric therefore varies with c for every k < d .
+
+D.4 Response-affine barrier 
+
+Proof of Theorem 1. Fix X and x̸ = 0 , and write α = v2/d . The matched first two moments and independent Gaussian noise give 
+
+E[y] = 0 , Cov( y) = αXX ⊤ + σ2In, Cov( y, y q ) = αXx. (25) The response covariance is positive definite. Because X⊤X = nI d, the vector Xx is its eigenvector with eigenvalue 
+
+nα + σ2. Hence the unique least-squares coefficients for predicting yq affinely from y are 
+
+a∗ = 0 , b∗ = Cov( y)−1 Cov( y, y q ) = αnα + σ2 Xx = λd
+
+n Xx. (26) Therefore (b∗)⊤y = λdx⊤c. Uniqueness also follows from 
+
+E[( a + b⊤y − yq )2] − E[(( b∗)⊤y − yq )2] = a2 + ( b − b∗)⊤ Cov( y)( b − b∗). (27) The calculation uses only the matched first two moments and consequently has the same solution for every Pk.Since f ∗ 
+
+> k
+
+(D, x ) = E[yq | D, x ], the conditional-mean identity gives, for every D-measurable predictor f ,
+
+E[( f (D, x ) − yq )2] = E[( f (D, x ) − f ∗ 
+
+> k
+
+(D, x )) 2] + E[( f ∗ 
+
+> k
+
+(D, x ) − yq )2]. (28) The second term does not depend on f . Thus the same affine predictor minimizes approximation error to f ∗ 
+
+> k
+
+, and 
+
+inf    
+
+> f∈F aff (x)
+
+ED [( f (D, x ) − f ∗ 
+
+> k
+
+(D, x )) 2] = ED
+
+{x⊤(λdc − η∗
+
+> k
+
+(c)) }2 . (29) For strict positivity, take k < d and choose j with xj̸ = 0 . At c = te j , all coordinates of λdc − η∗
+
+> k
+
+(c) except j vanish. Moreover, qk,j (0) = k/d and qk,j (te j ) → 1 as |t| → ∞ by Eq. 24, while 
+
+kd < λd
+
+λk
+
+= v2 + kτ 2
+
+v2 + dτ 2 < 1. (30) For some finite nonzero t, therefore, xj t{λd − λkqk,j (te j )}̸ = 0 . The difference is continuous, so it remains nonzero on an open neighborhood. The marginal law of c is a mixture of nonsingular Gaussian densities and is strictly positive everywhere; that neighborhood has positive probability. This proves the strict gap. For k = d, η∗ 
+
+> d
+
+(c) = λdc identically, so the gap is zero. The result holds separately at each known n. If n varies, condition on it and use λd(n) = v2/(v2 + dσ 2/n ).27 D.5 Alternating-axis realization and exact-k normalization Architecture class. Fix n observed rows and one prediction row, indexed by i ∈ [n + 1] , and augment the d
+
+feature tokens in each row with a response/readout token indexed by j = 0 . A width-m cell-token state is therefore 
+
+h = ( hij )i∈[n+1] , j ∈{ 0,...,d }, with hij ∈ Rm. At initialization, feature token (i, j ), j ≥ 1, contains xij (with 
+
+xn+1 ,j = xj ), observed response token (i, 0) contains yi, and (n + 1 , 0) is the prediction readout. Every token also contains fixed indicators of its feature-versus-response type and its observed-versus-prediction-row role. For a token u and an allowed attention group G(u), one softmax-attention sublayer has the form 
+
+ehu = hu + WO
+
+X
+
+> v∈G(u)
+
+αuv WV hv , αuv = exp {(WQhu)⊤(WK hv ) + Muv }
+
+P 
+
+> w∈G(u)
+
+exp {(WQhu)⊤(WK hw) + Muw } , (31) where Muv ∈ { 0, −∞} is a fixed mask depending only on token type and observed-versus-prediction status. For feature-axis attention, GF (i, j ) = {(i, ℓ ) : 0 ≤ ℓ ≤ d}; for observation-axis attention at a feature token, GO (i, j ) = 
+
+{(ℓ, j ) : 1 ≤ ℓ ≤ n + 1 }. Parameters are shared over all groups of the same sublayer. Each attention sublayer may be followed by a residual pointwise map 
+
+hu 7 −→ hu + W2ρ(W1hu + b1) + b2, (32) shared over tokens, where ρ is continuous and nonpolynomial. Layer parameters may differ across depth, and a sublayer may be made inactive by setting its output projection to zero. We call any finite composition whose active attention sublayers alternate between the two axes an alternating-axis network ; its scalar output is a linear readout of hn+1 ,0.Denote this class by An,d .
+
+Proposition 3 (Alternating-axis neural approximation) . Fix n, d , 1 ≤ k ≤ d, and positive prior and noise parameters. Let K be a compact set of observed datasets and prediction points satisfying X⊤X = nI d. For every ϵ > 0, there exists 
+
+Fϵ ∈ A n,d such that 
+
+sup 
+
+> (D,x )∈K
+
+|Fϵ(D, x ) − f ∗ 
+
+> k
+
+(D, x )| < ϵ. (33) 
+
+The construction uses three active attention sublayers in feature–observation–feature order and O(k) residual-state channels. The hidden widths of the pointwise feed-forward maps may depend on n, d, k , the parameters, K, and ϵ; no corresponding total-parameter or optimization bound is asserted. Proof. First, we give an exact computation with continuous pointwise maps, then approximate these maps by feed-forward networks. Feature-axis attention makes the response yi available at every feature cell (i, j ) of an observed row while the residual path preserves xij . A pointwise map forms the product xij yi. Second, set the observation-axis attention logits equal and mask them to the observed rows. At fixed feature j, its output is the exact average 
+
+cj = n−1 P 
+
+> i
+
+xij yi; the prediction-cell residual preserves xj . A pointwise map can now operate on (cj , x j ).For general k, put wj = exp( θkc2 
+
+> j
+
+) and aj = λkcj xj , and form the 2k channels (wrj , a j wrj )kr=1 . Third, feature-axis attention at the prediction readout is uniform over the d feature tokens, excluding the response token. Scaling the averages by the known d yields 
+
+pr =
+
+> d
+
+X
+
+> j=1
+
+wrj , tr =
+
+> d
+
+X
+
+> j=1
+
+aj wrj , 1 ≤ r ≤ k. (34) Let em(w) be the elementary symmetric polynomial of degree m, with e0 = 1 . Newton’s identities recover these polynomials from the pooled power sums: 
+
+em = 1
+
+m
+
+> m
+
+X
+
+> r=1
+
+(−1) r−1em−r pr , 1 ≤ m ≤ k. (35) For completeness, this follows by equating coefficients in E′(z) = E(z) P
+
+> r≥1
+
+(−1) r−1pr zr−1, where E(z) = 
+
+Q 
+
+> j
+
+(1 + wj z) = P 
+
+> m
+
+emzm, interpreted as a formal power series. Similarly, expanding E(z)/(1 + wj z) gives 
+
+ek−1(w−j ) = Pk−1 
+
+> r=0
+
+(−1) r wrj ek−1−r (w). Using the inclusion probabilities in Eq. 39, the final pointwise map evaluates 
+
+f ∗ 
+
+> k
+
+(D, x ) = 
+
+Pkr=1 (−1) r−1ek−r (w)tr
+
+ek(w) . (36) Thus the prediction is a continuous function of the 2k pooled channels. Since wj ≥ 1, its denominator obeys 
+
+ek(w) ≥  dk
+
+ > 0.28 All exact intermediate states range over compact sets. Products, exponentials, and powers can therefore be approximated uniformly by the pointwise networks. The final rational map is continuous on a compact neighborhood of the attainable summaries where its denominator stays positive, so it too admits uniform approximation. Choosing successive approximation errors sufficiently small proves Eq. 33. Residual channels retain the inputs needed at each stage; token-type and row-role indicators allow shared pointwise maps to implement the required role-specific operations. The first routing operation can select the response token exactly with the allowed type mask. The final pointwise output is stored in one channel for the linear readout. Only O(k) state channels are needed; the pointwise hidden widths are unrestricted. For k = 1 , a more direct construction identifies the final attention weights with the posterior gate. After the observation-axis stage, form sj = θ1c2 
+
+> j
+
+and vj = λ1cj xj . Third, a prediction readout state applies feature-axis attention with logits 
+
+sj and values vj , producing dX
+
+> j=1
+
+eθ1c2
+
+> j
+
+Pdr=1 eθ1c2
+
+> r
+
+λ1cj xj = f ∗ 
+
+> 1
+
+(D, x ). (37) Approximating the products and squares gives the same uniform-approximation conclusion. This special construction is illustrated in Figure 3c. 
+
+Scope of the construction. The three attention stages belong to the idealized class An,d , not necessarily to three blocks of the trained model. The construction uses type masks and flexible pointwise maps and does not establish realization by its particular normalization, widths, or block layout. For general k, the final attention pools uniformly; the nonlinear readout, rather than its attention weights, implements the inclusion-weighted prediction. Consequently, the result gives a feature-indexed realization but neither identifies attention weights with relevance for all k nor proves a separation from row-token networks. Newton’s recursion takes O(k2) arithmetic operations after pooling, but its alternating sums can be numerically ill-conditioned. The proof is an approximation result on compact domains, not a numerical-stability or learning-efficiency guarantee. 
+
+General support sizes. For wj = exp( θkc2 
+
+> j
+
+), define the elementary symmetric polynomials 
+
+em(w) = X
+
+> A⊆[d]
+> |A|=m
+
+Y
+
+> r∈A
+
+wr , e0(w) = 1 . (38) Set em = 0 when m < 0 or m exceeds the number of available coordinates. The support normalizer is ek(w) > 0.Summing over supports containing j gives 
+
+qk,j (c) = wj ek−1(w−j )
+
+ek(w) . (39) Define prefix and suffix tables 
+
+Fj,m = em(w1, . . . , w j ), Gj,m = em(wj , . . . , w d), 0 ≤ m ≤ k. (40) Initialize F0,0 = Gd+1 ,0 = 1 and F0,m = Gd+1 ,m = 0 for m > 0, with all negative-degree entries zero. Partitioning subsets by inclusion of their boundary coordinate yields 
+
+Fj,m = Fj−1,m + wj Fj−1,m −1, Gj,m = Gj+1 ,m + wj Gj+1 ,m −1. (41) Compute F in increasing j and G in decreasing j. Then 
+
+ek(w) = Fd,k , ek−1(w−j ) = 
+
+> k−1
+
+X
+
+> m=0
+
+Fj−1,m Gj+1 ,k −1−m. (42) Each table takes O(dk ) arithmetic operations and storage. Evaluating the k-term sum for every j takes another O(dk )
+
+operations. Together with Eq. 39, this computes all inclusion probabilities. Forming c takes O(nd ) operations, and forming and summing λkqk,j cj xj takes O(d).
+
+Endpoints. For k = 1 , e1(w) = P 
+
+> j
+
+wj and e0(w−j ) = 1 , recovering the feature softmax. For k = d, ed(w) = Q 
+
+> j
+
+wj ,so all gates equal one and the subset computation can be omitted. 
+
+Log-domain evaluation. Store ℓj = θkc2 
+
+> j
+
+, LFj,m = log Fj,m , and LGj,m = log Gj,m . Represent zero entries by −∞ 
+
+and entries equal to one by zero. With LSE( a, b ) = log( ea + eb) evaluated by the usual maximum subtraction, the recurrences become 
+
+LFj,m = LSE( LFj−1,m , ℓ j + LFj−1,m −1),LGj,m = LSE( LGj+1 ,m , ℓ j + LGj+1 ,m −1). (43) 29 Define LSE of all −∞ inputs to be −∞ . The final log inclusion probability is 
+
+log qk,j = ℓj + LSE 0≤m<k 
+
+ LFj−1,m + LGj+1 ,k −1−m
+
+ − LFd,k . (44) Only the normalized log probabilities need to be exponentiated. A common shift of all ℓj also leaves the probabilities unchanged, since every support has exactly k entries. This implementation retains the O(dk ) arithmetic and storage bounds. 
+
+D.6 Proof of Lemma 2 and excess prediction risk 
+
+Proof. Fix a context D for which f (D, ·) is square-integrable. Since Ex[x] = 0 and Ex[xx ⊤] = Id, the constant function 1 and query-coordinate functions x 7 → xj , j ∈ [d], form an orthonormal family in L2. Thus the affine projection in Lemma 2 has the unique coefficients 
+
+ζf (D) = Ex[f (D, x )] , ηf (D) = Ex[xf (D, x )] , (45) and its residual satisfies 
+
+Ex[rf (D, x )] = 0 , Ex[xr f (D, x )] = 0 . (46) Using f ∗ 
+
+> k
+
+(D, x ) = x⊤η∗
+
+> k
+
+(c), write 
+
+f (D, x ) − f ∗ 
+
+> k
+
+(D, x ) = ζf (D) + x⊤(ηf (D) − η∗
+
+> k
+
+(c)) + rf (D, x ).
+
+The three summands are mutually orthogonal by query centering and Eq. 46. Squaring and averaging over x, with 
+
+Ex[xx ⊤] = Id, gives Eq. 8. 
+
+Connection to excess prediction risk. Define the population squared risk under Pk by 
+
+Rk(f ) := ED,x,y q [( f (D, x ) − yq )2], (47) with yq as in Section 3. Since f ∗ 
+
+> k
+
+(D, x ) = E[yq | D, x ], conditional-expectation orthogonality and Eq. 8 give 
+
+Rk(f ) − Rk(f ∗ 
+
+> k
+
+) = ED,x [( f (D, x ) − f ∗ 
+
+> k
+
+(D, x )) 2] = ED [Cf (D) + ζf (D)2 + Nf (D)] , (48) where Cf (D) = ∥ηf (D) − η∗
+
+> k
+
+(c)∥22 and Nf (D) = Ex[rf (D, x )2].
+
+## E Controlled experiments: setup and extended results 
+
+This appendix gives the experimental settings and complete results for Section 3.3. We first describe training and evaluation, then report the architecture comparison and its coefficient-space decomposition. Population identities and proofs appear in Appendix D.6. 
+
+E.1 Controlled architectures 
+
+• The alternating-axis model follows nanoTabPFN (Pfefferle et al., 2025), a compact reimplementation of TabPFN v2 (Hollmann et al., 2025). It embeds each feature cell separately, places the response in an additional token, and alternates feature- and observation-axis attention within each block. We adapt it to regression by giving its two-layer MLP decoder a scalar output and training with squared loss, and we read predictions from the query response tokens. • The row-token model replaces the shared scalar cell encoder with a linear projection of the entire covariate vector, 
+
+Rd → RE , adds a linear response embedding to each context row token, and removes feature-axis attention and its associated normalization. Query rows receive no response embedding, and predictions are read from their row tokens. We retain the observation-axis attention mask, post-norm feed-forward blocks, and scalar MLP decoder. This construction follows TabPFN v1’s linear-encoder, post-norm configuration (Hollmann et al., 2023) and shares the linear row and response encoders and additive label injection of the original TabDPT architecture (Ma et al., 2025), although TabDPT uses different normalization. 
+
+E.2 Experimental setup and evaluation protocol E.2.1 Tasks and model configurations Tasks. We use the priors in Section 3 with d ∈ { 10 , 20 }, k ∈ { 1, d/ 2, d }, v2 = 1 , and σ = 1 .5. Each condition contains T = 32 ,000 test tasks (data-generation seed 1), generated in 1,000 batches of 32. Context length nt is shared 30 within a batch and ranges from 50 to 100, with X⊤ 
+
+> t
+
+Xt = ntId. Each task has Q(t)eval = 150 − nt independent queries 
+
+xtq ∼ N (0 , I d). All architectures and training seeds use the same test contexts and queries. The Bayes target η∗ 
+
+> k,n t
+
+(ct)
+
+uses the task’s actual context length. Changing d also changes d/n t and the per-coordinate prior variance; the two dimensions test recurrence of the pattern, not an isolated dimension effect. 
+
+Models and inference. We use the architectures defined in Section 3 and Appendix E.1. Both have embedding width 96, feed-forward width 192, four attention heads, GELU activations, post-normalization, and a two-layer scalar MLP decoder. The row-token model has five blocks and 393,985/394,945 parameters at d = 10 /20 ; the alternating-axis model has three blocks and 355,873 parameters at either dimension. Counts include the encoders and decoder. This approximately matches parameter scale; token counts and computation differ. Features are standardized using context statistics and clipped to [−100 , 100] . The alternating-axis model uses one token per feature plus a response token, with unknown query responses initialized to the mean context response. Observation-axis attention permits context self-attention and query-to-context attention only. Inference preserves feature order and response units, without feature augmentation, target scaling, or prediction ensembling. 
+
+E.2.2 Hyperparameter selection and final training Shared search protocol. For each (d, k ), both architectures use schedule-free AdamW and the same learning-rate grid 
+
+{5 × 10 −4, 10 −3, 2 × 10 −3, 4 × 10 −3}. Both architectures share one tuning dataset per (d, k ), with separate training, validation, and hyperparameter-selection sets. Data-generation seed 0 fixes these task sets. For each candidate learning rate, we train three models with training seeds {0, 1, 2}, which vary model initialization while keeping the task sets fixed. Each candidate’s best validation checkpoint is scored on the same 32,000 selection tasks using MSE pooled over noisy query targets. We average this score over the three training runs and select the learning rate with the lowest mean, separately for each architecture and (d, k ). Table 7 reports the selected learning rates. 
+
+Training and early stopping. The same training and stopping rules apply during hyperparameter search and final training. All runs use batch size 32, zero weight decay, and gradient clipping at norm 1. Maximum budgets are 10,000 steps for d = 10 and 20,000 for d = 20 . Every 500 steps, we evaluate MSE against noisy query labels on all 3,200 validation tasks. Training stops after five consecutive checks without a new lowest validation MSE, or when the step budget is exhausted. In either case, we restore the checkpoint with the lowest validation MSE. 
+
+Final training. With these hyperparameters fixed, we retrain each model from random initialization on a newly generated training set from the same prior (data-generation seed 1), using the same three training seeds and training protocol. The training sets contain 320,000 tasks for d = 10 and 640,000 for d = 20 . A separate 3,200-task validation set selects the final checkpoint; its step is reported in Table 7. The final 32,000-task test set is used only for evaluation. 
+
+Table 7: Selected learning rates for schedule-free AdamW and checkpoints from final training. Maximum step budgets are fixed by dimension; checkpoint steps are chosen by validation MSE and listed in training-seed order 0/1/2.                                                                  
+
+> dkModel Selected LR Max. steps Checkpoint step (0/1/2) 10 1Row-token 0.0010 10000 10000 / 10000 / 10000 10 1Alternating-axis 0.0010 10000 9500 / 9500 / 9500 10 5Row-token 0.0010 10000 9500 / 10000 / 10000 10 5Alternating-axis 0.0010 10000 9500 / 10000 / 10000 10 10 Row-token 0.0010 10000 10000 / 10000 / 7000 10 10 Alternating-axis 0.0010 10000 10000 / 10000 / 6000 20 1Row-token 0.0020 20000 19000 / 20000 / 20000 20 1Alternating-axis 0.0005 20000 20000 / 20000 / 20000 20 10 Row-token 0.0010 20000 18500 / 12500 / 19000 20 10 Alternating-axis 0.0010 20000 20000 / 10500 / 20000 20 20 Row-token 0.0010 20000 12500 / 12500 / 12500 20 20 Alternating-axis 0.0005 20000 20000 / 18500 / 19500
+
+31 E.2.3 Evaluation 
+
+All quantities below are defined for fixed d, k and one training seed; the seed index is suppressed. For test dataset Dt,we estimate the normalized Bayes approximation error in Eq. 6 by 
+
+bE(t) 
+
+> a,k
+
+:= 1
+
+Q(t)eval 
+
+> Q(t)eval
+
+X
+
+> q=1
+
+[ bfa,k (Dt, x tq ) − f ∗ 
+
+> k
+
+(Dt, x tq )] 2
+
+s(t)
+
+> k
+
+. (49) The denominator s(t) 
+
+> k
+
+is the dataset’s Bayes prediction energy. All evaluated datasets have s(t) 
+
+> k
+
+> 10 −12 and are retained without a denominator offset. 
+
+E.3 Extended architecture–prior comparison E.3.1 Dense-prior reference 
+
+For a dataset D drawn under Pk, we define the dense-prior prediction gap as 
+
+∆dense  
+
+> k
+
+(D) := Ex
+
+(f ∗ 
+
+> d
+
+(D, x ) − f ∗ 
+
+> k
+
+(D, x )) 2
+
+= ∥λdc − η∗
+
+> k
+
+(c)∥22, c = c(D). (50) The equality follows from query isotropy. This gap measures the prediction cost of applying uniform dense-prior shrinkage instead of the Bayes rule under Pk. Its expectation is strictly positive for k < d and zero for k = d
+
+(Theorem 1). Figure 21(a) shows that exploiting the sparse prior reduces expected squared prediction error relative to the dense-prior rule. For both dimensions, this gain is largest at k = 1 , decreases at k = d/ 2, and vanishes at k = d, where the two predictors coincide. 
+
+E.3.2 Learned predictors 
+
+For each test dataset, the paired architecture gap is 
+
+bG(t) 
+
+> k
+
+:= bE(t) 
+
+> row-token ,k
+
+− bE(t)
+
+> alternating-axis ,k
+
+. (51) Positive values favor the alternating-axis model. Figure 21(b) shows a large mean advantage under sparse priors and a small positive mean advantage at the dense endpoints for all three seeds. 
+
+Task-level architecture gaps. Figure 22 shows the distribution of per-dataset architecture gaps, both after averaging over training seeds and for individual seeds. The alternating-axis model outperforms the row-token model on nearly all sparse datasets. Under dense priors, its average advantage is small, and the better-performing architecture varies across datasets. 
+
+E.4 Coefficient-space accounting of the architecture gap E.4.1 Affine projection and error estimation Estimating the affine component. For each context D, we estimate the affine projection of f (Lemma 2) using 
+
+Qproj = 1 ,000 independent Gaussian queries xproj  
+
+> m
+
+∼ N (0 , I d):
+
+(bζf (D), bηf (D)) := arg min 
+
+> ζ∈R, η ∈Rd
+
+1
+
+Qproj 
+
+> Qproj
+
+X
+
+> m=1
+
+[f (D, x proj  
+
+> m
+
+) − ζ − (xproj  
+
+> m
+
+)⊤η]2. (52) Projection queries are independent of the context and evaluation queries, and shared across models and intervention conditions. Fit targets are model predictions in original response units, with preprocessing and model randomness fixed; query labels are not used. We solve the unregularized least-squares problem, including an intercept, in float64 with numpy.linalg.lstsq 
+
+(rcond=None ). 32 a1 d/2 d
+
+Support size k 0.0 0.1 0.2 0.3 Mean Δ dense 
+
+> k (D)
+
+d = 10 d = 20 b1 d/2 d
+
+Support size k 10 −3 
+
+10 −2 
+
+10 −1 
+
+10 0
+
+> Gap  ̂  Gk
+
+d = 10 d = 20 Figure 21: Dense-prior and architecture gaps across support sizes. (a) Mean dense-prior prediction gap ∆dense  
+
+> k
+
+(D)
+
+(Eq. 50) over 32,000 test datasets per condition. The dense endpoint is exactly zero. (b) Per-dataset architecture gaps bG(t)
+
+> k
+
+(Eq. 51), averaged equally over the same 32,000 test datasets for each seed. Positive values favor the alternating-axis model. Large markers show means over three seeds, small points show individual seed averages, and error bars show seed SDs (ddof=0). The axis label omits the dataset index. Circles/dashed lines denote d = 10 ; squares/solid lines denote 
+
+d = 20 . Panel (a) uses unnormalized errors on a linear axis; panel (b) uses task-normalized errors on a log axis. Support sizes are categorical. 
+
+Error components. Using the fitted coefficients and independent evaluation queries, define 
+
+bC(t) 
+
+> f
+
+:= ∥bηf (Dt) − η∗ 
+
+> k,n t
+
+(ct)∥22,
+
+bN (t) 
+
+> f
+
+:= 1
+
+Q(t)eval 
+
+> Q(t)eval
+
+X
+
+> q=1
+
+br2 
+
+> f,tq
+
+, brf,tq := f (Dt, x tq ) − bζf (Dt) − x⊤ 
+
+> tq
+
+bηf (Dt).
+
+(53) These give coefficient error bC(t) 
+
+> f
+
+, squared-intercept error bζf (Dt)2, and fitted residual error bN (t) 
+
+> f
+
+. For f = bfa,k , define the normalized components on dataset Dt as 
+
+bC(t) 
+
+> a,k
+
+:= 
+
+bC(t)
+
+> f
+
+s(t)
+
+> k
+
+, bZ(t) 
+
+> a,k
+
+:= bζf (Dt)2
+
+s(t)
+
+> k
+
+, bN (t) 
+
+> a,k
+
+:= 
+
+bN (t)
+
+> f
+
+s(t)
+
+> k
+
+. (54) All three use the same denominator as bE(t)
+
+> a,k
+
+.
+
+E.4.2 Full component results across dimensions Error components. Figures 5 and 23 show the component errors at d = 10 and d = 20 , respectively. Under sparse priors, the alternating-axis model has substantially lower coefficient error, whereas intercept and residual errors are closer between architectures. At d = 20 , k = 1 , coefficient error is 0.685 for the row-token model and 0.0603 for the alternating-axis model. At the dense endpoint, the row-token model has slightly lower coefficient error but higher intercept and residual errors in both dimensions. 
+
+Architecture gaps. To locate the prediction gap bG(t) 
+
+> k
+
+(Eq. 51), we compare the normalized components on the same dataset: bGC, (t) 
+
+> k
+
+:= bC(t) 
+
+> row-token ,k
+
+− bC(t)
+
+> alternating-axis ,k
+
+,
+
+bGζ, (t) 
+
+> k
+
+:= bZ(t) 
+
+> row-token ,k
+
+− bZ(t)
+
+> alternating-axis ,k
+
+,
+
+bGN, (t) 
+
+> k
+
+:= bN (t) 
+
+> row-token ,k
+
+− bN (t)
+
+> alternating-axis ,k
+
+.
+
+(55) 33 a0.0 0.5 1.0 1.5 Task gap Ĝ (per task) 0510 15 Density 
+
+> 3.2% of tasks outside view
+> Mean over seeds Seed 0 Seed 1 Seed 2 Zero Positive = 98.54% Mean = 0.348 Median = 0.239
+
+b0.0 0.1 0.2 Task gap Ĝ (per task) 020 40 60 Density 
+
+> 0.7% of tasks outside view
+> Mean over seeds Seed 0 Seed 1 Seed 2 Zero Positive = 98.98% Mean = 0.057 Median = 0.051
+
+c−0.02 0.00 0.02 Task gap Ĝ (per task) 0250 500 750 Density 
+
+> 0.5% of tasks outside view
+> Mean over seeds Seed 0 Seed 1 Seed 2 Zero
+
+Positive = 57.07% Mean = 8.58 × 10 −4 
+
+Median = 3.71 × 10 −4 d0 1 2Task gap Ĝ (per task) 0246Density 
+
+> 3.4% of tasks outside view
+> Mean over seeds Seed 0 Seed 1 Seed 2 Zero Positive = 98.40% Mean = 0.627 Median = 0.432
+
+e0.00 0.08 0.16 Task gap Ĝ (per task) 025 50 75 Density 
+
+> 0.3% of tasks outside view
+> Mean over seeds Seed 0 Seed 1 Seed 2 Zero Positive = 98.79% Mean = 0.061 Median = 0.059
+
+f−0.02 0.00 0.02 Task gap Ĝ (per task) 0150 300 Density 
+
+> 0.4% of tasks outside view
+> Mean over seeds Seed 0 Seed 1 Seed 2 Zero
+
+Positive = 63.40% Mean = 1.17 × 10 −3 
+
+Median = 1.68 × 10 −3 Figure 22: Task-level distributions of the architecture gap. Rows correspond to d = 10 and d = 20 ; columns to 
+
+k = 1 , k = d/ 2, and k = d. Positive gaps favor the alternating-axis model. Gray shading shows the distribution of per-dataset gaps bG(t) 
+
+> k
+
+after averaging over three training seeds; colored curves show the distributions for individual seeds. All distributions use the same histogram bins within each panel; the dashed line marks zero. Annotations report the positive fraction, mean, and median of the seed-averaged gaps, computed over all 32,000 tasks per condition. Axis ranges focus on the distribution bodies; the fraction of seed-averaged gaps outside each view is noted below the panel. Densities are normalized by the full task count. 
+
+34 aRow-token Alternating-axis 
+
+0.0 0.2 0.4 0.6 0.8 1.0 1.2 Task-normalized error  Coefficient Squared intercept Residual bRow-token Alternating-axis 
+
+0.000 0.025 0.050 0.075 0.100 0.125 Task-normalized error  Coefficient Squared intercept Residual cRow-token Alternating-axis 
+
+0.00 0.01 0.02 0.03 0.04 Task-normalized error  Coefficient Squared intercept Residual Figure 23: Task-normalized error components at d = 20 . Bars stack coefficient, squared-intercept, and residual errors for row-token and alternating-axis predictors at k = 1 , 10 , 20 . For each seed, components are averaged equally over the same 32,000 test datasets. Bars show means over three seeds; points mark each seed’s cumulative component means at the stack boundaries. Colors match Figure 5. 
+
+Positive gaps favor the alternating-axis model within that component. The superscript ζ denotes a difference in squared 
+
+intercepts. Figure 24 shows that coefficient error dominates the sparse architecture gap. At d = 10 , the between-architecture coefficient-error difference accounts for 98.4% and 97.5% of the mean prediction-error gap at k = 1 and k = 5 . At 
+
+d = 20 , the corresponding shares are 99.7% and 98.0% at k = 1 and k = 10 . At both dense endpoints, the negative coefficient gap is offset by positive intercept and residual gaps, leaving a small positive prediction gap. 
+
+E.4.3 Active and inactive coordinate contributions Coefficient errors by support group. For the realized support St, we split each model’s coefficient error into active and inactive contributions: bC(t) 
+
+> f, active
+
+:= X
+
+> j∈St
+
+(bηf,j (Dt) − η∗ 
+
+> k,n t,j
+
+(ct)) 2,
+
+bC(t) 
+
+> f, inactive
+
+:= X
+
+> j / ∈St
+
+(bηf,j (Dt) − η∗ 
+
+> k,n t,j
+
+(ct)) 2. (56) Both terms measure squared deviations from the Bayes coefficient vector and sum to bC(t) 
+
+> f
+
+. For architecture a trained under Pk, let f = bfa,k and define the task-normalized group errors as 
+
+bC(t) 
+
+> a,k,b
+
+:= 
+
+bC(t)
+
+> f,b
+
+s(t)
+
+> k
+
+, b ∈ { active , inactive }. (57) Figure 25 decomposes each model’s coefficient error using the same normalization as Figure 5. Under sparse priors, the alternating-axis model has lower error in both groups. At k = d, every coordinate is active and the inactive error is zero. 
+
+Coefficient errors per coordinate. For sparse priors, we divide bC(t) 
+
+> a,k, active
+
+by k and bC(t) 
+
+> a,k, inactive
+
+by d − k to obtain the mean error per coordinate in each group. Figure 26 shows that active coordinates have higher per-coordinate error for both architectures across the sparse conditions. At k = 1 , total error is higher in the larger inactive group. The alternating-axis model has lower per-coordinate error in both groups. 
+
+E.4.4 Ordinary least squares as a coefficient baseline 
+
+To distinguish recovering the context statistic from computing the Bayes coefficient map, we add ordinary least squares (OLS) as a baseline. Under the orthogonal design, its coefficients and prediction are 
+
+ct = ( X⊤ 
+
+> t
+
+Xt)−1X⊤ 
+
+> t
+
+yt = X⊤ 
+
+> t
+
+yt
+
+nt
+
+, fOLS (Dt, x ) = x⊤ct. (58) 35 Prediction Coe ffi cient Squared intercept Residual Component sum aG GC Gζ GN 
+
+> 0.0 0.2 0.4 0.6 0.8
+> Architecture gap
+> GζGN
+> 0.0 2.5 detail ×10 −3
+
+bG GC Gζ GN
+
+> 0246
+> Architecture gap
+
+×10 −2   
+
+> GζGN
+> 02detail ×10 −3
+
+cG GC Gζ GN
+
+> −2 −1 0123
+> Architecture gap
+
+×10 −3 
+
+δ = −1.9 × 10 −6 dG GC Gζ GN 
+
+> 0.0 0.2 0.4 0.6 0.8
+> Architecture gap
+> GζGN
+> 0.0 2.5 detail ×10 −3
+
+eG GC Gζ GN
+
+> 0246
+> Architecture gap
+
+×10 −2   
+
+> GζGN
+> 02detail ×10 −3
+
+fG GC Gζ GN
+
+> −2 −1 0123
+> Architecture gap
+
+×10 −3 
+
+δ = −1.2 × 10 −4 Figure 24: The sparse architecture gap lies mainly in coefficients. Rows correspond to d = 10 , 20 ; columns to 
+
+k = 1 , d/ 2, d . Bars show row-token minus alternating-axis gaps in task-normalized prediction, coefficient, squared-intercept, and residual error. For each seed, gaps are averaged equally over the same 32,000 test datasets. Bars show means over three seeds; points show individual seed averages; error bars show seed SDs (ddof=0). Positive values favor the alternating-axis model. Hollow diamonds show component sums; insets magnify the two small non-coefficient gaps. Main panels share vertical ranges within each column. Labels G, GC , Gζ , and GN suppress hats and the indices k, t (Eqs. 51 and 55). 
+
+We compute ct directly from each of the same 32,000 test contexts. Its affine projection has coefficient ct, zero intercept, and zero nonlinear residual. Thus its task-normalized coefficient error is 
+
+C(t)OLS ,k := ∥ct − η∗ 
+
+> k,n t
+
+(ct)∥22
+
+s(t)
+
+> k
+
+, s(t) 
+
+> k
+
+= ∥η∗ 
+
+> k,n t
+
+(ct)∥22. (59) This is also its population relative prediction error under x ∼ N (0 , I d). We use the same support partition and equal-task averaging as in Eq. 57. OLS has higher mean coefficient error than either trained architecture in all six conditions (Figure 27). At k = 1 ,inactive coordinates contribute 86.0% and 91.9% of its mean error at d = 10 and d = 20 , respectively. Indeed, 
+
+ct = β + X⊤ 
+
+> t
+
+ε/n t retains estimation noise on every coordinate, with conditional variance σ2/n t per coordinate. The Bayes map instead applies both posterior inclusion weights and shrinkage, η∗ 
+
+> k,n t
+
+(ct) = λk,n t qk(ct) ⊙ ct. Both predictions are linear in the query; the difference lies in how their coefficients depend on the context. 
+
+Coefficient shrinkage. Figure 28 shows the relation between OLS and Bayes coefficients. Although OLS recovers the sufficient statistic ct, it does not implement the prior-dependent posterior coefficient map. For sparse priors, 36 aRow-token Alternating-axis 
+
+0.0 0.4 0.8 1.2 Coefficient error 
+
+> Active Inactive
+
+bRow-token Alternating-axis 
+
+0.00 0.04 0.08 0.12 Coefficient error 
+
+> Active Inactive
+
+cRow-token Alternating-axis 
+
+0.000 0.006 0.012 0.018 Coefficient error 
+
+> Active Inactive
+
+dRow-token Alternating-axis 
+
+0.0 0.4 0.8 1.2 Coefficient error 
+
+> Active Inactive
+
+eRow-token Alternating-axis 
+
+0.00 0.04 0.08 0.12 Coefficient error 
+
+> Active Inactive
+
+fRow-token Alternating-axis 
+
+0.000 0.006 0.012 0.018 Coefficient error 
+
+> Active Inactive
+
+Figure 25: Active and inactive coefficient errors by architecture. Stacked bars show task-normalized group errors (Eq. 57); each bar sums to the model’s coefficient error. Rows correspond to d = 10 , 20 and columns to k = 1 , d/ 2, d . For each seed, group errors are averaged equally over the same 32,000 test datasets. Bars show means over three seeds; points mark each seed’s mean active and total coefficient errors at the corresponding stack boundaries. At k = d, the inactive contribution is zero. Vertical ranges are shared across dimensions within each column. 
+
+η∗ 
+
+> k,n t
+
+(ct) = λk,n t qk(ct) ⊙ ct combines coordinate selection with shrinkage: coordinates with weak posterior support are mapped toward zero, while coordinates with stronger evidence retain a larger fraction of their OLS coefficients. This separation is most pronounced at k = 1 and contracts as the support size increases. At k = d, posterior inclusion is identically one and the map reduces to uniform shrinkage, η∗ 
+
+> d,n t
+
+(ct) = λd,n t ct, yielding the exact identity 
+
+C(t)OLS ,d =
+
+ 1 − λd,n t
+
+λd,n t
+
+2
+
+=
+
+ dσ 2
+
+ntv2
+
+2
+
+. (60) Its task averages are 0.104774 and 0.419098 at d = 10 , 20 .37 aRow-token Alternating-axis 
+
+10 −3 
+
+10 −2 
+
+10 −1 
+
+> Error per coordinate  Active Inactive
+
+bRow-token Alternating-axis 
+
+10 −3 
+
+10 −2 
+
+10 −1 
+
+> Error per coordinate  Active Inactive
+
+cRow-token Alternating-axis 
+
+10 −3 
+
+10 −2 
+
+10 −1 
+
+> Error per coordinate  Active Inactive
+
+dRow-token Alternating-axis 
+
+10 −3 
+
+10 −2 
+
+10 −1 
+
+> Error per coordinate  Active Inactive
+
+Figure 26: Coefficient errors per coordinate under sparse priors. Each model’s task-normalized active and inactive errors (Eq. 57) are divided by k and d − k, respectively. Rows correspond to d = 10 , 20 and columns to k = 1 , d/ 2.Colors match Figure 25. Per-coordinate errors are averaged equally over the same 32,000 test datasets for each seed. Diamonds show means over three seeds, circles show individual seed averages, and error bars show seed SDs (ddof=0). All panels share a logarithmic vertical axis. 
+
+38 OLS Row-token Alternating-axis 0816 24  
+
+> Coefficient error
+> 7.46 0.382 0.0399
+
+a d = 10, k = 1   
+
+> OLS Row-token Alternating-axis 0.0 0.2 0.4 0.6 0.227 0.0657 0.0105
+
+b d = 10, k = 5   
+
+> OLS Row-token Alternating-axis 0.00 0.15 0.30 0.45 0.105 0.00771 0.00827
+
+c d = 10, k = 10   
+
+> OLS Row-token Alternating-axis 0816 24
+> Coefficient error  22.6 0.685 0.0603
+
+d d = 20, k = 1    
+
+> OLS Row-token Alternating-axis 0.0 0.2 0.4 0.6 0.55 0.0749 0.0156
+
+e d = 20, k = 10    
+
+> OLS Row-token Alternating-axis 0.00 0.15 0.30 0.45 0.419 0.0116 0.0135
+
+f d = 20, k = 20 Active Inactive Figure 27: OLS and learned-model coefficient errors relative to Bayes. Rows correspond to d = 10 , 20 and columns to 
+
+k = 1 , d/ 2, d . Bars stack task-normalized active and inactive coefficient errors; annotations give their sum. Every bar uses the same 32,000 test datasets per condition. OLS is deterministic given the context; learned-model bars average three training seeds and reproduce Figure 25. At k = d, the inactive sum is zero. Linear vertical ranges are shared within each column. −2.5 0.0 2.5 
+
+OLS coefficient cj
+
+> −2.5 0.0 2.5
+> Bayes coefficient  η *
+> j
+
+a d = 10, k = 1   
+
+> −1.5 0.0 1.5
+
+OLS coefficient cj
+
+> −1.5 0.0 1.5
+
+b d = 10, k = 5   
+
+> −1 01
+
+OLS coefficient cj
+
+> −1 01
+
+c d = 10, k = 10   
+
+> −2.5 0.0 2.5
+
+OLS coefficient cj
+
+> −2.5 0.0 2.5
+> Bayes coefficient  η *
+> j
+
+d d = 20, k = 1   
+
+> −1 01
+
+OLS coefficient cj
+
+> −1 01
+
+e d = 20, k = 10   
+
+> −0.8 0.0 0.8
+
+OLS coefficient cj
+
+> −0.8 0.0 0.8
+
+f d = 20, k = 20 Active Inactive 
+
+Figure 28: OLS coefficients and posterior-mean coefficients. Each panel plots all coordinates from 150 fixed, randomly sampled test tasks. Dark red circles denote active coordinates and dark gray crosses denote inactive coordinates in the realized support. Dashed lines indicate equal coefficients. At k = d, variation in context length produces different shrinkage slopes across tasks. Error summaries use the complete 32,000-task test set. 
+
+39 F Feature-message interventions: methods and additional results 
+
+This appendix supports Section 4. We specify the intervention and statistics, assess the coefficient description of prediction changes, and compare context- and query-message effects. We then examine response direction, attenuation strength, and support size. The primary analysis uses k = 1 ; Appendix F.6 extends it to k = d/ 2 and k = d.
+
+F.1 Intervention protocol and statistical aggregation Tasks and models. The results reported here use k = 1 and d ∈ { 10 , 20 } under the setup in Appendix E.2.1. At each dimension, all interventions use the same 128 tasks for the alternating-axis model and frozen TabPFN v2. The task inputs, targets, and query sets are identical across models and row scopes. These tasks are the first 128 original contexts in the saved one-sparse cohort; selection precedes all intervention summaries. The alternating-axis model uses the final seed-0 checkpoint trained under P1 at each dimension (Appendix E.2.2). Frozen TabPFN v2 uses tabpfn-v2-regressor-09gpqh39.ckpt with package version 8.0.8, one estimator, original feature order, and no augmentation. We retain its native encoding, normalization, and bar-distribution mean, returning predictions in original response units. Inference uses float32. Layers are numbered from one throughout. 
+
+Feature-message intervention. Let I(g) contain the raw-feature indices in source token g. For the alternating-axis model, I(g) = {g}; for TabPFN v2, |I(g)| = 2 at both evaluated dimensions. A source is active if its group contains an active coordinate; this status is used only for analysis. We intervene on each source separately at every layer, holding the context and query sets fixed. At layer ℓ, let α(ℓ,h ) 
+
+> i,p,g
+
+be the attention weight from source g to receiver p in row i and head h, and let v(ℓ,h ) 
+
+> i,g
+
+be its value vector. For a selected row set R, the projected source message and modified attention output are 
+
+m(ℓ) 
+
+> i,p ←g
+
+= W (ℓ) 
+
+> O
+
+concat h[α(ℓ,h ) 
+
+> i,p,g
+
+v(ℓ,h ) 
+
+> i,g
+
+],o(ℓ) 
+
+> ip
+
+(δ; g, R) = o(ℓ) 
+
+> ip
+
+(0) − δ 1{i ∈ R} m(ℓ) 
+
+> i,p ←g
+
+. (61) We set δ = 0 .1, with dose comparisons at 0.05 and 0.2. Context and query interventions use their respective row sets 
+
+R; joint interventions use both sets. The same multiplier applies to every receiving token and attention head in the selected rows. Values include their projection bias; the output-projection bias is unchanged. Attention weights at the modified operation are held fixed without renormalization, and downstream computation is rerun. The alternating-axis implementation subtracts the projected source message; the TabPFN adapter scales the source value before aggregation. 
+
+Coefficient sensitivity. For each context D, we fit the baseline and intervened predictors on the same queries using the affine model bζ(D) + X
+
+> r
+
+bηr (D)xr .
+
+Appendix E.4.1, Eq. 52, gives the estimator. Here bηr (D) is the fitted slope for query feature xr . Subscripts 0 and δ, ℓg 
+
+denote the baseline and intervened predictors. Extending Eq. 9 to grouped sources gives 
+
+bJ(ℓ) 
+
+> rg
+
+(D; δ, R) = bη0,r (D) − bηδ,ℓg, R,r (D)
+
+δ .
+
+We suppress the row-set argument R below. Attenuating source g therefore changes coefficient r by −δ bJ(ℓ) 
+
+> rg
+
+.For isotropic Gaussian queries, the population slope is ηf (D) = Ex[xf (D, x )] , hence 
+
+J(ℓ) 
+
+> rg
+
+= Ex
+
+
+
+xr
+
+f0(D, x ) − fδ,ℓg (D, x )
+
+δ
+
+
+
+.
+
+Thus J measures the feature-aligned component of the prediction response; with the same query design, its least-squares estimate is equivalently obtained by regressing the prediction difference divided by δ on the query features, including an intercept. To normalize for the magnitude of context statistics, let c = X⊤y/n and ug = P 
+
+> r∈I(g)
+
+|cr |. We define the coefficient sensitivity as the total absolute own-feature response divided by ug :
+
+w(ℓ) 
+
+> g
+
+=
+
+P 
+
+> r∈I(g)
+
+| bJ(ℓ) 
+
+> rg
+
+|
+
+ug
+
+, ug > 0. (62) For a single-feature source, w(ℓ) 
+
+> j
+
+= | bJ(ℓ) 
+
+> jj
+
+|/|cj | when cj̸ = 0 . Thus w(ℓ) 
+
+> g
+
+≥ 0; larger values indicate stronger own-feature coefficient effects per unit context-statistic magnitude. All evaluated sources have ug > 0.40 Prediction-error change. Using a shared set of held-out queries, we compare the baseline predictor f0 and the intervened predictor fδ,ℓg against the Bayes prediction under Pk:
+
+E(f ; D) = 1
+
+Qeval 
+
+> Qeval
+
+X
+
+> m=1
+
+f (D, x eval  
+
+> m
+
+) − (xeval  
+
+> m
+
+)⊤η∗
+
+> k
+
+(c)2 ,
+
+∆Eℓg = E(fδ,ℓg ; D) − E(f0; D).
+
+(63) Positive ∆Eℓg indicates that attenuation worsens Bayes approximation; negative values indicate improvement. 
+
+Specificity. For a fixed context, layer, and dose, first compute each source’s own-feature response fraction, 
+
+p(ℓ) 
+
+> g
+
+(D; δ) = 
+
+P 
+
+> r∈I(g)
+
+| bJ(ℓ) 
+
+> rg
+
+|
+
+Pdr=1 | bJ(ℓ) 
+
+> rg
+
+| . (64) For a source role R ∈ { active , inactive }, specificity is the arithmetic mean over its source set, so each source receives equal weight regardless of its total response magnitude: 
+
+P (ℓ) 
+
+> R
+
+(D; δ) = 1
+
+|G R(D)|
+
+X
+
+> g∈G R(D)
+
+p(ℓ) 
+
+> g
+
+(D; δ). (65) 
+
+Aggregation and uncertainty. The plotted points are arithmetic means of these context-level quantities, with equal weights across contexts. For example, at d = 10 , k = 1 in the alternating-axis model, inactive specificity is the average of nine separate source fractions within each context. Active and inactive specificities do not sum to one. Ratios with source denominators at most 10 −12 are undefined and excluded before taking the source mean; no such ratios occur in the plotted cohorts. A context with no sources in a role is omitted for that role. In particular, no inactive curve exists at 
+
+k = d. Coefficient sensitivity w and error change ∆E are averaged over sources within each role and context, then summarized by the median across contexts. Specificity uses the equal-source and equal-context means above. Intervals are pointwise 95% percentile confidence intervals from 2,000 generator-batch resamples at a fixed checkpoint. The one-sparse cohort contains 122 original batches per dimension. Each draw retains all selected contexts from a sampled batch and recomputes the context-level mean or median. Draws are shared across models, row scopes, layers, doses, and source roles within each dimension and prior. 
+
+F.2 Validity of the coefficient-response interpretation 
+
+We assess how well fitted coefficient changes reconstruct the prediction response, then use response matrices to locate these changes by feature. 
+
+Fidelity to the prediction change. Fix a context, layer ℓ, and source g, and suppress ℓ, g in the following definitions. On held-out queries, write ∆fm = fδ,ℓg (D, x eval  
+
+> m
+
+) − f0(D, x eval  
+
+> m
+
+) and ∆bη = bηδ,ℓg − bη0. The centered prediction change is 
+
+f∆f m := ∆ fm − ∆f , 
+
+and its linear reconstruction from the fitted coefficient change is 
+
+f∆f lin  
+
+> m
+
+:= ( xeval  
+
+> m
+
+− ¯xeval )⊤∆bη. 
+
+Bars denote held-out query means. We measure reconstruction fidelity by 
+
+bR2∆,ℓg = 1 −
+
+P
+
+> m
+
+  f∆f m − f∆f lin 
+
+> m
+
+2
+
+P
+
+> m
+
+  f∆f m
+
+2 . (66) The numerator is the squared reconstruction error; the denominator is the total squared centered prediction change. Values near one indicate that coefficient changes faithfully capture the intervention’s effect across queries, after removing its mean shift. We exclude ratios with denominators at most 10 −12 and average valid scores within each source role and context. For separate-row interventions, final-layer active-source median fidelity ranges from 0.81 to 0.97 under context attenuation and from 0.97 to 0.98 under query attenuation across models and dimensions. Thus, fitted coefficient changes capture most of the centered active-source response, with higher fidelity for query interventions. Figure 29 gives the full depth profiles under joint attenuation. Final-layer active-source medians exceed 0.96 in both models and dimensions. Inactive-source medians are 0.94 and 0.83 in the alternating-axis model at d = 10 and d = 20 ,and 0.71 and 0.67 in TabPFN v2. The coefficient description is therefore more complete for active-source responses. 41 a1 2 3
+
+Layer ℓ
+
+> 0.00 0.25 0.50 0.75 1.00
+> Median response fidelity  d = 10 d = 20 Active Inactive
+
+b1 4 8 12 
+
+Layer ℓ
+
+> 0.00 0.25 0.50 0.75 1.00
+> Median response fidelity  d = 10 d = 20 Active Inactive
+
+Figure 29: Fidelity of coefficient changes to prediction changes. All layers, k = 1 , δ = 0 .1, joint context-and-query attenuation. Panels compare active and inactive sources within (a) the alternating-axis model and (b) frozen TabPFN v2, each using the same 128 tasks per dimension. Colors distinguish d = 10 and d = 20 . Solid and dashed lines show active-and inactive-source medians of within-context role-averaged bR2∆, respectively, with equal context weights. Bands use the pointwise 95% bootstrap procedure in Appendix F.1. Higher values indicate better fidelity ( ↑); the maximum is one, and values can be negative. a1 5 10  
+
+> Source g
+> 1510
+> Coefficient  r
+> Context | Layer 1
+> -0.03 00.03
+
+b1 5 10  
+
+> Source g
+> 1510
+> Coefficient  r
+> Context | Layer 2
+> -0.02 00.02
+
+c1 5 10  
+
+> Source g
+> 1510
+> Coefficient  r
+> Context | Layer 3
+> -0.08 00.08
+
+Figure 30: Coefficient responses to context-message attenuation. Alternating-axis model, d = 10 , k = 1 , δ = 0 .1;panels show layers 1–3. Each matrix column attenuates one source on context rows. The task, matrix axes, per-layer color scales, and gold outlines match Figure 7, allowing direct comparison with query interventions. 
+
+Illustrative response matrices. Figure 30 complements the query interventions in Figure 7 with context interventions on the same d = 10 task. Figure 31 shows both row scopes at d = 20 . At each dimension, the example is selected by proximity to the median Bayes coefficient norm among the same 128 tasks, with the smallest task ID breaking ties. Within each dimension, the same context is shown for both row scopes at all three layers. In both examples, the largest final-layer response occurs on the active source’s own coefficient under either intervention, with a larger magnitude for query attenuation. At d = 20 , the final-layer own-coefficient responses have opposite signs across the two row scopes, illustrating distinct context and query effects within the same task. 
+
+F.3 Context- and query-message effects across dimensions Predictive consequences at d = 10 . Figure 32 complements the main-text specificity and sensitivity panels with held-out Bayes-target error changes. In TabPFN v2, final-layer query attenuation increases error for active groups and decreases it for inactive groups. In the alternating-axis model, the active-query median is smaller and its 95% interval spans zero. These effects distinguish coefficient control from predictive usefulness. 42 a1 10 20  
+
+> Source g
+> 110 20
+> Coefficient  r
+> Context | Layer 1
+> -0.03 00.03
+
+b1 10 20  
+
+> Source g
+> 110 20
+> Coefficient  r
+> Context | Layer 2
+> -0.3 00.3
+
+c1 10 20  
+
+> Source g
+> 110 20
+> Coefficient  r
+> Context | Layer 3
+> -0.4 00.4
+
+d1 10 20  
+
+> Source g
+> 110 20
+> Coefficient  r
+> Query | Layer 1
+> -0.03 00.03
+
+e1 10 20  
+
+> Source g
+> 110 20
+> Coefficient  r
+> Query | Layer 2
+> -0.3 00.3
+
+f1 10 20  
+
+> Source g
+> 110 20
+> Coefficient  r
+> Query | Layer 3
+> -0.4 00.4
+
+Figure 31: Coefficient responses within a d = 20 task. Alternating-axis model, k = 1 , δ = 0 .1. Top: context interventions; bottom: query interventions. Columns show layers 1–3. The same task is used throughout; context and query panels share a symmetric color scale within each layer. Matrix axes and gold outlines follow Figure 7. 1 2 3
+
+Layer ℓ
+
+0.0 0.2 0.4 10 3ΔE
+
+(c) 1 4 8 12 
+
+Layer ℓ
+
+012 10 3ΔE
+
+(f) 
+
+Figure 32: Predictive consequences of context- and query-message attenuation. Panel (c): alternating-axis model; panel (f): frozen TabPFN v2. d = 10 , k = 1 , δ = 0 .1; the same 128 tasks as in Figure 8. Curves show median prediction-error changes after averaging sources within each role and task; bands are pointwise 95% generator-batch bootstrap intervals. Panels (c) and (f) complete Figure 8, whose panels (a, b, d, e) appear in the main text. 
+
+43 a1 2 3
+
+Layer ℓ
+
+> 0.0 0.5 1.0
+> Mean  PR
+> Context Query Active Inactive
+
+b1 2 3
+
+Layer ℓ
+
+> 0.0 0.2 0.4 0.6
+> Median  w
+> Context Query Active Inactive
+
+c1 2 3
+
+Layer ℓ
+
+> 0.0 1.5 3.0 4.5
+> Median 10 3ΔE
+> Context Query Active Inactive
+
+d1 4 8 12 
+
+Layer ℓ
+
+> 0.0 0.5 1.0
+> Mean  PR
+> Context Query Active Inactive
+
+e1 4 8 12 
+
+Layer ℓ
+
+> 0.0 0.1 0.2 0.3
+> Median  w
+> Context Query Active Inactive
+
+f1 4 8 12 
+
+Layer ℓ
+
+> 0246
+> Median 10 3ΔE
+> Context Query Active Inactive
+
+Figure 33: Context and query message effects at d = 20 . k = 1 , δ = 0 .1, 128 shared tasks. Top: alternating-axis model; bottom: frozen TabPFN v2. Layout, source-role summaries, and confidence intervals follow Figure 8. 
+
+Replication at d = 20 . Figure 33 repeats the separate-row interventions at d = 20 . Active sources have higher specificity at every layer in both models and row scopes. Final-layer active-source sensitivity also exceeds inactive-source sensitivity in all four comparisons. In the alternating-axis model, attenuating active sources in either row set increases final-layer prediction error. In TabPFN v2, the larger prediction-error contrast occurs under query attenuation, as at d = 10 .
+
+F.4 Response direction and predictive usefulness 
+
+Specificity and sensitivity measure the location and magnitude of a response. We next examine its direction and relation to prediction error. 
+
+Signed sensitivity. For each learned-model source, we orient its own-feature responses by the corresponding context statistics and define 
+
+s(ℓ) 
+
+> g
+
+=
+
+P 
+
+> r∈I(g)
+
+sign( cr ) bJ(ℓ)
+
+> rg
+
+P 
+
+> r∈I(g)
+
+|cr | . (67) For the alternating-axis model, this reduces to s(ℓ) 
+
+> j
+
+= bJ(ℓ) 
+
+> jj
+
+/c j . Positive values indicate that retaining the message supports the direction of c; negative values indicate an opposing response. For native TabPFN v2 groups, the numerator sums the two direction-aligned coordinate responses. The magnitude satisfies |sg | ≤ wg , with equality for single-feature sources. We also report the unnormalized own-feature magnitude ag = P 
+
+> r∈I(g)
+
+| bJrg |.Figure 34 shows the distribution of signed sensitivity for active sources at the final feature-attention layer, using the same 128 one-sparse tasks at δ = 0 .1. Each task has exactly one active source in both models. Active query responses are negative in 56 tasks at d = 10 and seven at d = 20 in the alternating-axis model, compared with one and zero in 44 a-1 -0.1 0 0.1 1
+
+Signed sensitivity sg    
+
+> 0.0 0.5 1.0
+> Cumulative task fraction  Context Query b-1 -0.1 00.1 1
+
+Signed sensitivity sg    
+
+> 0.0 0.5 1.0
+> Cumulative task fraction  Context Query c-1 -0.1 00.1 1
+
+Signed sensitivity sg    
+
+> 0.0 0.5 1.0
+> Cumulative task fraction  Context Query d-1 -0.1 00.1 1
+
+Signed sensitivity sg
+
+> 0.0 0.5 1.0
+> Cumulative task fraction  Context Query
+
+Figure 34: Direction and magnitude of active-source control. Final-layer empirical distributions of signed sensitivity sg ,with k = 1 , δ = 0 .1, and the same 128 tasks per dimension and model. Top: alternating-axis model; bottom: TabPFN v2. Left: d = 10 ; right: d = 20 . Colors distinguish context and query attenuation, as in Figure 8. All tasks are shown. The horizontal axis is linear for |sg | ≤ 0.05 and logarithmic outside that interval; the dotted line marks zero. 
+
+TabPFN v2. Among these negative-query cases, the alternating-axis model has median wg = 0 .199 and ag = 0 .063 at 
+
+d = 10 , versus 0.026 and 0.002 at d = 20 . Context interventions yield more frequent negative responses than query interventions in every model–dimension comparison. The distributions therefore distinguish response direction from the unsigned selectivity measured in Figure 8. The following three references relate response direction to the intervened quantity in a Bayesian computation. 
+
+Final-contribution reference. In the one-sparse construction of Figure 3(c), the final message from feature j
+
+contributes η∗ 
+
+> 1,j
+
+xj to the prediction. Attenuating this contribution gives 
+
+fδ,j (D, x ) = f ∗ 
+
+> 1
+
+(D, x ) − δη ∗ 
+
+> 1,j
+
+xj , Jideal  
+
+> rj
+
+= 1{r = j}η∗ 
+
+> 1,j
+
+.
+
+Thus its own-feature response relative to cj is Jideal  
+
+> jj
+
+/c j = λ1q1,j (c) ≥ 0 for cj̸ = 0 . This final-contribution intervention supplies a reference for both the localization and direction of the learned coefficient response. For every nonzero response, specificity is one regardless of realized support membership. Under independent isotropic queries, the increase in Bayes approximation error from this exact baseline is δ2(η∗ 
+
+> 1,j
+
+)2 ≥ 0. Finite-noise posterior inclusion is positive even for inactive features, so zero inactive response is not required. 45 Perturbing evidence before competition. Write qj = q1,j (c), η∗ 
+
+> j
+
+= η∗ 
+
+> 1,j
+
+(c), λ = λ1, and θ = θ1 =
+
+v2/[2 τ 2(v2 + τ 2)] , with τ 2 = σ2/n . Suppose an intervention replaces only cj by (1 − δ)cj before evaluating 
+
+qr = exp( θc 2 
+
+> r
+
+)/ P 
+
+> s
+
+exp( θc 2
+
+> s
+
+) and the posterior coefficients. Differentiating gives 
+
+∂q r
+
+∂c j
+
+= 2 θc j qr (1{r = j} − qj ).
+
+The limiting coefficient response is therefore 
+
+Jevidence  
+
+> rj
+
+:= lim 
+
+> δ→0
+
+η∗ 
+
+> r
+
+(c) − η∗ 
+
+> r
+
+(c − δc j ej )
+
+δ = cj
+
+∂η ∗
+
+> r
+
+∂c j
+
+= λq r cj 1{r = j} + 2 θη ∗ 
+
+> r
+
+c2 
+
+> j
+
+(1{r = j} − qj ),
+
+(68) where ej is the jth coordinate vector. In particular, Jevidence  
+
+> jj
+
+= η∗ 
+
+> j
+
+[1 + 2 θc 2 
+
+> j
+
+(1 − qj )] , while Jevidence  
+
+> rj
+
+= −2θη ∗ 
+
+> r
+
+qj c2
+
+> j
+
+for r̸ = j. Weakening one evidence coordinate thus increases competitors’ coefficient magnitudes to first order. Own-feature signed sensitivity remains nonnegative. This reference describes evidence rescaling before posterior competition; its off-diagonal terms distinguish it from final-contribution attenuation. 
+
+An alternative signed realization. The same Bayesian coefficient can be decomposed as 
+
+η∗ 
+
+> j
+
+= λc j − λ(1 − qj )cj .
+
+Consider two additive prediction contributions implementing these terms. Attenuating only the second, with q and the first contribution held fixed, gives Jcorrection  
+
+> jj
+
+= −λ(1 − qj )cj and zero off-diagonal responses. Its signed sensitivity is nonpositive although the baseline prediction is exactly Bayesian. The same Bayesian predictor can therefore yield either response sign, depending on the contribution being attenuated. These additive realizations provide functional references for interpreting the measured signs. 
+
+Relation to predictive effects. For e = bη0 − η∗ 
+
+> 1
+
+and bJ = bJ(ℓ) 
+
+> ·g
+
+, the coefficient-error change is 
+
+∥bηδ,ℓg − η∗ 
+
+> 1
+
+∥22 − ∥ e∥22 = −2δe ⊤ bJ + δ2∥ bJ∥22. (69) Equation 69 follows by substituting bηδ,ℓg = bη0 − δ bJ(ℓ) 
+
+> ·g
+
+and expanding the square. The identity holds at the measured dose, since bJ is the corresponding finite difference. Predictive usefulness therefore depends on the response’s alignment with the baseline error as well as its magnitude. The reported ∆E evaluates the full prediction change against Bayes on held-out queries (Eq. 63). For population affine projections, Lemma 2 gives the corresponding full error change as 
+
+∆Epop = ∆ C + ( ζ2 
+
+> δ
+
+− ζ20 ) + Ex[rδ (D, x )2 − r0(D, x )2],
+
+where ∆C is the population coefficient-error change. The full error change combines coefficient, intercept, and residual components. Empirical estimates additionally include projection error and finite-query cross terms. 
+
+F.5 Robustness to attenuation strength 
+
+We vary δ ∈ { 0.05 , 0.1, 0.2} under joint context-and-query attenuation, using the same 128 tasks per dimension. This analysis tests the dose dependence of combined message effects; Appendix F.3 compares context and query effects separately at δ = 0 .1.
+
+Alternating-axis model. Final-layer active-source sensitivity exceeds inactive-source sensitivity at all three doses (Figures 35 and 36). The median active-source error change increases from −4.6 × 10 −6 to 1.7 × 10 −4 at d = 10 , and from 1.4 × 10 −5 to 3.6 × 10 −3 at d = 20 , as δ increases from 0.05 to 0.2. Inactive-source changes remain smaller at the largest dose. 
+
+Frozen TabPFN v2. Final-layer active groups also have higher sensitivity at all three doses. Their median error change is positive and increases with δ, whereas attenuating inactive groups decreases error. Thus, the active-source sensitivity advantage persists across doses in both models, while the sign of the prediction effect depends on the model and source role. 46 a1 2 3
+
+Layer ℓ
+
+> 0.0 0.2 0.4 0.6
+> Median  w
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 b1 2 3
+
+Layer ℓ
+
+> 0.0 0.2 0.4 0.6
+> Median  w
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 c1 2 3
+
+Layer ℓ
+
+> 0.0 0.4 0.8 1.2
+> Median 10 3ΔE
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 d1 2 3
+
+Layer ℓ
+
+> 0.00 0.08 0.16
+> Median 10 3ΔE
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 e1 4 8 12 
+
+Layer ℓ
+
+> 0.0 0.1 0.2 0.3
+> Median  w
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 f1 4 8 12 
+
+Layer ℓ
+
+> 0.0 0.1 0.2 0.3
+> Median  w
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 g1 4 8 12 
+
+Layer ℓ
+
+> 0.0 2.5 5.0 7.5
+> Median 10 3ΔE
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 h1 4 8 12 
+
+Layer ℓ
+
+> −0.4 0.0 0.4 0.8
+> Median 10 3ΔE
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 Figure 35: Attenuation-strength comparison at d = 10 . k = 1 , 128 tasks, joint context-and-query attenuation. Panels (a–d): alternating-axis model; (e–h): TabPFN v2. For each model, rows show sensitivity and error change; columns show active and inactive sources. Curves show task medians of role averages; bands are 95% batch-bootstrap intervals (Appendix F.1). Dose comparisons share bootstrap draws. Sensitivity axes match across dimensions; error axes are panel-specific. 
+
+47 a1 2 3
+
+Layer ℓ
+
+> 0.0 0.2 0.4 0.6
+> Median  w
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 b1 2 3
+
+Layer ℓ
+
+> 0.0 0.2 0.4 0.6
+> Median  w
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 c1 2 3
+
+Layer ℓ
+
+> 0246
+> Median 10 3ΔE
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 d1 2 3
+
+Layer ℓ
+
+> 0.00 0.05 0.10
+> Median 10 3ΔE
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 e1 4 8 12 
+
+Layer ℓ
+
+> 0.0 0.1 0.2 0.3
+> Median  w
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 f1 4 8 12 
+
+Layer ℓ
+
+> 0.0 0.1 0.2 0.3
+> Median  w
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 g1 4 8 12 
+
+Layer ℓ
+
+> 0510
+> Median 10 3ΔE
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 h1 4 8 12 
+
+Layer ℓ
+
+> −0.2 0.0 0.2
+> Median 10 3ΔE
+
+δ = 0.05 
+
+δ = 0.1 
+
+δ = 0.2 Figure 36: Attenuation-strength comparison at d = 20 . k = 1 , 128 tasks, joint context-and-query attenuation. Panels (a–d): alternating-axis model; (e–h): TabPFN v2. For each model, rows show sensitivity and error change; columns show active and inactive sources. Curves show task medians of role averages; bands are 95% batch-bootstrap intervals (Appendix F.1). Dose comparisons share bootstrap draws. Sensitivity axes match across dimensions; error axes are panel-specific. 
+
+48 F.6 Extension across support sizes and scope of conclusions 
+
+Section 4 focuses on the one-sparse prior. We repeat the same intervention at k = d/ 2 to test whether the final-layer active–inactive distinction persists beyond extreme sparsity, and at k = d to test whether feature messages remain functionally important when every feature is active. 
+
+Protocol. We use the intervention and measurements in Appendix F.1, with δ = 0 .1, d ∈ { 10 , 20 }, and joint attenuation of context and query rows. The alternating-axis model uses the final seed-0 checkpoint trained under each matched prior Pk; TabPFN v2 remains frozen across priors. At each dimension and prior, both models use the same 128 tasks. These are the first 128 original contexts in the corresponding saved active–active pair cohort; only the original context enters the analysis. Bayes approximation error uses the corresponding η∗
+
+> k
+
+(c) in Eq. 63. Aggregation and batch-bootstrap intervals follow Appendix F.1. At k = d/ 2, TabPFN v2 has an inactive native feature group in 111 of 128 contexts at d = 10 and all 128 at d = 20 ;inactive-group summaries use these contexts, while active-group summaries use all 128. The two role summaries therefore cover different task sets at d = 10 . At k = d, every source is active. 
+
+Intermediate support: k = d/ 2. Final-layer active sources have higher mean specificity and larger median prediction-error changes than inactive sources in both models and dimensions (Figure 37, rows 1 and 3). TabPFN v2 also retains a larger active-source median sensitivity at both dimensions, as does the alternating-axis model at d = 20 . In the alternating-axis model at d = 10 , active and inactive median sensitivities are close ( 0.194 and 0.200 ), while specificity is 
+
+0.499 versus 0.251 . Response localization and prediction effects retain an active–inactive contrast, while the sensitivity advantage varies across conditions. 
+
+Dense support: k = d. At the dense endpoint every source is active. Source attenuation continues to change the corresponding coefficients and produces positive final-layer median ∆E in both models and dimensions (Figure 37, rows 2 and 4). Feature-message control therefore extends to dense prediction, where support selection is unnecessary. 
+
+Fidelity of coefficient changes. Across the two additional priors and dimensions, final-layer active-source medians of 
+
+bR2∆ range from 0.93 to 0.98 in the alternating-axis model and from 0.80 to 0.85 in TabPFN v2 (Eq. 66). Coefficient changes therefore explain most of the centered prediction change, supporting the same coefficient-based interpretation across support sizes. 
+
+Scope of the evidence. Across these experiments, feature messages exert feature-aligned control over prediction coefficients. Under sparse priors, this control varies with source relevance; under the dense prior, it remains functionally important. These results locate coefficient control within the computation. Identifying how relevance is inferred requires tracing the formation of the intervened messages. 49 Alternating-axis model a1 2 3
+
+Layer ℓ
+
+0.0 0.5 1.0 
+
+> Mean  PR
+> d = 10 d = 20 Active Inactive
+
+b1 2 3
+
+Layer ℓ
+
+0.0 0.2 0.4 0.6 
+
+> Median  w
+> d = 10 d = 20 Active Inactive
+
+c1 2 3
+
+Layer ℓ
+
+0.0 0.2 0.4 
+
+> Median 10 3ΔE
+> d = 10 d = 20 Active Inactive
+
+d1 2 3
+
+Layer ℓ
+
+0.0 0.5 1.0 
+
+> Mean  PR
+> d = 10 d = 20 All sources
+
+e1 2 3
+
+Layer ℓ
+
+0.0 0.4 0.8 1.2 
+
+> Median  w
+> d = 10 d = 20 All sources
+
+f1 2 3
+
+Layer ℓ
+
+0.0 0.3 0.6 
+
+> Median 10 3ΔE
+> d = 10 d = 20 All sources
+
+Frozen TabPFN v2 g1 4 8 12 
+
+Layer ℓ
+
+0.0 0.5 1.0 
+
+> Mean  PR
+> d = 10 d = 20 Active Inactive
+
+h1 4 8 12 
+
+Layer ℓ
+
+0.00 0.08 0.16 0.24 
+
+> Median  w
+> d = 10 d = 20 Active Inactive
+
+i1 4 8 12 
+
+Layer ℓ
+
+012
+
+> Median 10 3ΔE
+> d = 10 d = 20 Active Inactive
+
+j1 4 8 12 
+
+Layer ℓ
+
+0.0 0.5 1.0 
+
+> Mean  PR
+> d = 10 d = 20 All sources
+
+k1 4 8 12 
+
+Layer ℓ
+
+0.00 0.08 0.16 0.24 
+
+> Median  w
+> d = 10 d = 20 All sources
+
+l1 4 8 12 
+
+Layer ℓ
+
+012
+
+> Median 10 3ΔE
+> d = 10 d = 20 All sources
+
+Figure 37: Coefficient control across support sizes. Panels (a–f): alternating-axis model; (g–l): frozen TabPFN v2. Within each model, rows show k = d/ 2 and k = d; columns show specificity, sensitivity, and prediction-error change. Joint attenuation, δ = 0 .1, 128 shared tasks per dimension and prior. Colors distinguish dimensions; solid and dashed curves denote active and inactive sources. All sources are active at k = d. Bands are pointwise 95% batch-bootstrap intervals. TabPFN v2 sources are native two-feature groups. 
+
+50 G Notation 
+
+Population BLP coefficients and error components carry no accents; hats denote fitted predictors and empirical estimates. Stars identify Bayes-optimal quantities or population optima, and bars denote sample means. A subscript identifies the predictor, prior, or coordinate; a parenthesized superscript (t) identifies a test task. Dependence on fixed parameters is suppressed only within a stated setting. Controlled-experiment definitions: dense-prior prediction gap (Eq. 50), Bayes approximation error (Eq. 6; finite-query estimate in Eq. 49), architecture gap (Eq. 51), population error components (Lemma 2; Appendix D.6), and their empirical estimates (Eqs. 53–55). 
+
+Table 8: Notation for the controlled model, affine projection, and interventions. 
+
+Symbol Meaning 
+
+D = ( X, y ); n, d Context, context size, and feature dimension; X ∈ Rn×d, y ∈ Rn.
+
+x ∈ Rd; x⊤ 
+
+> i
+
+Independent query vector; row i of the context design. Within a query, xj denotes coordinate j.
+
+β; S; k; Pk Data-generating regression coefficients, their active support, its size, and the corre-sponding coefficient prior. 
+
+v2; σ2; τ 2 Total prior signal energy, response-noise variance, and σ2/n .
+
+c = X⊤y/n Sufficient statistic for the coefficient posterior. 
+
+πk (A | c); qk,j (c) Posterior probability of support A; posterior inclusion probability of coordinate j.
+
+λk ; θk Conditional Gaussian shrinkage factor; scale multiplying squared evidence in the support posterior. 
+
+η∗ 
+
+> k
+
+(c); f ∗ 
+
+> k
+
+(D, x ) Bayes coefficient map and prediction x⊤η∗ 
+
+> k
+
+(c); an additional index n exposes context-length dependence. 
+
+ζf (D); ηf (D) Population affine-BLP intercept and slope of predictor f under the query distribution. 
+
+bζf (D); bηf (D) Finite-query least-squares estimates of the BLP intercept and slope. 
+
+rf (D, x ) Residual after subtracting the population affine BLP; brf uses the fitted BLP. 
+
+Cf ; ζ2 
+
+> f
+
+; Nf Coefficient error, squared intercept, and nonlinear residual error, respectively. 
+
+∆dense  
+
+> k
+
+(D) Mean squared prediction difference between the dense-prior rule and Bayes for dataset D.
+
+Ea,k ; bEa,k Task-level normalized Bayes approximation error and its finite-query estimate; both refer to one dataset and one training seed. 
+
+bCa,k ; bZa,k ; bNa,k Normalized coefficient, squared-intercept, and residual errors for one dataset and one training seed. 
+
+Rk (f ) Population risk against noisy query responses (Appendix D.6). 
+
+a; bfa,k Architecture or model label; trained controlled predictor under Pk ; a is row-token or alternating-axis. 
+
+T ; t Test-task count and task index. 
+
+Qproj ; Qeval Numbers of projection and evaluation queries; the task index is omitted for a fixed context. 
+
+bGk ; bGUk Per-dataset row-token minus alternating-axis gaps in normalized prediction error and component U ∈ { C, ζ, N }, for one training seed. The ζ label denotes squared intercepts. 
+
+γℓg ; δ; bJ(ℓ) 
+
+> rg
+
+External message multiplier, attenuation fraction, and fitted coefficient response per unit attenuation (bη0,r − bηδ,ℓg,r )/δ .
+
+I(g); ug ; w(ℓ) 
+
+> g
+
+Source token’s raw-feature indices, P 
+
+> r∈I(g)
+
+|cr |, and coefficient sensitivity. 
+
+bR2aff ; bR2∆ Held-out affine-fit fidelity and fidelity to the centered intervention effect. In the production experiments of Section 2, M denotes the released model, N sample size, and ρ the null-feature ratio. Sperm  
+
+> j
+
+and 
+
+SPDP  
+
+> j
+
+are sensitivity scores, distinct from support S. N , E, I d denote the Gaussian distribution, expectation, and identity matrix. Held-out R2 values may be negative. In Section 4, ℓ indexes the attenuated layer, g the source token, and r an affected coefficient; 
+
+m(ℓ) 
+
+> i,p ←g
+
+is the projected message to receiver p at row i, and R specifies the intervened context rows, query rows, or both. bJ(ℓ) 
+
+> rg
+
+is the coefficient response per unit attenuation. w(ℓ) 
+
+> g
+
+= P 
+
+> r∈I(g)
+
+| bJ(ℓ) 
+
+> rg
+
+|/u g ≥ 0 is coefficient sensitivity. Table subscripts act and 
+
+inact denote averages over active and inactive sources within a context, respectively. P (ℓ) is the equal-source mean of own-feature coefficient-response fractions; P (ℓ) 
+
+> R
+
+restricts that mean to source role R. Both are distinct from the prior Pk . Following the main text, E(f ; D) and ∆Eℓg denote held-out Bayes approximation error and its change under attenuation without hats; ∆ bCℓg is the corresponding change in fitted coefficient error. These intervention errors use original response units and do not use the task-energy normalization of the architecture comparison. 
+
+51
