@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-02</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-03</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>0</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>1</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-02 23:08:30 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-03 21:42:28 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>2026-10-02 日报精选 9 篇论文，精读 8 篇、速读 1 篇。最值得看的是表格数据零样本基础模型 TabFM（10.0/10）和用单个 transformer 块循环解决表格任务的 LoopICL（9.0/10）。普通读者可先了解 TabFM 的零样本思路，再按需速读 ODE 因果表示学习一文。</p>
+<p>今日速读1篇论文，聚焦关系型基础模型的推理成本优化。值得关注的是《STEER》提出用语义引导采样来降低推理开销，评分6.0。普通读者可留意这类&quot;用更聪明的采样代替全量计算&quot;的思路，后续可对比其在实际关系数据上的提速效果。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TabFM: A Zero-Shot Foundation Model for Tabular Data">TabFM: A Zero-Shot Foundation Model for Tabular Data</span></li><li><span class="dpr-home-dashboard-paper-title" title="LoopICL: Looping a single transformer block to solve tabular tasks">LoopICL: Looping a single transformer block to solve tabular tasks</span></li><li><span class="dpr-home-dashboard-paper-title" title="EvoMO-SR: Multiobjective LLM-based Evolution of Symbolic Expressions with substructure guidance">EvoMO-SR: Multiobjective LLM-based Evolution of Symbolic Expressions with substructure guidance</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>7</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -94,9 +94,9 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Identifying ODEs from Unstructured Data with Causal Representation Learning">Identifying ODEs from Unstructured Data with Causal Representation Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="STEER: Reducing Inference Cost in Relational Foundation Models through Semantically Informed Sampling">STEER: Reducing Inference Cost in Relational Foundation Models through Semantically Informed Sampling</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 </div>
 
