@@ -1,0 +1,1318 @@
+MatrixFormer: A Foundation Model for Matrix
+Completion
+Dwaipayan Saha⋆
+Columbia University
+Jacob Feitelberg⋆
+Columbia University
+Kyuseong Choi⋆
+Cornell Tech
+Raaz Dwivedi
+Cornell Tech
+Anish Agarwal
+Columbia University
+Abstract
+Matrix completion underlies problems from tabular imputation to causal infer-
+ence, yet existing tabular foundation models treat it as entry-by-entry prediction,
+repeating context for every target and discarding the matrix’s two-dimensional
+structure. We introduce MatrixFormer, a pre-trained matrix-native transformer that
+predicts a full distribution for every missing entry in a single forward pass. Matrix-
+Former is trained entirely on synthetic low-rank and latent-factor matrices under
+diverse missingness patterns. Applied zero-shot and with the same model weights,
+MatrixFormer achieves competitive performance on causal inference panel-data
+tasks, language-model benchmark-score completion, tabular imputation, and rec-
+ommendation systems matrix completion. These results position MatrixFormer as
+a general-purpose foundation model for matrix completion.
+1
+Introduction
+Clinical measurements, user ratings, and language-model benchmark scores [Smola, 2026] are often
+recorded in partially observed matrices. Predicting untreated outcomes in panel data creates a related
+completion problem [Athey et al., 2021]. Across these settings, observed entries supply information
+about both rows and columns. We study how to pretrain a completion model that can use this
+information across different matrix sizes and observation patterns.
+Low-rank methods capture matrix structure through shared row and column factors [Candès and
+Recht, 2009, Salakhutdinov and Mnih, 2007], while chained-equation and model-selection imputers
+fit conditional prediction models [van Buuren and Groothuis-Oudshoorn, 2011, Jarrett et al., 2022].
+These methods estimate their parameters from the observed entries of each new matrix. Synthetic
+pretraining moves part of that computation into a reusable model. Prior-data fitted networks learn
+prediction rules from synthetic tasks, then use observations from a new dataset as context [Müller
+et al., 2022, Hollmann et al., 2025].
+TabImpute [Feitelberg et al., 2025] applied synthetic pretraining to missing-data imputation. Its
+configurable missingness generator produces specialists for particular observation patterns. An entry-
+wise representation makes tabular prediction models applicable to completion: each matrix entry
+becomes a supervised example containing its row and column context. An R × C matrix therefore
+produces a table of RC examples whose features repeat the same observed values. This expansion
+raises the memory and runtime cost of completing larger matrices. We replace the expanded feature
+table with a shared two-dimensional representation.
+We introduce MatrixFormer, an observed-error ensemble of two fixed pretrained experts: the
+general-purpose MatrixFormer-Impute and the recommender-specific MatrixFormer-RecSys.
+MatrixFormer-Impute is a transformer pretrained for matrix completion. The input is a grid of cell
+Preprint.
+arXiv:2610.06751v1  [cs.LG]  5 Oct 2026
+
+
+tokens with explicit missingness indicators. Attention alternates across the columns of each row and
+the rows of each column, following work on axial and cross-datapoint attention [Ho et al., 2019,
+Kossen et al., 2021, Rao et al., 2021, Hollmann et al., 2025]. These operations let a cell combine
+information about other measurements of the same unit with information about the same measurement
+across units. A shared decoder predicts all missing entries in an inference window together, using the
+means of its cellwise predictive distributions. In the fixed-width runtime experiment on an NVIDIA
+H200, MatrixFormer completes the 1024 × 10 synthetic matrix in a median of 0.0389 s, compared
+with 4.167 s for TabImpute. This is a 107× speedup (section 3.1).
+MatrixFormer-Impute is trained entirely on synthetic matrices with varied ranks, singular-value
+profiles, dimensions, and missingness patterns. The training distribution includes sparse rows and
+columns to model limited observation support. At deployment, observed entries provide context and
+the model weights remain fixed.
+MatrixFormer combines MatrixFormer-Impute with MatrixFormer-RecSys, a recommender specialist
+also trained on synthetic data. One mixture weight per input matrix minimizes the blend’s normalized
+squared reconstruction error on observed entries. Both networks retain their pretrained parameters.
+Since the observed entries are also part of the input, this fit uses in-sample evidence. We assess the
+blend on separately hidden entries. MatrixFormer requires both expert forward passes.
+We evaluate on tabular imputation, recommender-system rating prediction, language-model bench-
+mark completion, and a causal panel-data benchmark. Across these tasks, we test dense and sparse
+observation patterns and matrices much larger than those used in pretraining. MatrixFormer achieves
+state-of-the-art results in each of these categories with the same fixed model parameters.
+2
+Architecture and Training
+Both MatrixFormer-Impute and MatrixFormer-RecSys use the following architecture; MatrixFormer
+ensembles their predictions as described in section 3.2. Let X ∈(R ∪{NaN})R×C denote a partially
+observed matrix and let M ∈{0, 1}R×C be its missingness mask, with Mrc = 1 when Xrc is
+unobserved. We suppress the batch dimension throughout. The central design choice in MatrixFormer-
+Impute is to preserve this two-dimensional structure throughout the network. This differs from
+TabImpute [Feitelberg et al., 2025], which converts imputation into a supervised prediction problem
+by constructing an entry-level example containing the corresponding row and column context. That
+representation makes a strong tabular foundation model directly applicable, but it repeats context
+across target entries. MatrixFormer-Impute instead applies transformer self-attention [Vaswani et al.,
+2017] directly to a grid of cell tokens, propagating information along the matrix’s two natural axes.
+Cell representation.
+We form e
+X ∈RR×C by setting e
+Xrc = Xrc at observed entries and e
+Xrc = 0
+at missing entries. Zero serves only as a computational placeholder: the corresponding value
+embedding is subsequently replaced by a learned mask token, as in masked-token modeling [Devlin
+et al., 2019]. Let d be the embedding dimension, let fval : R →Rd be a shared value-embedding
+multilayer perceptron (MLP), let mmask ∈Rd be the learned mask vector, and let emiss : {0, 1} →Rd
+be an embedding lookup with separate learned vectors for observed and missing cells. The initial
+representation of cell (r, c) is
+E(0)
+rc = (1 −Mrc)fval( e
+Xrc) + Mrcmmask + emiss(Mrc).
+(1)
+Thus, observed cells receive fval(Xrc) + emiss(0), whereas missing cells receive mmask + emiss(1).
+The mask token already encodes missingness; the final term provides a separately parameterized
+offset for each observation status.
+We augment the grid with learned row- and column-CLS tokens, extending the use of special
+aggregation tokens in transformers [Devlin et al., 2019] to the two matrix axes. Specifically, we
+prepend Kc columns of row-CLS tokens and Kr rows of column-CLS tokens, obtaining G(0) ∈
+R(R+Kr)×(C+Kc)×d. These auxiliary tokens participate in attention but are not prediction targets.
+Figure 1 summarizes the full forward pass.
+Alternating axial attention.
+Each transformer block contains two axial self-attention opera-
+tions [Ho et al., 2019]. Feature attention is applied across columns separately within each row,
+allowing a cell to use the other variables measured for the same datapoint. Datapoint attention
+2
+
+
+Figure 1: MatrixFormer forward pass. Each matrix cell is represented by a token with an explicit
+missingness embedding. Missing values use a learned mask token. Learned row- and column-CLS
+tokens are added around the matrix, and each transformer block alternates feature attention across
+columns within a row and datapoint attention across rows within a column. After L blocks, the CLS
+border is removed and a decoder predicts the masked entries.
+is then applied across rows separately within each column, allowing the same cell to use the em-
+pirical structure of that variable across observations. We write RMSNorm for root-mean-square
+normalization over the d embedding coordinates of each token [Zhang and Sennrich, 2019], and
+FFN : Rd →Rd for a feed-forward network with SwiGLU gating [Shazeer, 2020], applied separately
+at each grid location with shared parameters. Both attention operations and the feed-forward sublayer
+use pre-normalized residual connections [Xiong et al., 2020], each scaled by a learned scalar gain
+γi [Bachlechner et al., 2021]. Writing Afeat and Adata for the two attention operators, one block can
+be summarized as
+U (ℓ) = G(ℓ−1) + γ1 Afeat
+
+RMSNorm(G(ℓ−1))
+
+,
+(2)
+V (ℓ) = U (ℓ) + γ2 Adata
+
+RMSNorm(U (ℓ))
+
+,
+(3)
+G(ℓ) = V (ℓ) + γ3 FFN
+
+RMSNorm(V (ℓ))
+
+,
+(4)
+for ℓ= 1, . . . , L, with layer- and sublayer-specific parameters suppressed in the notation. Rotary
+positional embeddings (RoPE) [Su et al., 2021] are applied along the attended axis, using column
+positions for feature attention and row positions for datapoint attention, with data positions beginning
+after the corresponding CLS border. Alternating the two attention operators lets information move
+across the full matrix while retaining the distinction between row structure and column structure
+at every layer. The feed-forward network mixes embedding coordinates rather than matrix entries.
+We use L = 8 blocks of width d = 768 with 16 attention heads, feed-forward width 1536 and
+Kr = Kc = 12, for 78M parameters (Table 4).
+Decoder.
+After the final transformer block, we remove the row- and column-CLS border and retain
+the contextual representation hrc = G(L)
+Kr+r,Kc+c ∈Rd for each matrix entry. Let θ collect the
+trainable model parameters and let fdec : Rd →RO be the shared decoder MLP. Its output z ∈RO
+parameterizes a bar distribution [Müller et al., 2022, Hollmann et al., 2025] on O = 5000 fixed
+bins with borders b0 < b1 < · · · < bO and midpoints ˜bk = (bk−1 + bk)/2: with bin probabilities
+q(z) = softmax(z), its density p(y; z) at a scalar target y equals qk(z)/(bk −bk−1) on each interior
+bin [bk−1, bk), and the two outer bins are replaced by half-normal tails so that the support is R
+(Appendix A.2). The distribution has no parameters of its own, so θ enters only through z. The
+3
+
+
+conditional predictive density for cell (r, c) is then
+zrc = fdec(hrc) ∈RO,
+pθ,rc(y | X, M) = p(y; zrc).
+(5)
+The dependence of hrc and fdec on θ is implicit. The decoder acts separately on each token, with
+parameters shared across rows and columns; each prediction nevertheless uses matrix-wide context
+through hrc, rather than through an additional mixing operation in the output head. This cellwise
+readout permits all missing entries to be predicted in parallel within a single forward pass. For point
+imputation, we use the predictive mean,
+b
+Xrc = µθ,rc = EY ∼pθ,rc( ·|X,M)[Y ] =
+O
+X
+k=1
+qk(zrc) νk,
+Mrc = 1,
+(6)
+where νk = ˜bk for 1 < k < O and ν1, νO are the means of the two tails; observed entries are left
+unchanged. Retaining a predictive distribution, rather than only a scalar output, allows the same
+decoder to support the likelihood and cumulative-distribution-function (CDF) alignment terms in the
+training objective, while its mean supplies the point-prediction term. During synthetic training, these
+losses are evaluated only at entries hidden by the training mask, as described in Section 2.1. When
+discussing a single hidden entry, we suppress (r, c) and write pθ for pθ,rc.
+Computational scaling.
+Holding the embedding width fixed, dense self-attention applied to the
+flattened RC cells requires O(R2C2) pairwise attention interactions per layer. Ignoring the CLS
+borders, MatrixFormer-Impute instead performs attention over C tokens for each of R rows and over
+R tokens for each of C columns, giving
+O
+ RC2 + CR2
+= O(RC(R + C)) .
+(7)
+Including the border tokens replaces R and C by R + Kr and C + Kc, respectively, leaving the
+asymptotic order unchanged for fixed Kr and Kc. Compared with full attention on the flattened
+grid, this factorization reduces the attention cost while preserving the row–column structure of the
+problem.
+2.1
+Synthetic pre-training
+As in prior-data fitted networks [Müller et al., 2022, Hollmann et al., 2023, 2025] and TabImpute [Feit-
+elberg et al., 2025], MatrixFormer-Impute is pre-trained only on synthetic complete matrices, masked
+to define reconstruction tasks. Pre-training has three phases with the same architecture, each contin-
+uing from a selected checkpoint of the previous one: a base phase on small latent-factor matrices
+with MCAR masking; a main phase with the more diverse data and objective described below; and a
+short size-extension phase on matrices with up to 2000 rows and 1000 columns. The last phase is
+analogous to context-length extension in language models [Chen et al., 2023]: because attention cost
+grows with matrix size, most training uses moderate sizes, and a brief final phase adapts the model,
+including the range of its rotary positions, to large matrices. Section A.3 gives all settings.
+Data.
+The main phase mixes four equally likely matrix families: low-rank signals [Candès and
+Recht, 2009], two broader-rank spectral families with slow or steep tails, as in many real data
+matrices [Udell and Townsend, 2019], and latent-factor matrices [Salakhutdinov and Mnih, 2007].
+This prior varies not only rank but also spectral shape, singular-vector geometry, matrix dimensions,
+and the amount and pattern of observed support. We distinguish the complete target T ∈RR×C from
+the complete, potentially noisy input A ∈RR×C; masking and normalization subsequently produce
+the network input X and standardized target y.
+Spectral families.
+For the three spectral families, sample a rank parameter k and matrices U ∈
+RR×k and V ∈RC×k with orthonormal columns. The generator forms
+T = U diag(s1, . . . , sk)V ⊤,
+A = T + σϵE,
+Erc
+iid
+∼N(0, 1).
+(8)
+Here σϵ ∼Unif(0, 10−3): the target retains the entire clean signal, rather than the noisy input or an
+additional top-rank truncation. Thus, “low-rank” refers to T, not necessarily to A. With tj = j −1,
+4
+
+
+the spectral coefficients are
+wj = (1 −e−ω)e−tj/H,
+gj =
+h
+wje−(tj/h)p + (1 −wj)τ(1 + tj)−αi
+e−λ(tj/(k−1))q,
+sj = smax
+gj
+g1
+.
+(9)
+This blends a rapidly decaying head with a power-law tail and a terminal taper. The low-rank family
+draws k uniformly from 2–16 and α ∼Unif(0.2, 2); the slow- and steep-tail families draw k from
+2–min(160, R, C), with α ∼Unif(0, 0.5) and Unif(1, 2.5), respectively. All ranks are capped by
+the matrix dimensions. The remaining parameters are independently randomized as specified in
+table 5. The singular values of T are the decreasing rearrangement of these positive coefficients,
+followed by zeros. Independently for each axis, QR orthonormalization of Gaussian, row-scaled
+Gaussian, smooth random-feature, or nearly constant-column features produces U and V . This varies
+the spatial concentration and smoothness of the signal without prescribing a single singular-vector
+geometry.
+Latent-factor.
+The fourth family instead draws k uniformly from 1–min(11, R, C) and sets
+T = PQ⊤,
+P ∈RR×k,
+Q ∈RC×k,
+A = T,
+(10)
+where each row of either factor independently chooses one of five equally likely vector distributions:
+Gaussian, Laplace, Student-t, spike-and-slab, or centered Dirichlet. There is no added observation
+noise, feature warping, or quantization in this recipe. Unlike eq. (8), its singular values emerge from
+the sampled factors rather than being specified directly.
+From matrices to episodes.
+Each family is paired with either fixed-rate MCAR masking or a
+mixed masking kernel, yielding eight equally weighted components. The latter samples MCAR,
+MAR, or MNAR mechanisms [Rubin, 1976], including structured patterns, at a nominal missing
+rate between 5% and 75%; the fixed MCAR rate is 40%. Missingness may therefore depend on A,
+rather than always being independent of its values. To mimic rows with few observations, such as
+new users in a recommender system, 75% of episodes additionally thin a random subset of rows or
+columns. The scored set S consists of their hidden entries, or all hidden entries in episodes without
+this thinning. Normalization applies the same columnwise affine map to the masked input and the
+clean target, with an observed-support variance estimate for sparsely observed columns (section A.3).
+The likelihood and CDF losses below therefore learn the clean target in those standardized units; only
+the point-loss target is replaced by the teachers’ prediction.
+Objective.
+The main and size-extension phases share one objective. Each episode samples a
+complete synthetic matrix, a mask M and a set S ⊆{(r, c) : Mrc = 1} of scored hidden entries: all
+hidden entries or, in sparse-support episodes, the hidden entries of the thinned rows or columns. Let
+yrc be the true value of a hidden entry in standardized units. The point prediction is distilled [Hinton
+et al., 2015] toward two frozen teachers with the same architecture and parameters ψ1, ψ2, which
+receive the same masked input; their stop-gradient mean ¯µrc = sg
+ 1
+2(µψ1,rc + µψ2,rc)
+
+is the point
+target. The objective is
+L(θ) = E
+"
+1
+|S|
+X
+(r,c)∈S
+
+−log pθ,rc(yrc) + 2ρ
+ µθ,rc −¯µrc
+
++ 0.05 ℓCDF
+ zrc, yrc
+#
+,
+ρ(a) =
+ 1
+2a2,
+|a| ≤1,
+|a| −1
+2,
+|a| > 1,
+ℓCDF(z, y) = 1
+O
+O
+X
+k=1
+ X
+j≤k
+qj(z) −1{y ≤˜bk}
+2
+,
+(11)
+where the expectation is over episodes. The point loss ρ is the Huber loss with threshold one [Huber,
+1964], and ℓCDF is a ranked probability score [Epstein, 1969] with thresholds at the bin midpoints,
+a discrete form of the continuous ranked probability score [Gneiting and Raftery, 2007]. Only ρ
+uses the teachers; the likelihood and CDF terms are supervised by the true value. We use ρ rather
+than squared error because a few extreme residuals otherwise dominated the point loss. The teachers
+(section A.3) are used only during training, so inference is a single forward pass of one model.
+5
+
+
+Optimization.
+The main phase uses a fresh AdamW optimizer [Loshchilov and Hutter, 2019]
+(weight decay 0.02, gradient-norm clipping at 0.5) and runs 128k updates on batches of two matrices,
+with FP32 parameters and BF16 computation. The learning rate warms up over 600 updates to 10−5
+and then follows cosine decay [Loshchilov and Hutter, 2017] to 5% of that peak. The size-extension
+phase runs 5k updates at half that peak learning rate, enlarging the matrices in stages. In both phases
+we keep the checkpoint with the best error on fixed synthetic validation suites. All results use the
+model after size extension, except the causal-panel results and the fresh and natural-missingness
+imputation campaigns, which were computed before it. Model selection uses synthetic data only,
+but the downstream benchmarks were inspected during development, and the UCI context choice in
+section 3.4 is an exploratory follow-up rather than a blind validation.
+3
+Results
+We introduce our method MatrixFormer, a convex blend of two expert models MatrixFormer-Impute
+and MatrixFormer-RecSys, and evaluate it against standard benchmarks on a variety of domains such
+as causal inference, imputation, recommendation systems, and LLM evaluation.
+3.1
+Inference runtime scaling
+To highlight the runtime performance of our approach, we compare our general-purpose expert model
+MatrixFormer-Impute with the legacy entry-wise TabImpute model [Feitelberg et al., 2025] on an
+NVIDIA H200, fixing the width at 10 columns and increasing the row count geometrically from 16
+to 1024. Figure 2 shows that the measured speedup increases from 2.1× at 16 rows to 107.0× at
+1024 rows, where median runtime is 4.167 s for TabImpute and 0.0389 s for MatrixFormer.
+16
+32
+64
+128
+256
+512
+1,024
+Rows (log scale)
+0.01
+0.1
+1
+Runtime (seconds, log scale)
+2.1×
+3.5×
+7.1×
+12.3×
+26.1×
+51.9×
+107.0×
+10 columns · 40% MCAR · NVIDIA H200
+TabImpute (legacy)
+MatrixFormer-Impute
+Figure 2: Fixed-column inference runtime for legacy TabImpute and MatrixFormer, with logarithmic
+row and runtime axes.
+3.2
+Observed-error ensembling: MatrixFormer
+MatrixFormer is an input-dependent convex blend of MatrixFormer-Impute, the general-purpose
+expert, and MatrixFormer-RecSys, the fixed recommender-specific expert. Both produce predictive
+means for observed and missing entries. We then do prediction ensembling.
+Specifically, for the observed cells O, let gij and rij be the experts’ raw predictions, rather than
+completed outputs that copy the supplied observations xij. We fit one specialist weight per input
+matrix:
+w⋆= argmin
+0≤w≤1
+X
+(i,j)∈O
+(1 −w)gij + wrij −xij
+sj
+2
+,
+bxMF
+ij
+= (1 −w⋆)gij + w⋆rij.
+(12)
+6
+
+
+Here sj is the population standard deviation of the observed column for tabular and benchmark-score
+matrices, or one global observed-rating scale for recommender data. The two-model least-squares
+solution is analytic and clipped to [0, 1]; identical observed-cell predictions or absent evidence give
+weight zero.
+The same weight combines all missing-cell predictions in the matrix, and observations remain
+unchanged. In the LLM protocol, one context-plus-test batch constitutes an input matrix. Both
+experts use all observations available to that batch. Tabular and LLM inference retain the same
+preprocessing and context for both experts. Recommender inference retains each expert’s established
+recipe, as specified in section 3.5.
+3.3
+Causal panel data: counterfactual completion
+Estimating a treatment effect from panel data amounts to predicting the untreated outcomes of the
+treated units in the post-treatment periods from the remaining entries [Athey et al., 2021]. We evaluate
+MatrixFormer on saved placebo benchmarks where its untreated values are known, so the true effect
+is zero. The benchmarks are the CPS placebo study of Arkhangelsky et al. [2021]1, the Kansas semi-
+synthetic factor design of Ben-Michael et al. [2021] on one treated state, and the California-smoking
+donor pool [Abadie et al., 2010] with simultaneous or staggered pseudo-treatment following Athey
+et al. [2021].
+Metrics.
+Let T be the hidden treated block, the treated units in post-treatment periods, with held-
+out true outcomes Yit and completions bYit. We report the block RMSE
+ |T |−1 P
+(i,t)∈T (Yit −
+bYit)21/2 and the absolute error |ˆτ −τ| of the implied average treatment effect on the treated,
+ˆτ = |T |−1 P
+(i,t)∈T (Yit −bYit). Because the true effect is zero in every design, |ˆτ −τ| = |ˆτ| is
+the absolute mean bias of the completion. Raw errors are not comparable across designs, whose
+outcomes differ in scale, so within each draw we min-max normalize each metric across the seven
+methods in fig. 3 (0 for the best method in that draw, 1 for the worst), average over the draws of a
+design, and give the designs of a benchmark equal weight. Intervals are 95% normal intervals from
+draw-to-draw variation; see section B for details.
+Methods.
+The comparison includes the difference-in-differences (DiD), synthetic control (SC) and
+synthetic difference-in-differences (SDiD) estimators of Arkhangelsky et al. [2021], and the SoftIm-
+pute, K-NN and HyperImpute [Jarrett et al., 2022] imputers. These six baselines and MatrixFormer
+set the normalization scale, so every score lies in [0, 1].
+Results.
+MatrixFormer has the lowest score in five of the six panels; HyperImpute is lowest for
+the Kansas effect error (0.119 against 0.125). The lead over the next-best method is clear, with non-
+overlapping 95% intervals, for treated-block RMSE on California smoking (0.159 against 0.212 for
+SDiD) and CPS (0.177 against 0.215); the other panels are within the intervals. Against HyperImpute
+alone, MatrixFormer is clearly ahead in three panels and tied in the other three.
+3.4
+Tabular imputation: MissBench and UCI
+We evaluate missing-value imputation on two suites. MissBench is the OpenML-based suite used
+with TabImpute [Feitelberg et al., 2025]: 42 datasets under eleven missingness mechanisms at the
+nominal 40% setting, for 462 cases. Our local UCI-style suite, motivated by HyperImpute [Jarrett
+et al., 2022], contains 12 datasets under MCAR, MAR and MNAR at 10%, 20%, 30%, 40% and
+50% nominal missingness with ten repeats per setting, for 1,800 cases. Neither suite has a row
+train/test split: all rows and columns are retained, observed entries provide context, and predictions
+are scored only on the masked cells. We retain every dataset and case rather than a subset selected by
+performance or CACTI’s ten-dataset list; published CACTI scores [Gorla et al., 2025] are not directly
+comparable to this no-row-holdout protocol.
+Metrics.
+We report the columnwise normalized RMSE (NRMSE; lower is better): for each column,
+the RMSE on its masked entries divided by the standard deviation of its masked ground truth,
+1state-by-year panels simulated from Current Population Survey log wages, hours and unemployment rates, with treatment
+assigned to mimic state minimum-wage, abortion-ban and open-carry laws, all nine combinations
+7
+
+
+0.0
+0.5
+1.0
+MatrixFormer
+SDiD
+HyperImpute
+SoftImpute
+SC
+K-NN
+DiD
+Treated-block RMSE
+0.159
+0.212
+0.374
+0.456
+0.653
+0.730
+0.721
+California smoking
+0.0
+0.5
+1.0
+0.177
+0.215
+0.538
+0.340
+0.742
+0.628
+0.812
+CPS
+0.0
+0.5
+1.0
+0.093
+0.127
+0.104
+0.487
+0.185
+0.579
+0.736
+Kansas
+0.0
+0.5
+1.0
+MatrixFormer
+SDiD
+HyperImpute
+SoftImpute
+SC
+K-NN
+DiD
+Effect error |
+|
+0.323
+0.363
+0.324
+0.455
+0.435
+0.485
+0.637
+0.0
+0.5
+1.0
+0.305
+0.322
+0.518
+0.450
+0.480
+0.549
+0.606
+0.0
+0.5
+1.0
+0.125
+0.178
+0.119
+0.522
+0.243
+0.602
+0.745
+Normalized score (0 = best, 1 = worst of the seven main methods in each draw)
+Figure 3: Normalized causal-panel scores (lower is better; 0 = best and 1 = worst of the seven methods
+shown in a draw; dashed line at 1). The blue bars show the MatrixFormer ensemble. Top: RMSE on
+the hidden treated block. Bottom: absolute error of the average treatment effect on the treated. Bars
+are means over draws with designs weighted equally; whiskers are 95% intervals over draws.
+averaged over the valid columns of a case. Within each missingness mechanism, repeats and rates
+are averaged within a dataset, and datasets then receive equal weight; the two suites are not pooled.
+Figures 4 and 5 show the overall, MCAR, MAR and MNAR scores. Whiskers are 95% percentile
+intervals from 10,000 dataset-bootstrap resamples, which describe variation across datasets rather
+than model-training variability.
+Methods.
+The figures compare MatrixFormer with eight imputers evaluated on both suites: k-
+nearest-neighbor imputation (K-NN) [Troyanskaya et al., 2001]; SoftImpute [Mazumder et al., 2010],
+a low-rank completion by iterative soft-thresholded SVD; the chained-equation methods MICE
+[van Buuren and Groothuis-Oudshoorn, 2011] and ICE, which regress each column on the others
+in turn; MissForest [Stekhoven and Bühlmann, 2012], which does the same with random forests;
+the deep generative models GAIN [Yoon et al., 2018] and MIWAE [Mattei and Frellsen, 2019];
+and HyperImpute [Jarrett et al., 2022], which selects a model for each column within an iterative
+scheme. TabImpute (legacy) [Feitelberg et al., 2025] is shown on MissBench only. The baselines
+reuse saved predictions without retraining, and the figures keep those with valid predictions for at
+least 80% of the 1,800 UCI cases. GAIN, HyperImpute and MIWAE have 86.4% UCI coverage
+(59.3% for MCAR), which is marked by †. MatrixFormer uses whole-matrix inference on MissBench.
+On UCI it uses sequential windows of at most 2,000 rows and 1,000 columns, the largest matrices
+seen in pre-training, with observed-column normalization computed once from the entire incomplete
+matrix and overlapping tail-window predictions averaged; only rows are split, since these datasets
+have at most 90 columns. This single training-derived window limit was adopted after inspecting
+whole-matrix results, so it is an exploratory protocol choice.
+Results.
+MatrixFormer has the lowest overall NRMSE on both suites as seen in fig. 4 and fig. 5:
+1.580 on MissBench, narrowly ahead of TabImpute (legacy) at 1.585, and 0.998 on UCI, ahead of
+ICE at 1.172. On UCI it is also lowest for each of MCAR, MAR and MNAR. On MissBench it is
+lowest for MNAR, while TabImpute (legacy) is lowest for MCAR (0.819 against 0.866) and K-NN
+for MAR (1.075 against 1.086).
+8
+
+
+0.0
+2.5
+5.0
+MatrixFormer
+TabImpute (legacy)
+MissForest
+K-NN
+HyperImpute
+MICE
+ICE
+SoftImpute
+MIWAE
+GAIN
+1.580
+1.585
+1.966
+2.022
+2.067
+2.215†
+2.265
+2.289
+2.373
+3.065
+Overall
+0
+1
+2
+0.866
+0.819
+1.018
+0.943
+0.969
+1.002
+1.215
+1.007
+1.235
+1.246
+MCAR
+0
+2
+4
+1.086
+1.076
+1.197
+1.075
+1.117
+1.298
+1.135
+1.417
+1.701
+2.207
+MAR
+0.0
+2.5
+5.0
+1.978
+2.184
+2.580
+2.539
+2.636
+2.543
+2.988
+3.372
+3.608
+2.965
+MNAR
+NRMSE (lower is better)
+Figure 4: MissBench: Overall, MCAR, MAR, and MNAR. Columnwise NRMSE across 42
+datasets at the nominal 40% setting; lower is better. MatrixFormer is blue; baselines are gray.
+Methods match the UCI figure, with TabImpute (legacy) additionally shown here. The overall panel
+includes all eleven mechanisms. Rows are sorted by overall NRMSE, with that order shared by the
+four panels. Whiskers are 95% dataset-bootstrap confidence intervals. † denotes incomplete coverage.
+0.0
+1.5
+3.0
+MatrixFormer
+ICE
+MissForest
+K-NN
+SoftImpute
+HyperImpute
+MICE
+GAIN
+MIWAE
+0.998
+1.172
+1.197
+1.202
+1.266
+1.301†
+1.625
+1.950†
+2.168†
+Overall
+0.0
+2.5
+5.0
+0.685
+0.722
+0.702
+0.748
+0.694
+0.710†
+1.131
+0.941†
+3.445†
+MCAR
+0.0
+1.5
+3.0
+0.820
+0.841
+0.864
+0.853
+0.917
+0.957
+1.248
+1.715
+1.229
+MAR
+0
+2
+4
+1.488
+1.952
+2.025
+2.007
+2.187
+1.955
+2.494
+2.661
+2.560
+MNAR
+NRMSE (lower is better)
+Figure 5: UCI: Overall, MCAR, MAR, and MNAR. The suite contains twelve datasets, five
+missingness rates, and ten repeats. Each mechanism averages available rates and repeats within
+datasets, then weights the available datasets equally; lower is better. The overall panel includes all
+three mechanisms. Whiskers are 95% dataset-bootstrap confidence intervals. Rows follow UCI
+overall NRMSE. † denotes incomplete coverage.
+3.5
+Recommender-system rating prediction
+We evaluate rating completion on MovieLens 100K [Harper and Konstan, 2015] and the Netflix small
+subset distributed by Cornac [Salah et al., 2020]. These are sparse user–item matrices with ratings
+on a 1–5 scale. We reuse the benchmark’s frozen 80/20 rating-entry holdout, which scores 19,971
+ratings on MovieLens 100K, 121,470 on Netflix small. This is an entry holdout, not a held-out-user
+split.
+Metrics.
+We report RMSE and MAE in rating units; lower is better. Following the Cornac harness,
+each metric is computed within each test user and then averaged equally over users, so the RMSE is
+the mean of per-user RMSEs rather than a pooled rating-level RMSE.
+9
+
+
+Table 1: Rating prediction in original rating units; lower is better. RMSE and MAE are macro-
+averaged over test users. MatrixFormer-Impute uses global observed-training normalization; Matrix-
+Former retains each expert’s recipe as specified in the text. All six Cornac baselines are retained.
+MovieLens 100K
+Netflix small
+Method
+RMSE
+MAE
+RMSE
+MAE
+MatrixFormer
+0.8874
+0.7279
+0.8617
+0.7330
+SVD
+0.8998
+0.7430
+0.8621
+0.7358
+PMF
+0.9138
+0.7534
+0.8835
+0.7594
+UserKNN
+0.9382
+0.7681
+0.9296
+0.7920
+ItemKNN
+0.9944
+0.8242
+0.9502
+0.8160
+BPR
+2.2267
+2.0143
+1.6980
+1.5121
+Table 2: Released benchmark-score matrices used for evaluation. Observed entries are the available
+scores before holding out model rows.
+Dataset
+Models
+Tasks
+Observed
+MTEB
+263
+56
+77.3%
+MMLU
+5,452
+57
+100.0%
+Merged
+118
+114
+31.1%
+BenchPress
+83
+49
+33.8%
+Methods.
+We compare MatrixFormer with six collaborative-filtering baselines implemented in
+Cornac [Salah et al., 2020]. Matrix factorization with user and item biases [Koren et al., 2009] and
+probabilistic matrix factorization (PMF) [Salakhutdinov and Mnih, 2007] predict a rating from learned
+low-dimensional user and item vectors; the former is run as Cornac’s MF and SVD models, which
+give identical scores here and are listed once, as SVD. UserKNN and ItemKNN are neighborhood
+methods that predict from the ratings of the most similar users [Resnick et al., 1994] or items [Sarwar
+et al., 2001]. Bayesian personalized ranking (BPR) [Rendle et al., 2009] is trained with a pairwise
+ranking objective rather than for rating calibration, so its rating errors do not measure its ranking
+quality. The baselines use the same split protocol and are not retuned. MatrixFormer’s predictions
+are clipped to the observed training rating range.
+Results.
+In table 1, MatrixFormer obtains RMSE/MAE of 0.8874/0.7279 on MovieLens 100K and
+0.8617/0.7330 on Netflix small, lower than every displayed baseline; the Netflix RMSE margin over
+SVD (0.8621) is small and is not a significance claim.
+3.6
+Benchmark-score completion for language-model evaluation
+Evaluating a language model on every benchmark is expensive. We study whether MatrixFormer can
+reconstruct a model’s unmeasured benchmark scores after observing a small subset of its evaluations.
+Rows represent models and columns represent benchmark tasks; this is score-matrix completion,
+not a new evaluation of generated answers. We use the released matrices and benchmark-selection
+algorithms of Smola [2026], summarized in table 2: MTEB, English-task leaderboard scores for
+embedding models [Muennighoff et al., 2023]; MMLU, per-subject leaderboard scores on its 57
+subjects [Hendrycks et al., 2021]; Merged, a heterogeneous matrix assembled from nine collections;
+and BenchPress, the curated model–benchmark matrix of BenchPress contributors [2026], which here
+names a dataset rather than an imputation baseline. All are fixed snapshots, not live leaderboards.
+Each matrix is split into ten model-row folds (seed 42), holding out approximately 10% of the models
+per fold. For each held-out model we expose its available scores among k selected tasks and predict
+its originally observed, unselected scores. Naturally missing entries are not ground truth, so on sparse
+matrices k selected tasks may expose fewer than k scores. Tasks are selected by greedy mutual
+information (MI), greedy entropy or at random, for budgets k = 1, . . . , 15.
+Metrics.
+We report R2 on the held-out targets, averaged over the ten folds; higher is better. Targets
+and predictions are standardized with the training-context column statistics and clipped to [−10, 10]
+10
+
+
+Table 3: Benchmark-score completion with greedy MI selection. Entries are mean R2 over ten folds
+at each task budget k, rounded to four decimals. All methods share context rows, selected tasks,
+target masks, and scoring rules. Numerical differences are descriptive.
+Dataset
+k
+MatrixFormer
+Gaussian
+MTEB
+5
+0.7651
+0.7498
+10
+0.8261
+0.8125
+15
+0.8316
+0.8259
+MMLU
+5
+0.8992
+0.9064
+10
+0.8993
+0.9118
+15
+0.9155
+0.9266
+Merged
+5
+0.4279
+0.3899
+10
+0.5453
+0.2899
+15
+0.6464
+0.3625
+BenchPress
+5
+0.2040
+-0.2386
+10
+0.2811
+-0.1938
+15
+0.4687
+-0.0253
+for every predictor. All predictors share the same context rows, capped at 3,800 by a deterministic
+subsample, and the same selected tasks, target masks and scoring rule.
+Methods.
+We compare MatrixFormer with the Gaussian conditional-mean estimator of the selection
+release [Smola, 2026]. It treats standardized benchmark scores as jointly Gaussian with the correlation
+matrix estimated from the context models, and predicts a held-out model’s unselected scores as their
+conditional mean given its revealed scores, with a ridge of 0.01 in the solve; a model with no revealed
+score receives the context mean. The selection rules come from the same release and act on this
+correlation matrix: greedy entropy adds the task with the largest conditional variance given the tasks
+already selected, and greedy MI adds the task with the largest mutual-information gain between the
+selected and the remaining tasks. Correlations, selection orders and scoring statistics are estimated
+from the shared context only, and task orders and target masks are computed once per fold and frozen
+for every predictor.
+Results.
+Table 3 reports MI selection at k ∈{5, 10, 15}. MatrixFormer has the higher R2 on
+MTEB, Merged and BenchPress at all three budgets, most clearly on the two sparsest matrices
+(0.6464 against 0.3625 on Merged and 0.4687 against −0.0253 on BenchPress at k = 15), while
+the Gaussian estimator is higher on MMLU (0.9266 against 0.9155 at k = 15). Across all 180
+dataset/selection/budget settings, MatrixFormer improves on the Gaussian baseline in 119 and is
+worse in 61. These counts summarize correlated settings rather than independent significance tests.
+4
+Conclusion
+We introduced MatrixFormer, a model for matrix completion that represents a partially observed
+matrix as a grid of cell tokens, alternates attention over rows and columns, and is pretrained only on
+synthetic matrices. With no fine-tuning, the same model was applied to tabular imputation, rating
+prediction, benchmark-score completion for language models and causal panel data. It has the
+lowest overall error on both imputation suites, lower rating error than the collaborative-filtering
+baselines on MovieLens 100K and Netflix small, higher R2 than the Gaussian estimator on three of
+the four benchmark-score matrices, and the lowest normalized score in five of the six causal-panel
+comparisons. A single forward pass completes a 1024 × 10 matrix 107× faster than TabImpute;
+MatrixFormer uses two such passes. Evaluating the predictive distributions, for example as intervals
+for treatment effects, extending the context to larger matrices, and choosing the ensemble weight on
+held-out entries are directions for future work.
+11
+
+
+References
+Alberto Abadie, Alexis Diamond, and Jens Hainmueller. Synthetic control methods for comparative
+case studies: Estimating the effect of California’s tobacco control program. Journal of the American
+Statistical Association, 105(490):493–505, 2010.
+Dmitry Arkhangelsky, Susan Athey, David A. Hirshberg, Guido W. Imbens, and Stefan Wager.
+Synthetic difference-in-differences. American Economic Review, 111(12):4088–4118, 2021.
+Susan Athey, Mohsen Bayati, Nikolay Doudchenko, Guido Imbens, and Khashayar Khosravi. Matrix
+completion methods for causal panel data models. Journal of the American Statistical Association,
+116(536):1716–1730, 2021.
+Thomas Bachlechner, Bodhisattwa Prasad Majumder, Huanru Henry Mao, Garrison W. Cottrell, and
+Julian McAuley. ReZero is all you need: Fast convergence at large depth. In Proceedings of the
+Thirty-Seventh Conference on Uncertainty in Artificial Intelligence, volume 161 of Proceedings of
+Machine Learning Research, 2021.
+Eli Ben-Michael, Avi Feller, and Jesse Rothstein. The augmented synthetic control method. Journal
+of the American Statistical Association, 116(536):1789–1803, 2021.
+BenchPress contributors. LLM benchmark matrix completion. GitHub repository, 2026. URL
+https://github.com/anadim/llm-benchmark-matrix. Includes the BenchPress method;
+evaluated score snapshot generated February 24, 2026, as distributed with Submodular Benchmark
+Selection.
+Emmanuel J. Candès and Benjamin Recht. Exact matrix completion via convex optimization.
+Foundations of Computational Mathematics, 9(6):717–772, 2009.
+Shouyuan Chen, Sherman Wong, Liangjian Chen, and Yuandong Tian. Extending context window of
+large language models via positional interpolation. arXiv preprint arXiv:2306.15595, 2023.
+Tianqi Chen, Bing Xu, Chiyuan Zhang, and Carlos Guestrin. Training deep nets with sublinear
+memory cost. arXiv preprint arXiv:1604.06174, 2016.
+Jacob Devlin, Ming-Wei Chang, Kenton Lee, and Kristina Toutanova. BERT: Pre-training of deep bidi-
+rectional transformers for language understanding. In Proceedings of the 2019 Conference of the
+North American Chapter of the Association for Computational Linguistics: Human Language Tech-
+nologies, Volume 1 (Long and Short Papers), pages 4171–4186. Association for Computational Lin-
+guistics, 2019. doi: 10.18653/v1/N19-1423. URL https://aclanthology.org/N19-1423/.
+Edward S. Epstein. A scoring system for probability forecasts of ranked categories. Journal of
+Applied Meteorology, 8(6):985–987, 1969.
+Jacob Feitelberg, Dwaipayan Saha, Kyuseong Choi, Zaid Ahmad, Anish Agarwal, and Raaz Dwivedi.
+One pipeline, many transformers: Pattern-specific imputation specialists for tabular missing data,
+2025. URL https://arxiv.org/abs/2510.02625v6. Version 6, revised August 2026; first
+submitted October 2025.
+Tilmann Gneiting and Adrian E. Raftery. Strictly proper scoring rules, prediction, and estimation.
+Journal of the American Statistical Association, 102(477):359–378, 2007.
+Aditya Gorla, Ryan Wang, Zhengtong Liu, Ulzee An, and Sriram Sankararaman. CACTI: Leveraging
+copy masking and contextual information to improve tabular data imputation. In Proceedings
+of the 42nd International Conference on Machine Learning, 2025. URL https://arxiv.org/
+abs/2506.02306.
+F. Maxwell Harper and Joseph A. Konstan. The MovieLens datasets: History and context. ACM
+Transactions on Interactive Intelligent Systems, 5(4):1–19, 2015. doi: 10.1145/2827872.
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou, Mantas Mazeika, Dawn Song, and Jacob
+Steinhardt. Measuring massive multitask language understanding. In International Conference on
+Learning Representations, 2021. URL https://openreview.net/forum?id=d7KBjmI3GmQ.
+12
+
+
+Geoffrey Hinton, Oriol Vinyals, and Jeff Dean. Distilling the knowledge in a neural network. arXiv
+preprint arXiv:1503.02531, 2015.
+Jonathan Ho, Nal Kalchbrenner, Dirk Weissenborn, and Tim Salimans. Axial attention in multidi-
+mensional transformers, 2019. URL https://arxiv.org/abs/1912.12180.
+Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. TabPFN: A transformer
+that solves small tabular classification problems in a second. In International Conference on
+Learning Representations, 2023.
+Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo,
+Robin Tibor Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular
+foundation model. Nature, 637:319–326, 2025.
+Peter J. Huber. Robust estimation of a location parameter. The Annals of Mathematical Statistics, 35
+(1):73–101, 1964.
+Daniel Jarrett, Bogdan C Cebere, Tennison Liu, Alicia Curth, and Mihaela van der Schaar. HyperIm-
+pute: Generalized iterative imputation with automatic model selection. In Proceedings of the 39th
+International Conference on Machine Learning, volume 162 of Proceedings of Machine Learning
+Research, pages 9916–9937. PMLR, 2022. URL https://proceedings.mlr.press/v162/
+jarrett22a.html.
+Yehuda Koren, Robert Bell, and Chris Volinsky. Matrix factorization techniques for recommender
+systems. Computer, 42(8):30–37, 2009.
+Jannik Kossen, Neil Band, Clare Lyle, Aidan N. Gomez, Tom Rainforth, and Yarin Gal. Self-attention
+between datapoints: Going beyond individual input-output pairs in deep learning. In Advances in
+Neural Information Processing Systems, volume 34, 2021.
+Ilya Loshchilov and Frank Hutter. SGDR: Stochastic gradient descent with warm restarts. In
+International Conference on Learning Representations, 2017.
+Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In International Confer-
+ence on Learning Representations, 2019.
+Pierre-Alexandre Mattei and Jes Frellsen. MIWAE: Deep generative modelling and imputation of
+incomplete data sets. In Proceedings of the 36th International Conference on Machine Learning,
+pages 4413–4423, 2019.
+Rahul Mazumder, Trevor Hastie, and Robert Tibshirani. Spectral regularization algorithms for
+learning large incomplete matrices. Journal of Machine Learning Research, 11:2287–2322, 2010.
+Niklas Muennighoff, Nouamane Tazi, Loic Magne, and Nils Reimers. MTEB: Massive text embed-
+ding benchmark. In Proceedings of the 17th Conference of the European Chapter of the Association
+for Computational Linguistics, pages 2014–2037. Association for Computational Linguistics, 2023.
+doi: 10.18653/v1/2023.eacl-main.148. URL https://aclanthology.org/2023.eacl-main.
+148/.
+Samuel Müller, Noah Hollmann, Sebastian Pineda Arango, Josif Grabocka, and Frank Hutter.
+Transformers can do Bayesian inference. In International Conference on Learning Representations,
+2022.
+Roshan M. Rao, Jason Liu, Robert Verkuil, Joshua Meier, John Canny, Pieter Abbeel, Tom Sercu,
+and Alexander Rives. MSA transformer. In Proceedings of the 38th International Conference on
+Machine Learning, volume 139 of Proceedings of Machine Learning Research, 2021.
+Steffen Rendle, Christoph Freudenthaler, Zeno Gantner, and Lars Schmidt-Thieme. BPR: Bayesian
+personalized ranking from implicit feedback. In Proceedings of the Twenty-Fifth Conference on
+Uncertainty in Artificial Intelligence, pages 452–461, 2009.
+Paul Resnick, Neophytos Iacovou, Mitesh Suchak, Peter Bergstrom, and John Riedl. GroupLens:
+An open architecture for collaborative filtering of netnews. In Proceedings of the 1994 ACM
+Conference on Computer Supported Cooperative Work, pages 175–186, 1994.
+13
+
+
+Anthony Robins. Catastrophic forgetting, rehearsal and pseudorehearsal. Connection Science, 7(2):
+123–146, 1995.
+Donald B. Rubin. Inference and missing data. Biometrika, 63(3):581–592, 1976.
+Aghiles Salah, Quoc-Tuan Truong, and Hady W. Lauw. Cornac: A comparative framework for
+multimodal recommender systems. Journal of Machine Learning Research, 21(95):1–5, 2020.
+URL https://jmlr.org/papers/v21/19-805.html.
+Ruslan Salakhutdinov and Andriy Mnih. Probabilistic matrix factorization. In Advances in Neural
+Information Processing Systems, volume 20, 2007. URL https://proceedings.neurips.
+cc/paper_files/paper/2007/hash/d7322ed717dedf1eb4e6e52a37ea7bcd-Abstract.
+html.
+Badrul Sarwar, George Karypis, Joseph Konstan, and John Riedl. Item-based collaborative filtering
+recommendation algorithms. In Proceedings of the 10th International Conference on World Wide
+Web, pages 285–295, 2001.
+Noam Shazeer. GLU variants improve transformer, 2020. URL https://arxiv.org/abs/2002.
+05202.
+Alexander Smola. Submodular benchmark selection, 2026. URL https://arxiv.org/abs/2605.
+02209. Version 1; accompanying code and data release.
+Daniel J. Stekhoven and Peter Bühlmann. MissForest—non-parametric missing value imputation for
+mixed-type data. Bioinformatics, 28(1):112–118, 2012.
+Jianlin Su, Yu Lu, Shengfeng Pan, Ahmed Murtadha, Bo Wen, and Yunfeng Liu. RoFormer:
+Enhanced transformer with rotary position embedding, 2021. URL https://arxiv.org/abs/
+2104.09864.
+Olga Troyanskaya, Michael Cantor, Gavin Sherlock, Pat Brown, Trevor Hastie, Robert Tibshirani,
+David Botstein, and Russ B. Altman. Missing value estimation methods for DNA microarrays.
+Bioinformatics, 17(6):520–525, 2001.
+Madeleine Udell and Alex Townsend. Why are big data matrices approximately low rank? SIAM
+Journal on Mathematics of Data Science, 1(1):144–160, 2019.
+Stef van Buuren and Karin Groothuis-Oudshoorn. mice: Multivariate imputation by chained equations
+in R. Journal of Statistical Software, 45(3):1–67, 2011. doi: 10.18637/jss.v045.i03.
+Ashish Vaswani, Noam Shazeer, Niki Parmar, Jakob Uszkoreit, Llion Jones, Aidan N. Gomez,
+Lukasz Kaiser, and Illia Polosukhin. Attention is all you need. In Advances in Neural Information
+Processing Systems, volume 30, 2017.
+URL https://proceedings.neurips.cc/paper/
+2017/hash/3f5ee243547dee91fbd053c1c4a845aa-Abstract.html.
+Ruibin Xiong, Yunchang Yang, Di He, Kai Zheng, Shuxin Zheng, Chen Xing, Huishuai Zhang,
+Yanyan Lan, Liwei Wang, and Tieyan Liu. On layer normalization in the transformer archi-
+tecture. In Proceedings of the 37th International Conference on Machine Learning, volume
+119 of Proceedings of Machine Learning Research, pages 10524–10533. PMLR, 2020. URL
+https://proceedings.mlr.press/v119/xiong20b.html.
+Jinsung Yoon, James Jordon, and Mihaela van der Schaar. GAIN: Missing data imputation using
+generative adversarial nets. In Proceedings of the 35th International Conference on Machine
+Learning, pages 5689–5698, 2018.
+Biao Zhang and Rico Sennrich. Root mean square layer normalization. In Advances in Neural
+Information Processing Systems, volume 32, 2019.
+A
+Architecture and training details
+A.1
+Architecture
+Table 4 lists the settings of the network in section 2. MatrixFormer-Impute and MatrixFormer-RecSys
+share this architecture and differ in their weights; MatrixFormer combines their predictions.
+14
+
+
+Table 4: Shared architecture of MatrixFormer-Impute and MatrixFormer-RecSys.
+Component
+Setting
+Value embedding fval
+MLP 1 →768 →768 with GELU
+Missing entries
+learned mask vector mmask; learned two-entry missingness embedding
+emiss added to every cell
+CLS border
+Kc = 12 row-CLS tokens trow
+j
+and Kr = 12 column-CLS tokens tcol
+i ;
+corner entry (i, j) is tcol
+i
++ trow
+j
+Blocks
+L = 8, width d = 768; feature attention, datapoint attention, feed-forward
+Attention
+16 heads of dimension 48; rotary embeddings (base 104) on 24 of the 48
+dimensions; positions start after the border
+Feed-forward
+SwiGLU, W3
+ SiLU(W1h) ⊙W2h
+
+, hidden width 1536
+Normalization
+pre-norm RMSNorm with learned gain, ϵ = 10−6; no final normalization
+Residual gains
+one learned scalar per sublayer, initialized to 0.5
+Decoder fdec
+MLP 768 →1536 →1536 →5000 with GELU; O = 5000 bins
+Size
+78.0M parameters; all linear maps have biases
+A.2
+Bar distribution
+With the borders bk and bin probabilities q(z) of section 2 and widths wk = bk −bk−1, the full
+density is
+p(y; z) =
+
+
+
+q1(z) φs1(b1 −y),
+y < b1,
+qk(z)/wk,
+bk−1 ≤y < bk,
+1 < k < O,
+qO(z) φsO(y −bO−1),
+y ≥bO−1,
+(13)
+where φs(t) =
+p
+2/π s−1e−t2/(2s2), t ≥0, is the half-normal density and sk = wk/Φ−1(3/4), so
+that each tail has median equal to its bin width. The family has no trainable parameters; θ enters only
+through the logits, pθ,rc(· | X, M) = p(· ; zrc). The tail means in µθ,rc are ν1 = b1 −s1
+p
+2/π and
+νO = bO−1 + sO
+p
+2/π.
+A.3
+Pre-training
+Teachers.
+The teachers ψ1 and ψ2 in eq. (11) are the best synthetic-validation checkpoints of
+two earlier 64k-update main-phase runs from the same base-phase model. Both were trained with
+eq. (11) using the true value yrc in place of ¯µrc, one on the mixture of section 2.1 and one on a
+continuous-spectrum variant of it.
+Base phase.
+The base phase trains on latent-factor matrices of rank 1–11 with 10–50 rows, 5–50
+columns and 40% MCAR missingness for 17k updates, using AdamW (peak learning rate 2 × 10−4,
+weight decay 0.025) with BF16 parameters and optimizer state.
+Main phase.
+Each episode draws one of eight equally weighted components: four families, each
+with two masking mechanisms. MCAR hides each entry independently with probability 0.4. The
+mixed mechanism draws, per matrix, MCAR (probability 0.30), MAR (0.20), MNAR (0.20) or a
+structured MNAR pattern: censoring below or above a quantile (0.10), two-phase subsampling (0.10),
+skip logic (0.05) or cluster-level missingness (0.05). Its missing rate is 0.4 with probability 0.25
+and otherwise 0.05 + 0.7B with B ∼Beta(2, 2). Spectral matrices have 80–320 rows and 35–100
+columns; latent-factor matrices keep their base-phase sizes and are included as rehearsal [Robins,
+1995] because training on spectral matrices alone degraded performance on them. Singular vectors
+come from random orthogonal, coherent, smooth or offset-bearing bases with equal probability. A
+sparse-support episode transposes the matrix with probability one half, picks 10–40% of its rows,
+and keeps each picked row’s observed entries in only a random log-uniform 1–60% of the columns;
+S is the set of hidden entries in the picked rows. Each column is standardized with the mean and
+standard deviation of its observed entries. In sparse-support episodes, where some columns keep
+few observed entries, the variance of column c is instead estimated as (SSc + ¯v)/(nc + 1), where
+nc and SSc are the number and centered sum of squares of its observed entries and ¯v is the pooled
+within-column variance. AdamW uses β = (0.9, 0.999). The 128k horizon was chosen because an
+15
+
+
+otherwise identical 64k run was still improving when it ended. Validation every 2k updates on a fixed
+synthetic suite selects the checkpoint with the lowest macro RMSE, reached after 98k updates.
+Size-extension phase.
+Starting from the selected main-phase checkpoint, this phase runs 5k updates
+with the same objective and teachers. The row/column ranges grow from 256–512/128–256 (updates
+1–500) to 512–1024/256–512 (501–1500), 768–1536/384–768 (1501–3000) and 1024–2000/512–
+1000 (3001–5000); with probability 0.2 an episode is instead drawn at the main-phase sizes. Each
+update accumulates the matrix-mean losses of two independently sampled matrices. The peak
+learning rate is 5 × 10−6, with 200 warmup updates and cosine decay to 5%; the other optimizer
+settings are unchanged. Activation checkpointing [Chen et al., 2016] and microbatching of attention
+sequences, feed-forward cells and decoding keep memory bounded without shortening any attended
+sequence. Selection minimizes the mean macro RMSE, relative to the starting checkpoint, on fixed
+synthetic panels of main-phase-sized and large matrices, subject to the error on the former rising by
+at most 3%; it selects the checkpoint after 4k updates.
+A.4
+Synthetic matrix generation
+Spectral coefficients.
+Table 5 gives the shared distributions in eq. (9); every listed parameter is
+sampled independently and uniformly for each matrix. Together with the family-specific rank and
+exponent distributions in section 2.1, these determine the complete clean signal. In particular, the two
+broader-rank families can also draw small ranks: their names describe their tail-exponent distributions,
+not a guarantee of full rank. The coefficient sequence in eq. (9) need not be monotone; its decreasing
+rearrangement gives the singular spectrum because U and V have orthonormal columns. The training
+recipe keeps all k signal components in the target.
+Table 5: Shared parameters of the three spectral prior families. All intervals specify uniform
+distributions in the raw generator’s units.
+Parameter
+Role
+Range
+smax
+Leading spectral scale
+[1, 5]
+ω
+Initial head mixture weight
+[0, 3]
+h
+Stretched-exponential head scale
+[1, 30]
+p
+Head exponent
+[1, 3]
+H
+Head-to-tail transition scale
+[1, 20]
+τ
+Power-law tail amplitude
+[0.2, 1]
+λ
+Terminal taper strength
+[0, 1]
+q
+Terminal taper exponent
+[1, 4]
+σϵ
+Entrywise observation-noise standard deviation
+[0, 10−3]
+Singular-vector geometry.
+For each axis of length n, choose one of the following feature con-
+structions with probability 1/4, independently of the other axis, and take its thin QR factor with
+diagonal-sign correction. Writing Gij
+iid
+∼N(0, 1), the four constructions are:
+1. Gaussian: F = G, yielding a Haar-distributed orthonormal basis.
+2. Coherent: Fij = eaiGij, with ai ∼N(0, η2) and η ∼Unif(0.25, 2), concentrating
+variation in selected rows.
+3. Smooth: Fij = cos(z⊤
+i ωj + ϕj) + 0.03Gij, where d is uniform on {1, . . . , 5}, zi ∼
+N(0, Id), ωj ∼N(0, ℓ−2Id), ϕj ∼Unif(0, 2π), and log ℓ∼Unif(log 0.3, log 3). The
+small Gaussian term avoids rank-deficient feature matrices.
+4. Offset-bearing: Fi1 = 1 + 0.05Gi1 and Fij = Gij for j > 1.
+The construction applies to both the row and column singular vectors; it is not a change to the model
+architecture.
+Latent factors.
+For each vector in P and Q of eq. (10), choose a family uniformly and draw its
+coordinates independently from N(0, 1), Laplace(0, 1), Student-tν with ν uniform on {2, . . . , 10},
+or 1
+2δ0 + 1
+2N(0, 9); the fifth choice draws the vector jointly as D −k−11 with D ∼Dirichlet(1k).
+16
+
+
+The latent dimension is an upper bound on the realized rank: for example, the centered Dirichlet
+draw is zero when k = 1. Rehearsal retains its 10–50 row and 5–50 column sizes even during size
+extension.
+B
+Causal-panel experiment details
+All three benchmarks start from real panels. CPS and Kansas simulate new panels from models fitted
+to the real data; California smoking uses the real outcomes directly and only the treatment is artificial.
+In every draw the hidden cells are untreated outcomes, so the true treatment effect is zero.
+CPS placebo panels.
+The source is the state-by-year Current Population Survey panel shipped with
+the synthdid R package (version 0.0.9, sdid-paper branch): 50 states and 40 years, with outcome
+log wage, hours worked, or unemployment rate. Following Arkhangelsky et al. [2021], the outcome
+matrix Y is standardized by its overall mean and standard deviation. Its rank-4 SVD approximation
+L is split into an additive part F (the unit and time means of L) and an interactive part M = L −F,
+and E = Y −L is the residual. Simulated panels are Y ∗= F + M + ε, where each state’s row
+εi ∼N(0, Σ) and Σ is an AR(2) correlation matrix over years, with coefficients fitted to E by least
+squares and scale matched to the covariance of E. For treatment, each state’s indicator for the chosen
+policy (minimum wage, abortion ban, or open carry) in the final year is regressed on the four unit
+factors by logistic regression, giving probabilities πi. Each draw assigns states independently with
+probability πi and keeps at most 10 of them at random (10 random states if none are drawn). The
+last 10 years are post-treatment (T0 = 30), and the hidden block is the treated states in those years.
+Draws come from estimate_dgp and simulate_dgp with seed 20260416, reset for each of the
+nine outcome–assignment combinations, with 200 draws each. Outcomes are on the standardized
+scale.
+Kansas semi-synthetic panels.
+The source is the augsynth::kansas panel of quarterly log state
+GDP per capita: 50 states and 105 quarters (1990 Q1–2016 Q1), with 89 quarters before the 2012
+Kansas tax cut and 16 after it (from 2012 Q2). As in the main factor-model simulation of Ben-Michael
+et al. [2021], we fit the two-way interactive fixed-effects model yit = αi + ξt + ϕ⊤
+i µt + εit with
+three factors . Draws keep the time effects ˆξt and factors ˆµt fixed and resample αi ∼N(¯ˆα, sd(ˆα)),
+ϕi ∼N(0, Cov(ˆϕ)) and εit ∼N(0, ˆσ2) independently. One treated state is sampled with probability
+proportional to logit−1 θ (z(αi) + P
+j z(ϕij))
+
+with θ = 0.5, where z standardizes across states. Its
+16 post-treatment quarters are hidden. There are 200 draws.
+California smoking panels.
+These are real data with no simulation: annual cigarette sales in
+packs per capita for 1970–2000 (T = 31) in the 38 states of the Proposition 99 donor pool [Abadie
+et al., 2010]. California is excluded, so no state is actually treated. Following Athey et al. [2021],
+T0 = round(ρT) with ρ ∈{0.35, 0.5, 0.65, 0.8, 0.9}, i.e. T0 ∈{11, 16, 20, 25, 28}, and 100 draws
+per value. In the simultaneous design, 8 random states are hidden from year T0 + 1 onward. In the
+staggered design, 35 random states are each hidden from an adoption year drawn uniformly after the
+first T0 years.
+Metrics.
+For draw d with hidden block Hd, true untreated outcomes yit and predictions ˆyit,
+RMSEd =
+v
+u
+u
+t
+1
+|Hd|
+X
+(i,t)∈Hd
+(yit −ˆyit)2,
+|ˆτd −τd| =
+
+1
+|Hd|
+X
+(i,t)∈Hd
+(yit −ˆyit)
+,
+since the hidden entries are untreated and τd = 0. For a metric em,d of method m, the normalized
+score is sm,d = (em,d −minm′ em′,d)/(maxm′ em′,d −minm′ em′,d) over the seven main methods,
+with MatrixFormer-Impute run on the panel as given; draws in which all seven tie are skipped.
+Additional archived expert runs and the displayed MatrixFormer ensemble use the same minimum
+and maximum without contributing to them, so their scores can fall outside [0, 1]. Scores are averaged
+over the draws of each design and then over designs. With per-design standard errors seg over draws
+and G designs, the reported interval is ±1.96
+qP
+g se2g/G. The intervals treat the designs as fixed
+and the draws as independent; draws share their underlying source data, so the intervals may be
+somewhat optimistic.
+17
