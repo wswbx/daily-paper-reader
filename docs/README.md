@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-06</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-07</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 10 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-06 22:55:59 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-07 23:23:42 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读7篇、速读3篇，重点聚焦表格基础模型在结构漂移与数据流场景下的表现。最值得看的是两篇9分工作：结构漂移下的分子性质预测，以及重新审视表格基础模型在数据流上的适用性。普通读者可优先了解表格基础模型何时可靠、何时失效，再按需跟进符号回归与AI科学发现类速读内容。</p>
+<p>今天精读5篇，重点覆盖用Transformer合成物理公式与表格基础模型中的联合标签处理标准化问题。最值得看两篇9.0分论文：《Synthesizing Physics Formulae with Transformers》和《The Standardization Trap: Certifying Joint Label Processing in Tabular Foundation Models》。建议普通读者先读这两篇的摘要与结论，重点判断方法适用边界，再按兴趣跟进其余精读。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">7 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Molecular Property Prediction under Structural Shift with Tabular Foundation Models">Molecular Property Prediction under Structural Shift with Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Rethinking Tabular Foundation Models On Data Streams">Rethinking Tabular Foundation Models On Data Streams</span></li><li><span class="dpr-home-dashboard-paper-title" title="Closing the Context Gap: Activation Alignment for Tabular In-Context Learning">Closing the Context Gap: Activation Alignment for Tabular In-Context Learning</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Synthesizing Physics Formulae with Transformers">Synthesizing Physics Formulae with Transformers</span></li><li><span class="dpr-home-dashboard-paper-title" title="The Standardization Trap: Certifying Joint Label Processing in Tabular Foundation Models">The Standardization Trap: Certifying Joint Label Processing in Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Evaluation of Active Feature Acquisition Policies with Tabular Foundation Models">Evaluation of Active Feature Acquisition Policies with Tabular Foundation Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>5</strong></span><span class="dpr-home-dashboard-tag">sr <strong>2</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>4</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">0 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="A study on healthcare expenditure in Italian regions via Symbolic Regression">A study on healthcare expenditure in Italian regions via Symbolic Regression</span></li><li><span class="dpr-home-dashboard-paper-title" title="MechBench: Can AI Scientific Agents Discover Mechanisms Beyond Phenomenal Laws?">MechBench: Can AI Scientific Agents Discover Mechanisms Beyond Phenomenal Laws?</span></li><li><span class="dpr-home-dashboard-paper-title" title="Probabilistic Symbolic-Distillation Model of Droplet Collision for Spray Simulation at High Ambient Pressures">Probabilistic Symbolic-Distillation Model of Droplet Collision for Spray Simulation at High Ambient Pressures</span></li></ul>
+<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>3</strong></span></div>
+
 </section>
 </div>
 
