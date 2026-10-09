@@ -1,0 +1,974 @@
+Title: Compile the Table: Query-Calibrated Operator Compression for Tabular In-Context Learning
+
+URL Source: https://arxiv.org/pdf/2610.11784v1
+
+Published Time: Fri, 09 Oct 2026 01:23:25 GMT
+
+Number of Pages: 24
+
+Markdown Content:
+# Compile the Table: Query-Calibrated Operator Compression for Tabular In-Context Learning 
+
+## Xu Zhao 1,∗, Jiaming Zhao 1,∗, Bin Zhao 1, Yong Yang 1
+
+> 1
+
+JD.COM 
+
+> ∗
+
+Equal contribution. 
+
+## Abstract 
+
+Tabular in-context learning (ICL) has emerged as a training-free and accurate paradigm for tabular prediction, but current approaches to compressing its in-context examples face an accuracy– throughput tradeoff: fixed subsets can sacrifice accuracy, while query-specific retrieval limits cache reuse and batching across queries, reducing throughput. We propose QCOC (Query-Calibrated Operator Compression ), which exploits the exchangeability and repeated use of in-context examples by compiling their full KV cache once into compact memory shared across subsequent queries. Instead of retaining raw examples, QCOC clusters their states into joint-KV prototypes, preserves per-cluster multiplicities and the original example count, and calibrates prototype values against attention query vectors produced by the in-context examples through an anchored closed-form solution. Prototype compression drives the speedup, while value fitting helps preserve accuracy. On 64 held-out OpenML-CC18 datasets, QCOC achieves the highest mean accuracy among the compared compression and retrieval methods at both retained counts. Across 12 configurations on seven long tables, it ranks first among compressed methods in ten and averages 0.23 percentage points below full context. Compressing 8,192 in-context examples to 512 memory slots yields a 10.5 × cache compression ratio; excluding one-time compilation, in a single-core CPU online-serving comparison over 1,000 queries, QCOC is up to 508 × faster than dynamic retrieval baselines and 1.98 × faster than full-context inference. These results show that QCOC enables compact-memory reuse and efficient inference across queries while retaining accuracy close to full context.  
+
+> Email:
+
+{zhaoxu.135, zhaojiaming.214}@jd.com 
+
+## 1 Introduction 
+
+Tabular in-context models predict new rows from a labeled in-context example set [12, 13, 26]. Larger contexts expose more in-context information, but increase cache memory and repeated-query inference cost [8, 27]. When one in-context example set serves many queries, what should compression preserve ?Existing context-compression methods mainly select in-context examples in two ways. Global row selection 
+
+constructs one subset for all queries, making the selected context reusable but often discarding rows needed for accurate prediction [6, 14, 29]. Dynamic row selection retrieves a query-specific subset and often improves local relevance, but limits context reuse and batching across queries, thereby reducing serving throughput [11, 16, 32]. KATE [20], for example, performs nearest-neighbor retrieval in a pretrained representation before each prediction. This creates a central accuracy–throughput tradeoff: global selection has low serving cost but may lose relevant rows, whereas dynamic selection can preserve local relevance at higher serving cost. 1arXiv:2610.11784v1 [cs.LG] 8 Oct 2026 Offl ine operator compilation Online inference                                   
+
+> Joint KV coarsening
+> In-context examples 𝒟
+> Frozen attention layer
+> layer 1
+> ⋮
+> layer ℓ
+> ⋮
+> layer L
+> Kℓ Vℓ
+> Joint cluster space
+> N
+> Ṽ ₀ℓ
+> K̃ ℓ
+> Query-conditioned operator matching
+> xqcolumn encoder layers 1 … ℓ−1
+> attn FFN
+> layer ℓ
+> hℓ(q) φN(q) score + softmax pℓ(q) weighted sum hℓ ⁺¹(q)
+> Operator memory ℳℓ
+> K̃ ℓlog wℓ, N
+> Ṽ *ℓ
+> layers ℓ+1 … L
+> attn FFN
+> readout ŷ
+> Block normalize + concatenate
+> ki/ σ Kvi/ σ V⊕→zi
+> wℓ
+> Qcal
+> full-cache target
+> Kℓ, Vℓ attention Ycal
+> fi xed compact routing
+> K̃ ℓ
+> + log wℓ softmax Pcal
+> target Y cal anchor P cal Ṽ ₀fi tted P cal Ṽ *
+> Calibration queries · schematic
+> anchored ridge
+> Ṽ * = arg min Z‖P cal Z − Y cal ‖F² + λγ‖Z − Ṽ ₀‖F²
+> Ṽ * = (P cal ᵀPcal + λγI) ⁻¹(P cal ᵀYcal + λγ Ṽ ₀)
+> anchor Ṽ ₀ℓ
+> Compiled operator memory ℳℓ
+> K̃ ℓ
+> Ṽ *ℓ log wℓ
+> original count N
+
+Figure 1 Reusable operator compilation with QCOC. The full in-context cache induces a query-dependent attention operator. Attention query vectors produced by the in-context examples are passed through the full cache to obtain target outputs, and QCOC compresses the cache into ( eKℓ, eV ∗ 
+
+> ℓ
+
+, log wℓ, N ) memory reused by future queries. Joint-KV clustering, cluster-count weighting, and anchored ridge fitting implement this process. 
+
+To resolve this tradeoff, we propose Query-Calibrated Operator Compression (QCOC ), which shifts the object of compression from in-context examples to the query–output mapping defined by the in-context example set. For a fixed in-context example set D, each attention head defines a mapping from a query state q to an attention output AD(q); we refer to this mapping as the in-context-example-conditioned attention operator .Once the in-context example set is fixed, the full KV cache determines this mapping: subsequent queries share the same cache while producing query-dependent outputs. We study tabular compression through 
+
+reusable operator compilation : approximate the full-cache operator once with a compact memory and apply the compiled operator to subsequent queries. Section 3 gives the formal definition. Concretely, QCOC compiles the operator induced by an in-context example set into a compact, reusable KV memory. Because the labeled in-context examples are exchangeable, their individual identities and input order need not be retained: at every layer and head, joint-KV clustering groups their states into prototypes, while exact cluster counts restore the total attention contribution of the examples represented by each prototype. Any length-dependent query transformation is evaluated using the original number of in-context examples N
+
+rather than the number of compressed slots M . Attention query vectors produced by the in-context examples are passed through the full cache to obtain target outputs. With the compressed keys and cluster counts fixed, one regularized least-squares solve fits the compressed value vectors to reproduce these outputs. The compiled KV memory is reused by every future query while still producing a query-specific attention output. Our contributions are: • We propose Query-Calibrated Operator Compression ( QCOC ), a post-hoc KV-compression method for tabular ICL. It uses the exchangeability and repeated reuse of labeled in-context examples to aggregate their states into joint-KV prototypes with exact cluster counts, then fits the prototype values using attention query vectors produced by the examples, producing compressed KV memory reusable across queries without extra data or model updates. • We derive a prototype approximation bound that relates attention-output error to key and value approx-2imation errors, and show that the closed-form value fit cannot increase the residual on its calibration queries. Additional analysis characterizes how approximation error may propagate or change across query distributions. • Through the primary benchmark, long-context evaluation, transfer-model experiments, and multi-query serving experiments, we show that QCOC retains predictive performance close to full context after KV-cache compression and reduces online inference cost when the cache is reused across queries. Component analysis further clarifies the roles of cluster counts, the original example count N , and value fitting, while failure-case analysis identifies the method’s limitations. 
+
+## 2 Related Work 
+
+Tabular ICL and long-context scaling. Prior-data fitted networks learn to perform supervised prediction in context [12, 24]. TabPFN v2 strengthens small-data prediction, while TabICL scales model capacity through a column-then-row architecture [13, 26]. Several works address the remaining in-context example count bottleneck at the input or execution level. Scaling TabPFN studies row sketching and feature selection, BAPS constructs class-balanced prototypes, and Chunked TabPFN preserves exact full-context computation through tiled-block attention [8, 15, 27]. TuneTables and in-context data distillation optimize synthetic contexts or model parameters for a target table [9, 22]. TACO instead trains a dedicated compressor and predictor end to end, mapping the training table into a reusable latent context [33]. QCOC differs by post-hoc compiling the internal in-context-example KV states of an existing pretrained tabular ICL model, without updating model parameters or replacing its predictor. 
+
+Global and dynamic row selection. Global methods select one context that is reused across queries. They include random or clustering-based subsets, LUCoS K-Medoids in a learned tabular representation, and more general coresets or distilled datasets [6, 14, 29]. Their one-time selection supports efficient serving, but a single subset cannot preserve all query-relevant regions. Dynamic methods instead adapt the selected rows to each query: KATE performs nearest-neighbor retrieval, MICP routes queries among contexts, CRUMB constructs distribution-matched query batches, and ARASH adapts retrieval and context size [11, 16, 20, 32]. Dynamic selection improves local relevance but limits context reuse and batching across queries. QCOC mitigates this tradeoff by compiling one reusable layer-wise KV memory whose attention output remains query-dependent. 
+
+Reusable context representations. Language-model work has learned to replace long prompts with reusable hidden representations. Gist tokens and ICAE train compact memory tokens, Activation Beacon compresses layer activations directly, and recent evidence shows that even pooling is a strong baseline when evaluated carefully [7, 10, 23, 34]. Cartridges and latent context compilation further study reusable memories for later queries [5, 19]. 
+
+KV-cache compression. Efficient-attention methods replace quadratic attention with low-rank features or landmarks [4, 31]. KV-cache compression has been introduced for autoregressive language models through token eviction [18, 21, 35], state merging [2, 30], and layerwise budget allocation [3]. Recent language-model studies have also explored optimizing or reconstructing compressed KV states beyond token eviction and state merging [17, 25, 28, 36]. 
+
+## 3 Query-Calibrated Operator Compression 
+
+3.1 Problem Setup and Objective 
+
+Let D = {(xi, y i)}Ni=1 denote an in-context example set and fθ a tabular ICL model whose parameters remain fixed during compression. Encoding D produces layer- and head-specific keys and values Kℓh , V ℓh ∈ RN ×d.Fixing one layer–head pair, write its states as K, V .Given a full KV cache constructed from a labeled in-context example set, our goal is to compress it once into layer- and head-specific KV memory that can be used directly by the predictor and shared across subsequent 3queries. For a query state q ∈ Rd, define the attention output of the in-context example set as 
+
+AD (q) = pD (q)V, pD (q) = softmax  ϕN (q)K⊤ , (1) where ϕN (q) denotes the query transformation, with the subscript indicating that it may depend on the number of in-context examples. For standard scaled dot-product attention, ϕN (q) = q/ √d and is independent of N . Layer and head indices are suppressed. For an arbitrary batch Q = [ q⊤ 
+
+> 1
+
+; . . . ; q⊤ 
+
+> B
+
+] ∈ RB×d, its row-wise extension is 
+
+ΦN (Q) = [ ϕN (q1)⊤; . . . ; ϕN (qB )⊤] ∈ RB×d. (2) Correspondingly, define AD (Q) = softmax row (Φ N (Q)K⊤)V . The cache remains fixed across queries while its output remains query-dependent. Operator compression therefore approximates the function q 7 → A D (q). We represent it with M ≪ N keys eK ∈ RM ×d, values eV ∈ RM ×d, and count-based mass weights w ∈ NM :
+
+P (Q; eK, w ) = softmax row 
+
+
+
+ΦN (Q) eK⊤ + 1B (log w)⊤
+
+, (3) 
+
+bAD (Q) = P (Q; eK, w ) eV . (4) The weight wj = |Dj | ≥ 1 is the number of in-context examples assigned to prototype j in a nonempty partition D1, . . . , D M of the in-context-example states, while ΦN (Q) keeps the backbone’s query transformation unchanged. For a length-aware backbone, it is evaluated at the original in-context example count N rather than the number of compressed slots M . Consequently, P 
+
+> j
+
+wj = N . For any query batch Q, the attention-output matching loss is 
+
+Lop (Q) = P (Q; eK, w ) eV − A D (Q) 2
+
+> F
+
+. (5) Here Q denotes an arbitrary query batch; compilation uses the in-context-example-derived Qcal defined below and no test-set information. 
+
+3.2 Joint KV Prototype Construction 
+
+Within each head, we run deterministic Lloyd K-means on concatenated states zi = [ ki/σ K ; vi/σ V ] ∈ R2d,where σK = Std( K) and σV = Std( V ) are scalar standard deviations over all matrix entries. Empty clusters are repaired by assigning farthest points. Let nonempty Cj ⊆ { 1, . . . , N } denote the final Lloyd assignment used to compute prototype j ∈ { 1, . . . , M }. Joint clustering avoids merging states with similar keys but incompatible values. The initial compressed states are 
+
+ekj = 1
+
+|Cj |
+
+X
+
+> i∈Cj
+
+ki, ev0j = 1
+
+|Cj |
+
+X
+
+> i∈Cj
+
+vi. (6) 
+
+eV0 denotes the initial value vectors obtained from the cluster means. After constructing the joint-KV prototypes, we reassign all in-context examples to their nearest prototypes in the same normalized space and define the cluster count as wj = |Dj |, where Dj is the resulting group. Thus wj > 0 and P 
+
+> j
+
+wj = N .Here, Cj determines the prototype means, whereas Dj determines the exact count associated with each final prototype; empty-group handling and numerical settings are given in the appendix. Representing the wj keys in Dj by ekj gives the combined softmax numerator 
+
+X
+
+> i∈Dj
+
+exp ⟨ϕN (q), ekj ⟩ = wj exp ⟨ϕN (q), ekj ⟩ = exp 
+
+
+
+⟨ϕN (q), ekj ⟩ + log wj
+
+
+
+. (7) Thus log wj accounts for the number of source states represented by each compressed slot. It does not remove the approximation error between ki and ekj ; ϕN separately keeps the backbone’s query transformation unchanged, including any source-length dependence. 43.3 Constructing Calibration Equations 
+
+Fitting the compressed value vectors requires query–output pairs for the attention layer. During the pass that constructs the full cache, the model produces one attention query vector per in-context example at every layer and head. We use all N vectors, so Ncal = N . For a fixed layer and head, stack them as 
+
+Qcal = [( qcal 1 )⊤; . . . ; ( qcal  
+
+> Ncal
+
+)⊤] ∈ RNcal ×d,
+
+ΦN (Qcal ) = [ ϕN (qcal 1 )⊤; . . . ; ϕN (qcal  
+
+> Ncal
+
+)⊤] ∈ RNcal ×d. (8) Here N is both the original in-context example count used by ϕN and the number of fitting states. No external calibration set or held-out query rows are required. Applying the full cache to Qcal gives the target outputs 
+
+Ycal = AD (Qcal ) = softmax row (Φ N (Qcal )K⊤)V, (9) while the compressed keys and cluster sizes give the corresponding attention weights 
+
+Pcal = P (Qcal ; eK, w ) ∈ RNcal ×M . (10) With the compressed keys and cluster-count weights fixed, value fitting therefore reduces to the matrix regression problem 
+
+Pcal eV ≈ Ycal . (11) 
+
+3.4 Value Fitting with Fixed Attention Weights 
+
+Keys determine the attention weights, whereas values determine the content returned under those weights. Jointly fitting both would require 
+
+min  
+
+> eK, eV
+
+softmax row 
+
+
+
+ΦN (Qcal ) eK⊤ + 1Ncal (log w)⊤ eV − Ycal 
+
+> 2
+> F
+
+,
+
+a non-convex problem because changing eK also changes the attention weights. With ( eK, w ) fixed, Pcal is fixed and the output Pcal eV is linear in eV . We therefore keep the clustered keys fixed and fit only the returned values. For each attention head in every layer, compute its regularization scale γ = γ(Pcal ) as 
+
+γ(Pcal ) = max 
+
+ 1
+
+M tr( P ⊤
+
+> cal
+
+Pcal ), ϵ num 
+
+
+
+. (12) Here ϵnum > 0 prevents a degenerate zero scale. QCOC optimizes only values through scale-normalized anchored ridge regression: 
+
+eV ∗ = arg min  
+
+> Z∈RM×d
+
+∥Pcal Z − Ycal ∥2 
+
+> F
+
++ λγ (Pcal )∥Z − eV0∥2 
+
+> F
+
+. (13) The unique solution is 
+
+eV ∗ = ( P ⊤
+
+> cal
+
+Pcal + λγI M )−1(P ⊤
+
+> cal
+
+Ycal + λγ eV0) . (14) 
+
+P ⊤
+
+> cal
+
+Pcal is the Gram matrix of the least-squares design. When the numerical floor is inactive, γ = ∥Pcal ∥2 
+
+> F
+
+/M ,its mean diagonal value. Scaling the anchor by γ keeps the relative regularization strength comparable across attention heads, while stabilizing directions weakly constrained by the fitting states. 53.5 Design Analysis 
+
+We first characterize the error introduced by replacing groups of in-context-example states with weighted joint-KV prototypes. Assume every Dj is nonempty, ∥vi∥2 ≤ Vmax , wj = |Dj |, and, for every i ∈ Dj ,
+
+|⟨ ϕN (q), k i − ekj ⟩| ≤ ϵ and ∥vi − ev0j ∥2 ≤ δ. Grouping the original attention terms then gives 
+
+∥A D (q) − bAD,0(q)∥2 ≤ δ + 2 Vmax tanh( ϵ). (15) Thus, the approximation improves as keys and values become more concentrated within each cluster. Exact cluster counts remain necessary even at zero cluster radius: identical members of cluster j contribute the factor |Dj | exp( ⟨ϕN (q), ekj ⟩) before softmax normalization, so removing log wj changes the attention weights. Likewise, a length-aware model must continue to evaluate ϕN using the original example count N , rather than the retained count M .Value fitting provides a complementary guarantee. For fixed ( eK, w ) and λγ (Pcal ) > 0, the objective in Equation 13 is strictly convex and has the unique solution in Equation 14. Since the initialization eV0 is feasible, optimality implies 
+
+∥Pcal eV ∗ − Ycal ∥2 
+
+> F
+
+≤ ∥ Pcal eV0 − Ycal ∥2 
+
+> F
+
+. (16) The guarantee applies only to the calibration queries with fixed attention weights: it does not ensure lower test error or higher predictive accuracy. This distinction matches the empirical pattern in Figure 2: value fitting consistently improves attention-output fidelity, while its effect on accuracy remains dataset dependent. Proofs and additional analysis appear in Appendix B. 
+
+## 4 Experiments 
+
+We evaluate QCOC in terms of predictive accuracy, long-context scalability, component effects, and multi-query serving efficiency. We first compare it with compression and retrieval methods at the same retained counts, and then use long-table, component, and serving experiments to examine its accuracy retention, the role of each design choice, and the efficiency gains from reuse across queries. 
+
+4.1 Experimental Protocol 
+
+Primary and long-context benchmarks. The primary benchmark contains 64 held-out OpenML-CC18 datasets [1], uses up to 512 in-context examples, and evaluates retained counts M ∈ { 32 , 64 }; ten dis-joint validation datasets determine all hyperparameters. Long-context experiments cover seven CC18 datasets together with SUSY, HIGGS, and Covertype under varying in-context example counts and compression ratios. Appendix C gives further protocol and data-split details. 
+
+Baselines. We compare full-context inference, fixed row selection, dynamic retrieval, and direct KV compres-sion. Fixed row selection includes class-balanced random selection, input-space K-means, and LUCoS [14]; dynamic retrieval includes MICP [32], CRUMB [11], KATE [20], standardized raw-space KNN, and an ARASH-style reproduction [16]. The primary direct-KV baseline is weighted joint-KV; key centroids and ToMe/KVMerger-style variants are compared in Appendix Table 6. All methods use the same prediction model; Appendix D gives exact definitions. 
+
+Metrics and uncertainty. We use accuracy averaged equally across datasets to measure predictive performance; prediction agreement, probability mean absolute error (MAE), and attention-output mean squared error (MSE) measure deviation from full-context inference. We also report cache memory and serving time. Confidence intervals use paired bootstrap over datasets; Appendix C defines the metrics and Appendix H gives the timing protocol. 
+
+4.2 Accuracy at the Same Retained Count 
+
+We first compare methods at the same retained count M : row-selection methods retain M in-context examples per prediction, while cache-compression methods retain M KV slots per layer and head. Because M in-context 6Table 1 Held-out CC18 classification. Mean accuracy across 64 datasets at retained counts M = 32 and M = 64 .Full uses all available in-context examples; bold marks the best compression or retrieval method. Appendix Table 6 reports additional direct-compression methods. Method M = 32 M = 64                       
+
+> Global row selection
+> Random 0.6819 0.7404 Input K-means 0.7321 0.7925 LUCoS 0.7348 0.7922
+> Dynamic row selection
+> MICP 0.7905 0.8137 CRUMB 0.8033 0.8296 KATE 0.8088 0.8344 Standardized raw-space KNN 0.8117 0.8355 ARASH-style 0.7910 0.8145
+> KV compression
+> Weighted joint-KV 0.8391 0.8450
+> QCOC 0.8534 0.8566
+> Full context 0.8617 0.8617
+
+examples likewise produce M KV slots per layer and head, the two families have the same online attention length. QCOC additionally stores M log cluster counts log wj and the scalar original example count N ; this metadata is negligible relative to the M d -dimensional key and value vectors. Table 1 reports results on all 64 held-out datasets. At the same online attention length, QCOC gives the strongest average accuracy among the compared reusable and query-specific alternatives (Table 1). Its advantage over weighted joint-KV indicates that compression quality is not explained by clustering alone: matching the full-cache responses contributes beyond retaining cluster mass. Increasing M narrows the gap to Full, as a larger memory recovers some accuracy lost to compression. The paired intervals in Appendix Table 3 are positive against the strongest retrieval and direct-compression baselines. Moving from M = 32 to 64 raises the best retrieval accuracy by 2.38 percentage points, versus 0.32 points for QCOC , suggesting that retrieval benefits more from the extra rows. 
+
+4.3 Scaling with In-Context Example Count and Retained Count 
+
+We then evaluate QCOC at different in-context example counts N , with the retained count set to M = N/ 32 ,
+
+N/ 16 , and N/ 8, to examine its performance across context lengths and compression ratios. Table 2 reports all 12 settings. Every setting uses the same seven datasets, so differences reflect the operating regime rather than a changing benchmark composition. Appendix D specifies the implementation and scope of each baseline. Table 2 reveals a regime change rather than a uniform margin. QCOC leads in 10 of 12 settings and is most clearly favored when the retained count is small relative to the available context. As the budget is relaxed, query-specific retrieval becomes competitive and narrowly leads only at the largest M in the N = 4 ,096 and 
+
+8,192 blocks. Across the full grid, however, QCOC remains only 0.23 percentage points below Full on average. The main benefit of compiling a shared operator is therefore robustness under tight compression; the reversals at larger budgets suggest that local retrieval benefits more from additional retained examples, not merely from a longer source context. 
+
+4.4 Component Analysis 
+
+The factorial analysis in Appendix Table 7 identifies two distinct requirements. Cluster-count weighting and preserving the original count N must be used together: either correction alone leaves the compressed attention computation inconsistent, and their effects are strongly non-additive. Once these structural terms are fixed, fitting only eV supplies the remaining accuracy gain. Thus, the count terms correct attention weighting and query transformation, while value fitting calibrates the resulting output; these roles are complementary. Joint-KV and key-only prototypes have statistically indistinguishable final accuracy, but joint-KV yields 7Table 2 Accuracy across in-context example counts and retained counts. Means over seven CC18 datasets. Within each in-context example count block, all compressed methods use the same retained count M = N/ 32 , N/ 16 , N/ 8.Bold marks the highest mean accuracy among compressed methods. ∆ is QCOC minus the best other compressed method, including global selection, dynamic selection, and KV compression but excluding Full, in percentage points (pp); positive values favor QCOC. 
+
+N = 512 N = 2 ,048 N = 4 ,096 N = 8 ,192 
+
+Method 16 32 64 64 128 256 128 256 512 256 512 1,024 
+
+Global row selection 
+
+Random .6003 .6276 .6763 .6716 .7120 .7254 .6854 .7421 .7494 .7319 .7487 .7596 Input K-means .6656 .6846 .7370 .7153 .7440 .7573 .7389 .7610 .7759 .7399 .7793 .7871 LUCoS .6463 .6721 .7323 .7067 .7266 .7696 .7374 .7626 .7773 .7656 .7670 .7900 
+
+Dynamic row selection 
+
+MICP .6549 .7017 .7016 .7483 .7691 .7900 .7706 .7853 .7881 .7844 .7930 .7923 CRUMB .6739 .7057 .7417 .7557 .7756 .7899 .7746 .7933 .7956 .7909 .7976 .8061 KATE .6960 .7233 .7456 .7584 .7771 .7903 .7883 .7963 .8039 .7997 .8019 .8083 
+
+Standardized raw-space KNN .7007 .7246 .7411 .7696 .7843 .7939 .7759 .7924 .7976 .7976 .8051 .8064 ARASH-style .6966 .6734 .6930 .7411 .7624 .7639 .7650 .7764 .7773 .7760 .7851 .7827 
+
+KV compression 
+
+Weighted joint-KV .7634 .7681 .7723 .7861 .7896 .7916 .7903 .7904 .7939 .7946 .7979 .7997 
+
+QCOC .7663 .7763 .7769 .7934 .7953 .8000 .8026 .8024 .8033 .8056 .8081 .8069 
+
+∆ vs. best other (pp) +0 .29 +0 .81 +0 .46 +0 .73 +0 .57 +0 .61 +1 .23 +0 .61 −0.06 +0 .59 +0 .30 −0.14 
+
+Full .7784 .7784 .7784 .8000 .8000 .8000 .8020 .8020 .8020 .8077 .8077 .8077 
+
+more consistently lower reconstruction and prediction errors; its main contribution is therefore fidelity, not a separately identifiable accuracy gain. −10 5 20 35 50 
+
+QCOC − baseline accuracy (pp) Random Input K-means LUCoS MICP CRUMB KATE Std. raw KNN ARASH-style Weighted joint-KV Full context 
+
+63/0/1 62/0/2 61/2/1 61/1/2 60/2/2 61/1/2 56/2/6 61/1/2 46/10/8 13/9/42 W / T / L 
+
+A Predictive quality  
+
+> 10 −3 10 −2
+
+Attention-output MSE 10 −3 
+
+10 −2 
+
+10 −1 
+
+> Probability MAE
+
+B Value fitting 
+
+Weighted joint-KV QCOC  
+
+> 10 −3 10 −2
+
+Attention-output MSE 0.02 0.05 0.1 Probability MAE 
+
+QCOC 
+
+Weighted joint-KV Key centroids + cluster size ToMe + cluster size KVMerger + cluster size Key centroids 
+
+C Method means 
+
+QCOC Row selection KV compression Full context 
+
+Figure 2 Accuracy and fidelity at M = 32 on 64 CC18 datasets. A: QCOC accuracy minus every Table 1 baseline on the full test split. Dots are datasets, diamonds means, and boxes interquartile ranges, not confidence intervals. B/C: B shows errors before (open) and after (filled) value fitting; C shows mean errors for Appendix Table 6 methods. B and C use logarithmic axes. 
+
+Figure 2 separates that mechanistic claim from the downstream task claim. The paired accuracy distribution in panel A is heterogeneous: gains over weaker row-selection baselines are broad, while comparisons with 875 80 Mean accuracy (%) QCOC Full context KATE Weighted joint-KV CRUMB MICP ARASH-style Input K-means LUCoS Random            
+
+> aAccuracy
+> 10 010 3
+> Mean online time (ms/query)
+> bOnline serving cost
+> 512 2k 4k 8k In-context examples N
+> 10 1
+> 10 2
+> 10 3
+> Online time (ms/query)
+> QCOC Full context MICP CRUMB KATE
+> cScaling at M=N/16
+
+Figure 3 Accuracy and online serving cost. A/B: Accuracy and matched single-core serving time at N = 8 ,192 ,
+
+M = 512 . C: Serving-time scaling at M = N/ 16 . Times average 1,000-query batches; B/C use logarithmic axes. One-time setup and QCOC compilation are excluded. 
+
+stronger retrieval and KV baselines are tighter. In contrast, every dataset moves toward Full after value fitting in panel B, and panel C shows that this advantage remains when other direct-compression constructions are included. Panels B/C thus test the proposed operator approximation more directly than classification accuracy alone. Value fitting reliably improves full-cache fidelity; whether that changes the predicted class still depends on each dataset’s decision margins. 
+
+4.5 Long-Context Accuracy and Serving Cost 
+
+The long-table results compare accuracy, cache footprint, and online serving cost. At N = 8 ,192 and M = 512 ,
+
+QCOC is the strongest compressed method on CC18-Long, SUSY, and HIGGS, whereas KATE remains substantially better on Covertype. Relative to Full, its cache is 10.53 × smaller on CC18-Long; Appendix Table 11 gives the corresponding results for the three external datasets. Increasing the retained count narrows but does not close the Covertype gap to Full (Appendix Tables 15 and 16). This failure case matters: one shared memory is effective when the full-cache behavior can be represented globally, but query-local retrieval can be preferable on heterogeneous tables. After compilation, the shared memory reduces single-core serving time from 3.79 to 1.91 ms per query relative to Full and avoids KATE’s per-query cache construction (Figure 3). In panel C, QCOC time changes little as 
+
+N grows at a fixed compression ratio, while Full and query-specific retrieval become costlier. The advantage comes from reusing a bounded cache, not an inherent speed difference between KV-compression constructions. These measurements exclude one-time cache construction and compilation; Appendix Table 14 reports the latter separately. Hence, practical gains require enough queries to amortize compilation. The positive residual–accuracy-loss association in Appendix Figure 7 motivates reconstruction residual as a candidate diagnostic. 
+
+## 5 Conclusion 
+
+This work treats compression for tabular in-context learning as compilation of the attention operator induced by a fixed example set, rather than selection of a smaller set of rows. QCOC approximates that operator with a compact, reusable KV memory and calibrates its values to preserve query-dependent attention outputs. On held-out CC18 datasets, it achieves the highest mean accuracy among the compared compression and retrieval methods at both retained counts; on long tables, it remains close to Full in aggregate while reducing 9online serving cost across repeated queries. These gains depend on reusing the same compiled memory across enough queries to justify full-cache construction and one-time compilation. A single shared memory can also miss query-local structure, as the Covertype result shows. Reducing compilation cost and selecting among multiple reusable memories are therefore natural next steps. 
+
+## References 
+
+[1] Bischl, B., Casalicchio, G., Feurer, M., Gijsbers, P., Hutter, F., Lang, M., Mantovani, R. G., van Rijn, J. N., and Vanschoren, J. OpenML benchmarking suites. In Proceedings of the Neural Information Processing Systems Track on Datasets and Benchmarks , volume 1, 2021. [2] Bolya, D., Fu, C.-Y., Dai, X., Zhang, P., Feichtenhofer, C., and Hoffman, J. Token merging: Your vit but faster. In International Conference on Learning Representations , 2023. [3] Cai, Z., Zhang, Y., Gao, B., Liu, Y., Li, Y., Liu, T., Lu, K., Xiong, W., Dong, Y., Hu, J., and Xiao, W. PyramidKV: Dynamic KV cache compression based on pyramidal information funneling. arXiv preprint arXiv:2406.02069 ,2024. [4] Choromanski, K., Likhosherstov, V., Dohan, D., et al. Rethinking attention with performers. In International Conference on Learning Representations , 2021. [5] Eyuboglu, S., Ehrlich, R., Arora, S., Guha, N., Zinsley, D., Liu, E., Tennien, W., Rudra, A., Zou, J., Mirhoseini, A., and Ré, C. Cartridges: Lightweight and general-purpose long context representations via self-study. In 
+
+International Conference on Learning Representations , 2026. [6] Feldman, D. Core-sets: Updated survey. Sampling Techniques for Supervised or Unsupervised Tasks , 2020. [7] Feldman, Y. and Artzi, Y. No mean feat: Simple, strong baselines for context compression. arXiv preprint arXiv:2510.20797 , 2025. [8] Feuer, B., Hegde, C., and Cohen, N. Scaling TabPFN: Sketching and feature selection for tabular prior-data fitted networks. arXiv preprint arXiv:2311.10609 , 2023. [9] Feuer, B. et al. Tunetables: Context optimization for scalable prior-data fitted networks. arXiv preprint arXiv:2402.11137 , 2024. [10] Ge, T., Hu, J., Wang, L., Wang, X., Chen, S.-Q., and Wei, F. In-context autoencoder for context compression in a large language model. In International Conference on Learning Representations , 2024. [11] Heredge, J., Villani, M. J., Deshpande, P., Seshadri, A., and Kumar, N. Crumb: Efficient prior fitted network inference via distributionally matched context batching. arXiv preprint arXiv:2606.11473 , 2026. [12] Hollmann, N., Müller, S., Eggensperger, K., and Hutter, F. Tabpfn: A transformer that solves small tabular classification problems in a second. In International Conference on Learning Representations , 2023. [13] Hollmann, N., Müller, S., Purucker, L., et al. Accurate predictions on small data with a tabular foundation model. 
+
+Nature , 2025. [14] Ipas, O., Gomez-Trenado, G., Romero-Zaliz, R., and Triguero, I. Lucos: Latent unsupervised context selection for tabular foundation models. arXiv preprint arXiv:2605.27254 , 2026. [15] Jadid, M., Garkani, M. R., and Mousavi, A. Balanced adaptive prototype selection for scalable TabPFN inference on large-scale tabular data. arXiv preprint arXiv:2608.12989 , 2026. [16] Jamalidinan, S., Xu, Y., and Cheshmi, K. Arash: Adaptive retrieval and shot selection for tabular prediction. 
+
+arXiv preprint arXiv:2608.17856 , 2026. [17] Jiang, B. and Jin, S. Kvsculpt: Kv cache compression as distillation. arXiv preprint arXiv:2603.27819 , 2026. [18] Li, Y., Huang, Y., Yang, B., et al. Snapkv: Llm knows what you are looking for before generation. In Advances in Neural Information Processing Systems , 2024. [19] Li, Z., Zhou, Y., and Xu, Q. Latent context compilation: Distilling long context into compact portable memory. 
+
+arXiv preprint arXiv:2602.21221 , 2026. 
+
+10 [20] Liu, J., Shen, D., Zhang, Y., Dolan, B., Carin, L., and Chen, W. What makes good in-context examples for gpt-3? In Proceedings of Deep Learning Inside Out , 2022. [21] Liu, Z., Desai, A., Liao, F., et al. Scissorhands: Exploiting the persistence of importance hypothesis for llm kv cache compression at test time. In Advances in Neural Information Processing Systems , 2023. [22] Ma, J., Thomas, V., Yu, G., and Caterini, A. In-context data distillation with tabpfn. arXiv preprint arXiv:2402.06971 , 2024. [23] Mu, J., Li, X. L., and Goodman, N. Learning to compress prompts with gist tokens. In Advances in Neural Information Processing Systems , 2023. [24] Müller, S., Hollmann, N., Arango, S. P., Grabocka, J., and Hutter, F. Transformers can do bayesian inference. In 
+
+International Conference on Learning Representations , 2022. [25] Peng, J., Wu, Y., Wu, H., Han, J., Xie, X., Tu, K., and Lai, J. Grkv: Global regression for training-free kv cache compression in long-context llms. arXiv preprint arXiv:2605.31105 , 2026. [26] Qu, J., Holzmüller, D., Varoquaux, G., and Le Morvan, M. Tabicl: A tabular foundation model for in-context learning on large data. In International Conference on Machine Learning , 2025. [27] Sergazinov, R. and Yin, S.-A. Chunked TabPFN: Exact training-free in-context learning for long-context tabular data. arXiv preprint arXiv:2509.00326 , 2025. [28] Tian, H., Liu, Y., and Wang, T. Every cache entry earns its place: Global allocation of resolution and coverage for kv cache compression. arXiv preprint arXiv:2608.07001 , 2026. [29] Wang, T., Zhu, J.-Y., Torralba, A., and Efros, A. A. Dataset distillation. In arXiv preprint arXiv:1811.10959 ,2018. [30] Wang, Z., Jin, B., Yu, Z., and Zhang, M. Model tells you where to merge: Adaptive KV cache merging for LLMs on long-context tasks. arXiv preprint arXiv:2407.08454 , 2024. [31] Xiong, Y., Zeng, Z., Chakraborty, R., et al. Nyströmformer: A nyström-based algorithm for approximating self-attention. In AAAI Conference on Artificial Intelligence , 2021. [32] Xu, D., Cirit, O., Asadi, R., Sun, Y., and Wang, W. Mixture of in-context prompters for tabular pfns. arXiv preprint arXiv:2405.16156 , 2024. [33] Zab"ergja, G., Kamel, R., Kadra, A., Frey, C. M. M., and Grabocka, J. End-to-end compression for tabular foundation models. In International Conference on Machine Learning , 2026. [34] Zhang, P., Liu, Z., Xiao, S., Shao, N., Ye, Q., and Dou, Z. Long context compression with activation beacon. 
+
+arXiv preprint arXiv:2401.03462 , 2024. [35] Zhang, Z., Sheng, Y., Zhou, T., et al. H2o: Heavy-hitter oracle for efficient generative inference of large language models. In Advances in Neural Information Processing Systems , 2023. [36] Zweiger, A., Fu, X., Guo, H., and Kim, Y. Fast kv compaction via attention matching. In International Conference on Machine Learning , 2026. 
+
+## A Supplementary Design Analysis 
+
+For interpretation at network level, let εℓ(qℓ) bound the complete block perturbation at a common input, including all heads, output projection, and subsequent within-block operations; let ρr bound the complete downstream block’s Lipschitz constant. For L compressed blocks, a hybrid-network argument gives 
+
+∥fD (x) − bfD (x)∥2 ≤
+
+> L
+
+X
+
+> ℓ=1
+> L
+
+Y
+
+> r=ℓ+1
+
+ρr
+
+!
+
+εℓ(qℓ). (17) A ρg -Lipschitz prediction head multiplies the right side by ρg .11 Differences between fitting and deployment queries provide another source of error. Define ℓeV (q) = ∥ bAD (q) −AD (q)∥22, and let μcal and μtest denote their distributions under metric dq . If ℓeV is Lq -Lipschitz, then 
+
+Eμtest ℓeV ≤ Eμcal ℓeV + Lq W1(μcal , μ test ), (18) where W1 is the 1-Wasserstein distance under dq . These bounds clarify possible error accumulation and distribution shift; they are not deployment-performance guarantees, and the experiments do not estimate their Lipschitz or Wasserstein terms. 
+
+## B Derivations 
+
+B.1 Derivation of the grouped approximation bound 
+
+Fix a query q and abbreviate 
+
+si = ⟨ϕN (q), k i⟩, esj = ⟨ϕN (q), ekj ⟩. (19) For group Dj , define its compressed and exact unnormalized weights by 
+
+aj = |Dj |eesj , bj = X
+
+> i∈Dj
+
+exp( ⟨ϕN (q), k i⟩). (20) For every i ∈ Dj , the logit-radius assumption implies e−ϵeesj ≤ esi ≤ eϵeesj . Summing these inequalities over 
+
+Dj gives 
+
+e−ϵaj ≤ bj ≤ eϵaj . (21) Let A = P 
+
+> j
+
+aj , B = P 
+
+> j
+
+bj , and let αj = aj /A and βj = bj /B be the compressed and exact probabilities assigned to group j. Summing Equation 21 over groups also gives e−ϵA ≤ B ≤ eϵA. Hence 
+
+e−2ϵ ≤ βj
+
+αj
+
+= bj /a j
+
+B/A ≤ e2ϵ. (22) For any r ∈ [e−2ϵ, e 2ϵ],
+
+|r − 1| ≤ e2ϵ − 1
+
+e2ϵ + 1 (r + 1) = tanh( ϵ)( r + 1) . (23) Applying this inequality to rj = βj /α j and using P 
+
+> j
+
+αj = P 
+
+> j
+
+βj = 1 yields 
+
+∥β − α∥1 = X
+
+> j
+
+αj |rj − 1| ≤ 2 tanh( ϵ). (24) It remains to control the values returned within each group. Define the exact conditional weights and conditional value mean 
+
+πi|j = esi
+
+bj
+
+, ¯vj (q) = X
+
+> i∈Dj
+
+πi|j vi. (25) Because the πi|j are nonnegative and sum to one, 
+
+∥¯vj (q) − ev0j ∥2 ≤ X
+
+> i∈Dj
+
+πi|j ∥vi − ev0j ∥2 ≤ δ, (26) 
+
+∥¯vj (q)∥2 ≤ X
+
+> i∈Dj
+
+πi|j ∥vi∥2 ≤ Vmax . (27) The exact and compressed outputs can now be written as AD(q) = P 
+
+> j
+
+βj ¯vj (q) and bAD,0(q) = P 
+
+> j
+
+αj ev0j .Adding and subtracting P 
+
+> j
+
+αj ¯vj (q) gives 
+
+∥A D (q) − bAD,0(q)∥2 ≤ X
+
+> j
+
+(βj − αj )¯ vj (q)
+
+> 2
+
++ X
+
+> j
+
+αj (¯ vj (q) − ev0j )
+
+> 2
+
+(28) 
+
+≤ Vmax ∥β − α∥1 + δ ≤ 2Vmax tanh( ϵ) + δ, (29) which is Equation 15. □
+
+12 B.2 Derivation of the closed-form value fit 
+
+Write P = Pcal , Y = Ycal , and η = λγ (P ) > 0. For F (Z) = ∥P Z − Y ∥2 
+
+> F
+
++ η∥Z − eV0∥2 
+
+> F
+
+, the second directional derivative along any nonzero H ∈ RM ×d is 
+
+d2
+
+dt 2 F (Z + tH ) t=0 
+
+= 2 ∥P H ∥2 
+
+> F
+
++ 2 η∥H∥2 
+
+> F
+
+> 0. (30) Thus F is strictly convex and has at most one minimizer. Its gradient is 
+
+∇F (Z) = 2 P ⊤(P Z − Y ) + 2 η(Z − eV0). (31) Setting the gradient to zero gives the normal equation 
+
+(P ⊤P + ηI )Z = P ⊤Y + η eV0. (32) For every nonzero u ∈ RM , u⊤(P ⊤P + ηI )u = ∥P u ∥22 + η∥u∥22 > 0. The coefficient matrix in Equation 32 is therefore positive definite and invertible. Solving the equation gives Equation 14; strict convexity makes this stationary point the unique global minimizer. Finally, optimality relative to the feasible anchor eV0 gives 
+
+∥P eV ∗ − Y ∥2 
+
+> F
+
++ η∥ eV ∗ − eV0∥2 
+
+> F
+
+(33) 
+
+≤ ∥ P eV0 − Y ∥2 
+
+> F
+
++ η∥ eV0 − eV0∥2 
+
+> F
+
+= ∥P eV0 − Y ∥2 
+
+> F
+
+, (34) Dropping the nonnegative anchor term on the left proves Equation 16. □
+
+B.3 Derivation of the layer-by-layer bound 
+
+To connect single-head errors to block errors, fix a common block input h and let eℓ,a (h) bound the Euclidean output error of head a before concatenation. Let W Oℓ be the attention output projection and let cℓ bound the Lipschitz constant of the remaining within-block map with respect to its projected attention input, holding the residual input fixed. Then a valid local bound is 
+
+εℓ(qℓ(h)) = cℓ∥W Oℓ ∥2
+
+> Hℓ
+
+X
+
+> a=1
+
+eℓ,a (h)2
+
+!1/2
+
+. (35) Concatenation gives the root-sum-of-squares factor; the shared output bias and attention residual cancel at a common input. The factor cℓ includes subsequent normalization and feed-forward/residual operations; for a remaining map u 7 → u + FFN(Norm( u)) , it is at most 1 + LFFN LNorm . Query preprocessing is included in the head errors evaluated at h, and its sensitivity to differing inputs is included in the complete-block constants 
+
+ρr . Thus a single-head calibration MSE is not itself εℓ or a uniform bound on deployment states. Let Gℓ and bGℓ denote the exact and compressed maps at block ℓ, including the common residual and feed-forward operations, and let the local perturbation satisfy 
+
+∥Gℓ(h) − bGℓ(h)∥2 ≤ εℓ(qℓ) (36) at every intermediate state encountered below. Define the hybrid output 
+
+H(ℓ) = GL ◦ · · · ◦ Gℓ+1 ◦ bGℓ ◦ · · · ◦ bG1(x), ℓ = 0 , . . . , L, (37) where H(0) = fD(x) and H(L) = bfD(x). Adjacent hybrids share the same compressed prefix through block 
+
+ℓ − 1 and differ only in whether block ℓ is exact or compressed. If hℓ−1 is the output of that common prefix, Lipschitz continuity of the exact downstream blocks gives 
+
+∥H(ℓ) − H(ℓ−1) ∥2 ≤
+
+> L
+
+Y
+
+> r=ℓ+1
+
+ρr
+
+!
+
+∥ bGℓ(hℓ−1) − Gℓ(hℓ−1)∥2 (38) 
+
+≤
+
+> L
+
+Y
+
+> r=ℓ+1
+
+ρr
+
+!
+
+εℓ(qℓ). (39) 13 Using the telescoping identity H(L) − H(0) = PLℓ=1 (H(ℓ) − H(ℓ−1) ) and the triangle inequality proves Equation 17. If a prediction head g follows the last block, then ∥g(H(L)) − g(H(0) )∥2 ≤ ρg ∥H(L) − H(0) ∥2,which gives the final statement. □
+
+B.4 Derivation of the query-distribution bound 
+
+Let Π( μcal , μ test ) denote the set of couplings of the two distributions, and fix any π ∈ Π( μcal , μ test ). Because the marginals of π are μcal and μtest ,
+
+Eq′∼μtest ℓeV (q′) − Eq∼μcal ℓeV (q) = E(q,q ′)∼π
+
+ℓeV (q′) − ℓeV (q) (40) 
+
+≤ E(q,q ′)∼π ℓeV (q′) − ℓeV (q) (41) 
+
+≤ Lq E(q,q ′)∼π dq (q, q ′). (42) The left side is independent of the chosen coupling. Taking the infimum of the right side over π ∈ Π( μcal , μ test )
+
+and using the definition of the 1-Wasserstein distance gives 
+
+Eμtest ℓeV − Eμcal ℓeV ≤ Lq W1(μcal , μ test ), (43) which rearranges to Equation 18. □
+
+## C Additional Experimental Details 
+
+Data and splits. For the primary study, we retain 64 OpenML-CC18 tasks with at most ten classes after excluding the flattened-image tables. A stratified 20% test partition is held out, and up to 512 in-context examples are selected from the remainder. Ten disjoint validation datasets determine all hyperparameters. Cache compression receives no test query, label, prediction, or test-query hidden state. We use a single-estimator TabICL v2 classifier with column and class shuffling disabled. The seven CC18 long-table datasets use N ∈ { 512 , 2048 , 4096 , 8192 }, M ∈ { N/ 32 , N/ 16 , N/ 8}, and 1,000 test queries per setting. We use chronology-respecting holdouts for electricity and bank-marketing and stratified holdouts otherwise. External experiments use official Covertype, SUSY, and HIGGS data with 
+
+N = 8192 , M = 512 , 1,000 disjoint test rows, and three splits. Dataset identifiers are listed below. 
+
+Baseline execution. MICP routes queries among cluster-specific contexts; CRUMB constructs an MMD-matched context for each query group; KATE performs per-query retrieval in TabClustPFN embedding space; and standardized raw-space KNN retrieves directly from standardized inputs. Every baseline uses TabICL for prediction rather than label voting, and all methods share the same model and in-context example pool. 
+
+Statistical unit. The dataset is the unit for paired bootstrap intervals. For repeated-split diagnostics, scores are first averaged within each dataset before datasets are resampled, so repeated splits do not count as independent evidence. 
+
+Metric definitions. For a regression test split with T targets, define ¯y = T −1 PTt=1 yt and 
+
+nRMSE = 
+
+q
+
+T −1 PTt=1 (byt − yt)2
+
+max {
+
+q
+
+T −1 PTt=1 (yt − ¯y)2, 10 −12 }
+
+. (44) TabArena results average the three official splits within each dataset and then average the 13 datasets equally. For one dataset and split, let Eℓ, fit (M ) and Eℓ, 0(M ) be attention-output MSEs after value fitting and at the weighted joint-KV anchor, respectively, on the same fixed attention query vectors produced by the in-context examples. Each MSE averages all query, head, and value-coordinate elements within layer ℓ, before output projection. We define 
+
+ρ(M ) = L−1 PLℓ=1 Eℓ, fit (M )
+
+L−1 PLℓ=1 Eℓ, 0(M ) . (45) 14 This is a ratio of layer-averaged errors. Accuracy, probability MAE, and attention MSE are macro-averaged across datasets rather than pooled across rows. 
+
+Implementation. For QCOC , key and value blocks are standardized separately before joint-KV clustering. Each layer and head uses deterministic farthest-point initialization, at most 15 Lloyd iterations, and all in-context-example query vectors for value fitting. The scalable-softmax computation retains the original example count N after compression. Each head uses ridge coefficient 10 −3γ(Pcal ) as defined in Eq. 12. Each layer and head stores ( eK, eV ∗, log w, N ). Beyond the model-specific full-cache in-context-example pass, compilation costs O(N 2d + IN M d + N M 2 + M 3) per head: full-cache target computation costs O(N 2d), I
+
+Lloyd iterations cost O(IN M d ), and compressed attention plus ridge fitting costs O(N M d + N M 2 + M 3).Query chunking reduces peak attention workspace but not the quadratic target-computation work. Subsequent queries directly reuse the compiled memory. 
+
+Dataset manifest. The following lists identify the 64 evaluation datasets and the ten validation datasets actually used for hyperparameter selection, not the larger pool available in the task cache. 
+
+CC18 (64): Bioresponse , GesturePhaseSegmentationProcessed , Internet-Advertisements ,
+
+MiceProtein , PhishingWebsites , adult , analcatdata_authorship , analcatdata_dmft , balance-scale ,
+
+bank-marketing , banknote-authentication , blood-transfusion-service-center , breast-w , car ,
+
+churn , climate-model-simulation-crashes , cmc , cnae-9 , connect-4 , credit-approval , credit-g ,
+
+cylinder-bands , diabetes , dna , dresses-sales , electricity , eucalyptus ,
+
+first-order-theorem-proving , har , ilpd , jm1 , jungle_chess_2pcs_raw_endgame_complete , kc1 , kc2 ,
+
+kr-vs-kp , madelon , mfeat-factors , mfeat-fourier , mfeat-karhunen , mfeat-morphological ,
+
+mfeat-pixel , mfeat-zernike , nomao , numerai28.6 , optdigits , ozone-level-8hr , pc1 , pc3 , pc4 ,
+
+pendigits , phoneme , qsar-biodeg , satimage , segment , semeion , sick , spambase , splice ,
+
+steel-plates-fault , tic-tac-toe , vehicle , wall-robot-navigation , wdbc , wilt .
+
+TabArena (10): APSFailure , Amazon_employee_access , Bank_Customer_Churn , Diabetes130US , MIC ,
+
+SDSS17 , anneal , hiva_agnostic , maternal_health_risk , students_dropout_and_academic_success .
+
+Deterministic classification splits. The primary protocol uses seed 42 to create stratified 20% test partitions and stratified in-context pools of at most 512 rows. Across the 64 datasets this yields 109,668 test rows; 13 datasets contain fewer than 512 available in-context examples. The separate repeated-split sensitivity analysis uses seeds 42–44. 
+
+Long-table and regression splits. The scale study uses adult, bank-marketing, connect-4, electricity, jun-gle_chess_2pcs_raw_endgame_complete, nomao, and numerai28.6. Electricity and bank-marketing use chronological holdouts; the others use stratified holdouts. SUSY, HIGGS, and Covertype use three stratified splits. Regression uses the 13 TabArena tasks, official repeats 0–2 and fold 0, with at most 1,024 in-context examples and 200 test rows. 
+
+Key baseline settings. Input K-means, MICP, and CRUMB use standardized features and scikit-learn Lloyd K-means. CRUMB uses greedy MMD herding after grouping the unlabeled query batch. KATE and LUCoS use the released TabClustPFN step-10000.ckpt encoder; raw-space KNN uses Euclidean distance after standardization by the in-context pool. 15 Table 3 Paired QCOC-minus-method accuracy differences for the complete 20% CC18 test partitions. Values are percentage points with 95% dataset-bootstrap intervals; positive values favor QCOC. Method M = 32 M = 64 
+
+Random +17 .15 [14 .74 , 19 .55] +11 .62 [9 .77 , 13 .53] 
+
+Input K-means +12 .13 [9 .88 , 14 .49] +6 .41 [5 .12 , 7.77] 
+
+LUCoS +11 .86 [9 .70 , 14 .07] +6 .44 [5 .16 , 7.82] 
+
+MICP +6 .29 [5 .02 , 7.65] +4 .29 [3 .38 , 5.36] 
+
+CRUMB +5 .01 [3 .79 , 6.38] +2 .70 [1 .80 , 3.77] 
+
+KATE +4 .46 [3 .38 , 5.65] +2 .22 [1 .24 , 3.38] 
+
+Standardized raw-space KNN +4 .17 [3 .03 , 5.43] +2 .11 [1 .19 , 3.18] 
+
+ARASH-style +6 .24 [5 .11 , 7.44] +4 .21 [3 .23 , 5.32] 
+
+Weighted joint-KV +1 .43 [0 .86 , 2.20] +1 .16 [0 .58 , 1.94] 
+
+Full context −0.83 [ −1.22 , −0.48] −0.52 [ −0.82 , −0.26] 
+
+## D Additional Baselines and Mechanism Diagnostics 
+
+Table 4 Additional row-selection baselines on the same 64 held-out CC18 datasets under the diagnostic protocol. LUCoS uses the released TabClustPFN encoder followed by K-Medoids; raw K-Medoids uses standardized inputs. Global MMD uses one query-distribution-matched context. Method M = 32 M = 64 
+
+Global row selection 
+
+Input K-means .7306 .7919 K-Medoids (Euclidean) .7475 .8009 K-Medoids (cosine) .7413 .7919 LUCoS (Euclidean) .7278 .7922 LUCoS (cosine) .7306 .7934 MMD herding .7509 .8006 
+
+KV compression 
+
+QCOC .8491 .8534 
+
+Expanding the global-selection family does not alter the main comparison: none of the representation- or input-space selectors closes the gap to QCOC . The ordering among selectors is not stable across representations, which also argues against attributing the result to one unusually weak global baseline. 
+
+Table 5 Context reuse accounting under the diagnostic protocol. “Passes” is the mean number of TabICL context fits for each dataset; “slots” sums the in-context examples used across those fits. QCOC stores no selected raw rows and instead uses M KV slots per layer and head. 
+
+M = 32 M = 64 
+
+Method Acc. Passes Slots Acc. Passes Slots 
+
+Dynamic row selection 
+
+MICP .7941 12.38 396 .8181 6.81 436 Centroid-nearest batching .8069 20 640 .8313 20 1280 Voronoi-uniform batching .8069 20 640 .8369 20 1280 CRUMB .8175 20 640 .8378 20 1280 KATE .8200 50 1600 .8416 50 3200 
+
+KV compression 
+
+QCOC .8491 1 0 raw .8534 1 0 raw 
+
+16 80.0 82.5 85.0 Accuracy (%) QCOC MICP CRUMB KATE QCOC MICP CRUMB KATE 
+
+a Accuracy  
+
+> 10 010 1
+> Context fits
+
+b Repeated context fits   
+
+> 0100 1k 3k Raw examples processed
+> 32 KV slots 64 KV slots
+
+c Raw-row processing Figure 4 Accuracy and context reuse. Rows align methods at M = 32 and M = 64 . A: Mean accuracy. B: 
+
+Mean number of context fits per dataset (log scale). C: Total raw in-context examples processed across those fits. QCOC processes no raw rows after compilation; its labels report the 32 or 64 retained KV slots rather than raw-row consumption. 
+
+Figure 4 shows that the retrieval baselines trade additional context fits for accuracy, whereas QCOC uses one compiled memory and remains above that frontier at both retained counts. The CRUMB variants further locate most of its improvement in query grouping rather than in replacing the selected rows alone. This supports reuse as a distinct deployment axis, rather than treating all methods with the same M as operationally equivalent. We additionally evaluate an ARASH-style reproduction following the published locality, purity, adaptive-budget, four-way retrieval, and direct-prediction logic [16]. The paper omits tuned thresholds and its meta-statistic rules for automatic clustering, so we fix standardized K-means, τloc = 0 .5, τpur = 0 .8, and 
+
+kmin = 8 . We label the result ARASH-style to distinguish it from an exact reproduction. It reaches .7953 with a mean 21.48 rows per query at maximum budget 32, and .8159 with 44.18 rows at maximum budget 64. The corresponding QCOC gains are 5.38 percentage points (95% CI [+4 .00 , +6 .78] ) and 3.75 percentage points ( [+2 .31 , +5 .16] ). We use these diagnostic results outside the primary comparison. 17 Table 6 Matched compression baselines on 64 CC18 datasets at M = 32 under the diagnostic protocol. Selection and merger choices are fixed before held-out evaluation. Intervals compare QCOC with the corresponding method. Method Accuracy Prob. MAE Attention MSE QCOC gain [95% CI] 
+
+Global row selection 
+
+Input K-means .7306 — — +.1184 [.0922,.1462] 
+
+Dynamic row selection 
+
+KATE .8200 — — +.0291 [.0137,.0444] 
+
+KV compression 
+
+Key centroids .7800 .10079 .008627 +.0691 [.0350,.1112] Key centroids + cluster size .8259 .05068 .003293 +.0231 [.0138,.0331] ToMe + cluster size .8222 .05718 .004650 +.0269 [.0150,.0391] KVMerger + cluster size .8187 .06258 .005153 +.0303 [.0172,.0438] Weighted joint-KV .8316 .04661 .003070 +.0175 [.0081,.0278] 
+
+QCOC .8491 .01715 .001491 —Full context .8538 — — −.0047 [−.0103 ,.0003] 
+
+Among matched direct-compression methods, restoring cluster mass accounts for the largest recovery over unweighted key centroids, and value fitting further reduces both fidelity errors while improving accuracy. This comparison supports the complete construction; the factorial analysis below is needed to separate the interacting roles of N and cluster-count weighting. 
+
+Table 7 Factorial component analysis at M = 32 . Mean results over 64 held-out CC18 datasets in the 50-query analysis setting. The last row in each block applies the same anchored value fit. “Use original N ” evaluates count-dependent query transformations at the original in-context example count; crossing it out evaluates them at the compressed slot count M . Attention MSE measures KV reconstruction on fixed attention query vectors from the in-context examples, scaled by N , and therefore does not measure changes in query scaling.                                                                    
+
+> Inputs Use original NCluster-count weight Value fit Acc. Prob. MAE Attention MSE Key only ×××.7581 .1329 .008627 Key only ✓××.7800 .1008 .008627 Key only ×✓×.7922 .1023 .003293 Key only ✓✓×.8259 .0507 .003293 Key only ✓✓✓.8469 .0210 .001641 Joint KV ×××.7428 .1752 .010907 Joint KV ✓××.6725 .2069 .010907 Joint KV ×✓×.8025 .0967 .003070 Joint KV ✓✓×.8316 .0466 .003070 Joint KV ✓✓✓.8491 .0171 .001491
+
+The factorial design shows that preserving the original count and restoring cluster mass are complementary rather than interchangeable corrections: either one alone leaves a substantial mismatch, especially for joint-KV prototypes. After both are fixed, value fitting provides a further 1.75-point gain for joint-KV prototypes (95% CI [+0 .81 , +2 .78] ). Joint-KV and key-only prototypes then have indistinguishable accuracy, but joint-KV lowers probability and attention errors on 55 and 63 of 64 datasets. The evidence therefore assigns the robust fidelity gain to joint-state construction and value fitting, while avoiding a separate accuracy claim for joint-KV clustering itself. 18 Joint-KV + preserve N
+
+& mass + value fit (QCOC) 70.0 72.5 75.0 77.5 80.0 82.5 85.0 87.5 Accuracy (%) 
+
+a Accuracy 
+
+Joint-KV + preserve N
+
+& mass + value fit (QCOC) 0.025 0.050 0.075 0.100 0.125 0.150 0.175 0.200 Probability MAE to Full 
+
+b Prediction fidelity Figure 5 Component-wise accuracy and fidelity. The stages are initial joint-KV prototypes, restoration of original N and cluster-count weighting, and anchored value fitting. A: Mean accuracy. B: Mean probability MAE to Full. Error bars are dataset-bootstrap 95% confidence intervals. Lines connect discrete constructions rather than intermediate optimization steps. 
+
+## E Evaluation on Additional Models and Tasks 
+
+TabPFN v3. We evaluate the pretrained TabPFN v3 version 8.2.0 on the same 64 held-out CC18 datasets with N ≤ 512 , M = 32 , a requested ensemble size of one, no parameter updates, and no additional tuning. TabPFN’s default feature-coverage rule automatically increases the ensemble size on high-dimensional datasets; this behavior is shared by all methods. Row-selection baselines retain the same examples selected in the TabICL experiment and delegate prediction to TabPFN, with KATE fitting a separate context for each query. When a KATE context contains no usable nonconstant feature and TabPFN rejects it, we return that context’s empirical class probabilities. For the direct baselines, we dequantize the explicit int8 cache and apply each compression method to the same full cache. For QCOC , compressed values are shared across the eight query heads associated with each KV head, and the compressed cache carries the original in-context example count into any active softmax-scaling layer. 
+
+Table 8 Matched baselines on TabPFN v3. Probability MAE and attention-output MSE apply only to direct cache-compression methods and measure error relative to dequantized full-context inference. The final column gives the paired QCOC-minus-baseline accuracy difference with a 95% dataset-bootstrap interval.                                                                 
+
+> Method Accuracy Prob. MAE ↓Attention-output MSE ↓∆accuracy Class-balanced random .6922 ——+.1528 [.1234,.1841] Input K-means .7184 ——+.1266 [.0937,.1613] LUCoS (Euclidean) .7244 ——+.1206 [.0897,.1525] LUCoS (cosine) .7366 ——+.1084 [.0784,.1406] MICP .7966 ——+.0484 [.0312,.0659] CRUMB .8263 ——+.0187 [.0066,.0312] KATE .8200 ——+.0250 [.0094,.0425] Key centroids .8350 .03883 .014916 +.0100 [.0019,.0184] Weighted key K-means .8353 .03397 .007718 +.0097 [.0022,.0181] Weighted ToMe .8319 .04053 .009107 +.0131 [.0053,.0219] Weighted KVMerger .8341 .04474 .009881 +.0109 [.0028,.0197] Weighted joint-KV .8397 .03667 .007234 +.0053 [ −.0019 ,.0125]
+> QCOC .8450 .01414 .004131 —Full context .8509 ——−.0059 [−.0109 ,−.0012 ]
+
+The transfer experiment reproduces the same qualitative ordering on a different prediction model: QCOC 
+
+19 separates clearly from row selection and from uncalibrated cache compression, while remaining close to Full. Its gain over weighted joint-KV is small and statistically unresolved, but its probability and attention errors are substantially lower. Thus the transferable result is the benefit of calibrating compressed values for full-cache fidelity; the experiment does not establish that joint-KV clustering alone improves TabPFN accuracy. 0 5 10 15 Input K-means MICP CRUMB KATE Key centroids Weighted joint-KV Full context 
+
+TabICL v2 diagnostic protocol    
+
+> 0510 15
+
+TabPFN v3 transfer protocol   
+
+> QCOC −baseline accuracy (pp), bootstrap 95% CI
+
+Figure 6 Cross-model accuracy comparison. Points show mean QCOC-minus-baseline accuracy differences and bars show 95% dataset-bootstrap intervals over the same 64 CC18 datasets. TabICL uses the diagnostic protocol and TabPFN the transfer protocol; both panels share the same horizontal scale. 
+
+E.1 Regression 
+
+We evaluate TabICL regression on all 13 TabArena-v0.1 regression datasets, using official OpenML repeats 0–2 and fold 0. Each split uses at most 1,024 in-context examples and 200 test rows. Lower normalized RMSE is better. 
+
+Table 9 TabArena regression over 13 datasets and three official splits per dataset. Lower normalized RMSE and higher R2 are better; bold marks the best compressed or retrieval method at each retained count. KATE uses the same encoder-space retrieval protocol as in classification. Budget Method Norm. RMSE ↓ R2 ↑
+
+32 Full context .4582 .7398 KATE .5261 .6728 Weighted joint-KV .5796 .6204 
+
+QCOC .5127 .6864 
+
+64 Full context .4582 .7398 KATE .4946 .7074 Weighted joint-KV .5488 .6515 
+
+QCOC .4883 .7101 
+
+On regression, QCOC consistently recovers much of the degradation introduced by direct weighted-KV compression at both retained counts. Its mean normalized RMSE is also lower than KATE’s, but those differences are statistically unresolved. The regression evidence therefore supports transfer beyond classification for direct cache compression, without claiming superiority over retrieval on this smaller benchmark. 20 F Iterative End-to-End Refinement 
+
+To test whether the layerwise closed-form attention-output match can be improved through the final prediction objective, we evaluate an iterative end-to-end extension. Starting from the M = 32 QCOC memory, we keep the model parameters, compressed keys, and cluster-count weights unchanged and update only the compressed values. Using 128 independent unlabeled calibration rows, we take centered logits from the full cache as teacher targets and minimize centered-logit MSE together with an anchor penalty to the closed-form solution. The learning rate, number of steps, and anchor weight are selected on three validation datasets and then fixed to 3 × 10 −4, 30, and 10 −4, respectively. Across ten validation datasets, iterative refinement increases mean accuracy from 88.60% to 89.20%, with a 2/8/0 win/tie/loss record; probability MAE decreases from 0.0201 to 0.0153, and centered-logit MSE from 0.3227 to 0.0442. The fidelity improvement does not consistently translate into higher long-context accuracy. On electricity , at N = 8 ,192 , probability MAE decreases from 0.1543 to 0.1076 while accuracy drops from 0.80 to 0.78; at N = 32 ,768 , probability MAE decreases from 0.2485 to 0.2029 and accuracy rises from 0.80 to 0.82, still leaving a gap to full context. The extension also introduces extra unlabeled data, backpropagation, and iterative hyperparameters. We therefore retain it as a fidelity diagnostic and optional extension, while the main paper uses the closed-form method that requires neither an additional calibration set nor gradient-based optimization. 
+
+## G Long-Table Results       
+
+> Table 10 Results for the seven CC18 long-table datasets listed in Appendix C. electricity and bank-marketing
+> use chronological holdouts; the other five use fixed stratified splits. All methods use 8,192 in-context examples and 1,000 test rows; compressed methods use M= 512 .
+
+Dataset Full Input K-means MICP CRUMB KATE Weighted KV QCOC 
+
+adult .871 .841 .850 .863 .859 .865 .870 bank-marketing .758 .740 .748 .739 .737 .763 .754 connect-4 .810 .734 .779 .770 .793 .762 .807 electricity .878 .880 .854 .869 .883 .880 .871 jungle chess .878 .809 .868 .885 .884 .868 .879 nomao .968 .943 .954 .960 .971 .959 .971 numerai28.6 .491 .508 .498 .497 .486 .488 .505 Macro .8077 .7793 .7930 .7976 .8019 .7979 .8081        
+
+> Table 11 Long-context accuracy and cache reduction. All results use N= 8 ,192 and M= 512 ; external-dataset accuracies average three splits. Cache reduction compares aggregate cache bytes with Full, not memory use against row-selection methods. Bold marks the best compressed method.
+
+Benchmark Full MICP CRUMB KATE Weighted KV QCOC Cache reduction CC18-Long (7 datasets) .8077 .7930 .7976 .8019 .7979 .8081 10.53 ×
+
+SUSY .8067 .7930 .7890 .7893 .7953 .8077 12.09 ×
+
+HIGGS .7167 .6803 .6853 .7007 .7090 .7110 10.94 ×
+
+Covertype .8580 .8130 .8157 .8530 .7707 .8153 9.03 ×
+
+21 Table 13 Single-core CPU serving milliseconds per query across all in-context example count and retained-count settings. Means are over the same seven datasets and input-size settings as Table 2. Rows are methods with a complete matched CPU serving sweep; each N block uses M = N/ 32 , N/ 16 , N/ 8 from left to right. Values use each method’s intended per-query, routed-batch, or fixed-batch execution and exclude selection and compilation.                                                                                                                                            
+
+> N= 512 N= 2 ,048 N= 4 ,096 N= 8 ,192
+> Method 16 32 64 64 128 256 128 256 512 256 512 1,024
+> Global row selection
+> Random 1.83 2.05 2.14 2.18 2.36 2.69 2.38 2.76 3.57 2.76 3.51 5.21 Input K-means 2.06 2.15 2.21 2.27 2.42 2.75 2.44 2.73 3.50 2.82 3.59 4.92 LUCoS 1.96 2.05 2.18 2.15 2.42 2.78 2.42 2.68 3.42 2.77 3.59 4.94
+> Dynamic row selection
+> MICP 3.50 3.01 2.71 6.26 5.99 5.91 9.69 9.52 10.30 16.88 18.47 18.84 CRUMB 3.31 4.40 5.76 5.14 7.76 13.53 7.69 12.94 26.36 12.32 25.88 55.68 KATE 77.98 113.54 179.58 153.57 263.09 503.66 252.17 478.20 997.97 453.82 971.21 2296.13 ARASH-style 76.29 90.35 123.18 121.45 199.26 324.15 171.34 318.77 598.07 284.68 531.65 1332.73
+> KV compression
+> Weighted joint-KV 1.94 1.95 1.97 1.96 1.98 2.01 1.87 1.93 2.00 1.92 1.94 2.15
+> QCOC 1.93 1.99 1.96 1.80 1.90 2.00 1.81 1.70 2.12 1.72 1.91 2.33 Full context 2.06 2.06 2.06 2.48 2.53 2.47 2.89 2.89 2.87 3.85 3.79 3.86
+
+Table 12 Memory-budget sweep on the same seven long tables. Cache compression is the ratio of aggregate full-cache bytes to aggregate QCOC cache bytes; it is not a comparison with row-selection memory. 
+
+M Accuracy Gap to Full Agreement Cache compression 256 .8056 −.0021 .9626 15.50 ×
+
+512 .8081 +.0004 .9751 10.53 ×
+
+1,024 .8069 −.0009 .9780 6.42 ×
+
+Across the seven long tables, value fitting sharply reduces probability error and raises mean accuracy, although the accuracy interval remains inconclusive at this sample size. The budget sweep is non-monotonic: increasing 
+
+M beyond 512 improves agreement with Full but not task accuracy. More slots therefore improve fidelity without necessarily correcting the remaining classification errors, and M = 512 gives the best observed accuracy–memory compromise. 
+
+## H In-Context Example/Memory Settings, Serving, and Compilation Time 
+
+Table 13 complements the accuracy matrix in Table 2 with single-core CPU serving time. Selection, embedding, clustering, and QCOC compilation are excluded. Fixed row baselines fit one selected context and process all 1,000 queries as a batch; MICP and CRUMB fit their routed contexts and batch the queries assigned to each; KATE and ARASH-style execute query-specific contexts; and KV methods reuse a prebuilt cache for one 1,000-query batch. Context-method timings are medians of three independent runs, while Full and KV methods average ten warmed predictions. To control CPU parallelism, we measure compilation and inference wall-clock time using one thread on an Intel Xeon 6767P CPU. Timing runs match the in-context example count, retained count, and query count of the accuracy evaluation. The serving curves have qualitatively different scaling. Because QCOC reuses a fixed M -slot cache, its online cost is nearly flat as the source context grows; Full continues to attend over N , while query-specific retrieval repeatedly constructs and executes a new context. The online advantage therefore comes from reuse and bounded attention length together, not from compression ratio alone. These measurements exclude one-time setup cost. Compilation grows steeply with context length and dominates the cost at the largest setting. Tables 13 and 14 therefore describe opposite sides of the deployment tradeoff: a substantial one-time investment buys a much 22 Table 14 QCOC single-core CPU compilation time (seconds). One run on the adult dataset per setting on an Intel Xeon 6767P, with M = N/ 16 . Times begin from the constructed full cache and include prototype construction, count estimation, and value fitting.         
+
+> Method 512 /32 2,048 /128 4,096 /256 8,192 /512
+> QCOC 1.86 21.01 74.36 283.40
+
+smaller reusable online state. Whether that investment is worthwhile depends on query volume. 23 I External Long-Table Details 
+
+The residual analysis asks whether a label-free reconstruction signal can expose failure of one shared memory. Across the ten long tables, larger attention-output residuals tend to coincide with larger losses relative to Full ( r = 0 .74 ). This association is useful as a diagnostic hypothesis, but the sample is too small to define a calibrated fallback threshold. 
+
+Table 15 External long-table accuracy by split. All runs use N = 8 ,192 , M = 512 , and 1,000 test queries. 
+
+Dataset Split Full QCOC KATE Weighted KV CRUMB MICP SUSY 1 .797 .797 .773 .774 .779 .780 2 .813 .813 .797 .812 .788 .795 3 .810 .813 .798 .800 .800 .804 Mean .8067 .8077 .7893 .7953 .7890 .7930 Covertype 1 .855 .821 .854 .782 .823 .815 2 .885 .835 .873 .788 .835 .827 3 .834 .790 .832 .742 .789 .797 Mean .8580 .8153 .8530 .7707 .8157 .8130 HIGGS 1 .727 .724 .724 .727 .695 .698 2 .698 .693 .668 .680 .663 .652 3 .725 .716 .710 .720 .698 .691 Mean .7167 .7110 .7007 .7090 .6853 .6803 
+
+The split-level results show two distinct behaviors rather than one noisy average. QCOC remains close to Full and matches or exceeds the retrieval baselines on all SUSY and HIGGS splits, whereas KATE consistently approaches Full more closely on Covertype. The Covertype gap is therefore a repeatable distribution-level failure of one shared memory, not an artifact of a single split. 
+
+Table 16 Covertype budget sensitivity. Means over three splits at N = 8 ,192 . Agreement is measured against Full, and ρ(M ) is the normalized attention-output residual defined in Appendix C. 
+
+M Accuracy Gap to Full Agreement ρ(M )
+
+512 .8153 −4.27 pt .8973 .511 1,024 .8317 −2.63 pt .9357 .467 
+
+Doubling the retained count reduces both the residual and the accuracy gap on Covertype, so the diagnostic moves in the expected direction. It recovers only part of the loss, however, showing that additional capacity mitigates but does not remove the mismatch between a single shared memory and this dataset’s local structure. 0.25 0.30 0.35 0.40 0.45 0.50 0.55 Normalized attention-output error ρ(M)    
+
+> −2
+> −1012345Full  − QCOC accuracy (pp)
+> electricity HIGGS Covertype
+> ●CC18 ■External n=10; r=0.74; bootstrap 95% CI [-0.20, 0.99]
+> Reconstruction residual versus accuracy loss
+
+Figure 7 Reconstruction residual and accuracy loss. Each point is one QCOC-compressed long table; circles denote seven CC18 tables and squares three external tables. The dashed line is a descriptive least-squares fit ( r = 0 .74 ;dataset-bootstrap 95% confidence interval [−0.20 , 0.99] ), not a confidence band or a calibrated decision rule. 
+
+24
