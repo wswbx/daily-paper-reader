@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-07</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-09</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 5 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 2 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>5</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>2</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-07 23:23:42 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-09 00:33:07 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天精读5篇，重点覆盖用Transformer合成物理公式与表格基础模型中的联合标签处理标准化问题。最值得看两篇9.0分论文：《Synthesizing Physics Formulae with Transformers》和《The Standardization Trap: Certifying Joint Label Processing in Tabular Foundation Models》。建议普通读者先读这两篇的摘要与结论，重点判断方法适用边界，再按兴趣跟进其余精读。</p>
+<p>今天精读两篇表格基础模型论文，最高分 9.0，主题集中在隐私保护分类与推理增强。</p>
+<p>最值得看的是《Efficient Provably Private Classification with a Tabular Foundation Model》给出的&quot;高效＋可证明隐私&quot;路线，以及《Thinking in Depth》提出的回溯式推理思路。</p>
+<p>普通读者可先读 9.0 分那篇了解隐私与效率如何兼顾，若对模型&quot;想得更深&quot;的机制感兴趣，再补 8.0 分那篇。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">5 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Synthesizing Physics Formulae with Transformers">Synthesizing Physics Formulae with Transformers</span></li><li><span class="dpr-home-dashboard-paper-title" title="The Standardization Trap: Certifying Joint Label Processing in Tabular Foundation Models">The Standardization Trap: Certifying Joint Label Processing in Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Evaluation of Active Feature Acquisition Policies with Tabular Foundation Models">Evaluation of Active Feature Acquisition Policies with Tabular Foundation Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Efficient Provably Private Classification with a Tabular Foundation Model">Efficient Provably Private Classification with a Tabular Foundation Model</span></li><li><span class="dpr-home-dashboard-paper-title" title="Thinking in Depth: Retrospective Inference for Tabular Foundation Models">Thinking in Depth: Retrospective Inference for Tabular Foundation Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>4</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
