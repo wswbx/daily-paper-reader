@@ -48,7 +48,7 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-10</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-11</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
     <strong class="dpr-home-dashboard-count">共 1 篇</strong>
@@ -58,7 +58,7 @@
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-10 22:13:23 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-11 23:13:29 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天精读 1 篇、速读 0 篇，重点锁定大模型用于科学方程发现的高分工作。</p>
-<p>最值得看的是 RISR 的思路——把&quot;残差信息&quot;引入 LLM 驱动的方程发现流程，9.0 的评分说明方法本身值得细读。</p>
-<p>普通读者可先抓住&quot;残差如何指导搜索&quot;这一条主线，再想想自己领域里拟合残差的规律能否照此迁移。</p>
+<p>今天精读 1 篇、速读 0 篇，主角是拿下 8.0 分的《Kernel Autoresearch for Open-Ended Model Discovery》。</p>
+<p>最值得看的方向是&quot;自动科研（autoresearch）+ 开放式模型发现&quot;，以及 kernel 方法在其中扮演的角色——8.0 的分数说明这篇值得优先读。</p>
+<p>普通读者不妨把它当作了解&quot;AI 帮忙做科研、找模型&quot;的入门样本，读时留意作者如何定义&quot;开放式的发现&quot;，再判断结论能推广到什么程度。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -83,9 +83,9 @@
     <strong class="dpr-home-dashboard-count">1 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="RISR: Residual-Informed Scientific Equation Discovery with Large Language Models">RISR: Residual-Informed Scientific Equation Discovery with Large Language Models</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Kernel Autoresearch for Open-Ended Model Discovery">Kernel Autoresearch for Open-Ended Model Discovery</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
