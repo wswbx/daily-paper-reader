@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-11</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-13</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 1 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>1</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-11 23:13:29 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-13 01:29:21 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,9 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天精读 1 篇、速读 0 篇，主角是拿下 8.0 分的《Kernel Autoresearch for Open-Ended Model Discovery》。</p>
-<p>最值得看的方向是&quot;自动科研（autoresearch）+ 开放式模型发现&quot;，以及 kernel 方法在其中扮演的角色——8.0 的分数说明这篇值得优先读。</p>
-<p>普通读者不妨把它当作了解&quot;AI 帮忙做科研、找模型&quot;的入门样本，读时留意作者如何定义&quot;开放式的发现&quot;，再判断结论能推广到什么程度。</p>
+<p>今日精读 4 篇论文，其中两篇拿下 9.0 分，聚焦表格基础模型。</p>
+<p>最值得看的是 GIST 用生成器状态信息做监督，以及&quot;表格基础模型实际很浅&quot;这一反直觉结论。</p>
+<p>普通读者可先读这两篇高分的，理解表格基础模型到底强在哪、又浅在哪。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +80,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">1 篇</strong>
+    <strong class="dpr-home-dashboard-count">4 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="Kernel Autoresearch for Open-Ended Model Discovery">Kernel Autoresearch for Open-Ended Model Discovery</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GIST: Generator-state-Informed Supervision for Tabular Foundation Models">GIST: Generator-state-Informed Supervision for Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Tabular Foundation Models Are Effectively Shallow">Tabular Foundation Models Are Effectively Shallow</span></li><li><span class="dpr-home-dashboard-paper-title" title="TabReliBench: Evaluating Tabular Foundation Models Beyond Predictive Accuracy">TabReliBench: Evaluating Tabular Foundation Models Beyond Predictive Accuracy</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>4</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
