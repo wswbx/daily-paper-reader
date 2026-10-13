@@ -54,11 +54,11 @@
     <strong class="dpr-home-dashboard-count">共 4 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
     <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-13 01:29:21 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-13 23:58:24 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读 4 篇论文，其中两篇拿下 9.0 分，聚焦表格基础模型。</p>
-<p>最值得看的是 GIST 用生成器状态信息做监督，以及&quot;表格基础模型实际很浅&quot;这一反直觉结论。</p>
-<p>普通读者可先读这两篇高分的，理解表格基础模型到底强在哪、又浅在哪。</p>
+<p>今日精读4篇，聚焦表格基础模型的两项9.0分研究。最值得看：GIST用生成器状态引导监督提升表格基础模型，另一篇则指出这类模型实际“有效深度”偏浅。普通读者可优先读这两篇，理解表格基础模型的监督方式与容量局限。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
