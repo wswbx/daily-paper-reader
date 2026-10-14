@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-10-13</span>
+      <span class="dpr-home-dashboard-kicker">2026-10-14</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 4 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 9 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
-    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>2 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>4</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>0</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>7</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>2</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-10-13 23:58:24 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-10-14 22:45:34 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,7 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今日精读4篇，聚焦表格基础模型的两项9.0分研究。最值得看：GIST用生成器状态引导监督提升表格基础模型，另一篇则指出这类模型实际“有效深度”偏浅。普通读者可优先读这两篇，理解表格基础模型的监督方式与容量局限。</p>
+<p>今日精读7篇、速读2篇，符号回归与表格基础模型成双主线。最值得看的是两篇满分符号回归工作：DASS 提出求解器自适应动态辅助搜索，另一篇用多样先验加后训练对齐提升神经符号回归。普通读者可先读这两篇，再顺带了解 TabGift 和 RT-J 在表格数据生成与关系型预测上的高效思路。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -78,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">4 篇</strong>
+    <strong class="dpr-home-dashboard-count">7 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="GIST: Generator-state-Informed Supervision for Tabular Foundation Models">GIST: Generator-state-Informed Supervision for Tabular Foundation Models</span></li><li><span class="dpr-home-dashboard-paper-title" title="Tabular Foundation Models Are Effectively Shallow">Tabular Foundation Models Are Effectively Shallow</span></li><li><span class="dpr-home-dashboard-paper-title" title="TabReliBench: Evaluating Tabular Foundation Models Beyond Predictive Accuracy">TabReliBench: Evaluating Tabular Foundation Models Beyond Predictive Accuracy</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="DASS: A Solver-Adaptable Dynamic Auxiliary Search Strategy for Symbolic Regression">DASS: A Solver-Adaptable Dynamic Auxiliary Search Strategy for Symbolic Regression</span></li><li><span class="dpr-home-dashboard-paper-title" title="Improving Neural Symbolic Regression with a Diverse Prior and Post-training Alignment">Improving Neural Symbolic Regression with a Diverse Prior and Post-training Alignment</span></li><li><span class="dpr-home-dashboard-paper-title" title="TabMF: Learning Dataset Representations with Tabular Foundation Models">TabMF: Learning Dataset Representations with Tabular Foundation Models</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>4</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">sr <strong>3</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>3</strong></span><span class="dpr-home-dashboard-tag">ar <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -91,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">0 篇</strong>
+    <strong class="dpr-home-dashboard-count">2 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p class="dpr-home-dashboard-empty">今日暂无推荐。</p>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="TabGift: A Context-Efficient Foundation Model for Tabular Data Generation">TabGift: A Context-Efficient Foundation Model for Tabular Data Generation</span></li><li><span class="dpr-home-dashboard-paper-title" title="RT-J: Large-Scale Pretraining of Relational Transformers for Context-Efficient Predictions">RT-J: Large-Scale Pretraining of Relational Transformers for Context-Efficient Predictions</span></li></ul>
   </div>
-
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">tabular-fm <strong>2</strong></span></div>
 </section>
 </div>
 
