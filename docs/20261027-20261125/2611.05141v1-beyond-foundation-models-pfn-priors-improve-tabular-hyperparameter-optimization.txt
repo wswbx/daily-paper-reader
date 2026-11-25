@@ -1,0 +1,3057 @@
+Beyond Foundation Models: PFN Priors
+Improve Tabular Hyperparameter
+Optimization
+Artem Chistyakov*,1,2, Renat Sergazinov*,2, Artem Babenko2,1
+1HSE University, 2Yandex
+Abstract
+Synthetic priors have so far served one purpose: pretraining tabular foundation
+models. We ask whether the same priors can improve conventional tabular models,
+which are trained from scratch on each dataset. We propose PriorTune, a method
+that meta-tunes hyperparameter configurations on synthetic tasks alone. Offline,
+for a given model, we fit a pool of configurations on datasets sampled from a
+published PFN prior and greedily select the subset with the highest winrate over the
+random baseline. Online, a new dataset fits only the selected configurations, so the
+gain comes at no extra cost. Empirically, we observe that scaling both the number of
+configurations and synthetic datasets has an equal scaling effect on the performance
+of the final subset of configurations, which we also explain theoretically. On the full
+BeyondArena benchmark, LightGBM with TabPrep features with our configurations
+ranks above TabPFN-3 and RealMLP, while being much more efficient at inference.
+Overall, our results establish existing PFN priors as a scalable source of meta-
+training data for hyperparameter selection for non-foundational tabular models.
+Code | Results
+1. Introduction
+Synthetic data drives the development of tabular foundation models. Since TabPFNv1 [1],
+every generation has come with a richer prior: TabPFNv2 added new edge types to the
+causal graph sampler [2], TabICLv2 added heavy-tailed random graphs and a filter on the
+generated datasets [3], and TabPFN-3 scaled the generated datasets to a million rows [4].
+To date, these priors have mostly served one purpose: pretraining PFNs.
+Conventional models, which are trained from scratch on each dataset, have no direct way
+to use these priors. For such models, e.g. GBDTs and DNNs, hyperparameter selection is
+the natural way for transferring knowledge across tasks. TabRepo demonstrates that a set
+of hyperparameter configurations selected on approximately 200 real datasets transfers
+effectively to unseen datasets [5]. Similarly, RealMLP identifies strong MLP architecture and
+training defaults through meta-tuning on 118 real datasets [6]. Both rely on a small, fixed
+collection of real datasets, which caps the scale and diversity of the meta-training tasks.
+This raises a natural question: can datasets sampled from a PFN prior surpass real datasets
+when learning transferable sets of hyperparameter configurations? To test this, we sample
+4000 synthetic datasets from TabICLv2 prior, evaluate 4000 hyperparameter configurations
+on them, and propose a new algorithm to select K best-performing configurations. On a
+new dataset, we only train the selected subset of K configurations, so the meta-tuning gains
+transfer for free.
+∗Equal contribution. Correspondence to artemchistyakov03@gmail.com and mc.sergazinov@gmail.com.
+1
+arXiv:2611.05141v1  [cs.LG]  3 Nov 2026
+
+
+800
+900
+1000
+1100
+1200
+1300
+1400
+1500
+Elo
+Kumo-Tabular
+Kumo-Tabular-Medium
+Kumo-Tabular-Small
+LightGBM-TabPrep FTE
+LightGBM-TabPrep FT
+RealMLP
+TabPFN-3
+LightGBM-TabPrep
+TabPack FTE
+MLP FTE
+TabM
+LightGBM FTE
+TabPack
+CatBoost
+MLP FT
+TabICLv2
+LightGBM FT
+MLP
+LightGBM
+Default
+Tuned
+Tuned + Ensembled
+0.2
+0.5
+1
+2
+5
+10
+20
+50 100 200
+5001000
+10000
+Inference latency, batch size 1 (ms per row)
+1150
+1200
+1250
+1300
+1350
+1400
+1450
+Elo
+D
+T
+T+E
+recompute
+KV cache, GPU
+KV cache, CPU
+baseline
+FT
+FTE
+Pareto front
+LightGBM-TabPrep
+LightGBM
+MLP
+TabPack
+Published
+Figure 1 | Full BeyondArena. Left: Elo under default, tuned, and tuned-and-ensembled deployment.
+Our families are coloured; FT (half-colored) and FTE (full-colored) are the subsets meta-tuned under
+T and T+E. Right: Elo against inference latency at batch size 1. GBDTs run on 16 CPU threads,
+and DNNs and PFNs on one GPU. For PFNs, we run with recompute (light grey), KV cache on CPU
+(medium grey), on GPU (dark grey). Protocol in Appendix A.1.4.
+We study four efficient tabular models: LightGBM [7], LightGBM with TabPrep [8], an
+MLP with cosine embeddings [9], and TabPack [10]. These four models are near the
+efficiency-performance Pareto frontier (Figure 1). We use the TabICLv2 prior, with TabPFNv1
+and TabICLv1 in ablations, and evaluate transfer on TabArena’s 51 IID datasets [11] and
+BeyondArena’s 142 datasets with diverse splitting protocols [12].
+As a source of meta-training tasks, synthetic priors have three advantages over real datasets.
+First, supply is unlimited and quality is controllable. Real repositories plateau: on TabRepo’s
+182 datasets, adding configurations stops helping, whereas on synthetic tasks neither the
+number of tasks nor the number of configurations has saturated at 4,000 (Section 5).
+Second, synthetic priors can be continuously improved: foundational model have shown that
+improving priors yields better model performance. Third, synthetic tasks rule out test-set
+contamination by construction. Real data needs an overlap audit: for TabArena, we removed
+18 of the 200 TabRepo datasets.
+The contributions of this paper are as follows:
+1. Meta-tuning hyperparameters on synthetic data. We show that existing PFN priors
+can improve conventional tabular models through offline hyperparameter selection.
+Per dataset, real tasks help more, but synthetic tasks scale: given equal budget (config-
+urations × datasets), hyperparameters selected on 4000 synthetic datasets outperform
+those selected on 182 real TabRepo datasets for every model and every K.
+2. Improved tuning on real datasets. On both TabArena and BeyondArena, the selected
+sets of configurations outperform random sets of the same size. On TabArena, they also
+outperform random sets of any size, so meta-selection improves both the quality and
+the efficiency of downstream tuning. On BeyondArena, our LightGBM-TabPrep ranks
+7th of 58 methods, ahead of TabPFN-3 and behind only recent foundation models.
+3. An analysis of scaling and prior choice. We investigate how the quality of the
+configuration set depends on the number of synthetic tasks, the candidate pool size,
+and the generating prior, and derive a transfer bound and a record-count argument that
+motivate the observed scaling forms. Scaling number of datasets and configurations
+keeps paying off at 4,000, whereas the choice of prior appears secondary: even the
+TabPFNv1 prior is competitive with TabICLv2.
+2
+
+
+Offline meta-tuning on synthetic data
+Online
+Synthetic prior Q
+e.g. TabICLv2
+N synthetic tasks
+train / val / test
+Fit pool C
+C configs, fit once
+Greedy selection
+×K
+vs. random
+subset
+add the
+winner
+deploy with T or T+E
+Subset S
+|S| = K
+Figure 2 | Overview. Offline, we sample hyperparameter configurations from a pool C, fit them
+on N synthetic tasks, and greedily select a subset of K by win rate over random subsets under the
+given deployment rule. Online, we fit the K selected configurations once per task.
+2. Related Work
+Transfer of hyperparameter configurations. Good hyperparameter configurations typ-
+ically transfer across datasets. Feurer et al. [13] warm-start Bayesian optimization with
+configurations that performed well on similar datasets. Later work drops the similarity
+and learns one fixed set for all datasets: given a table of scores for every configuration on
+every dataset, greedily add the configuration that most improves the average best-member
+score over datasets [14–16]. TabRepo scales this offline selection to 1,310 configurations
+on 200 datasets, and AutoGluon 1.0 ships the learned set as its default [5, 17]. RealMLP
+meta-learns several model components (e.g. preprocessing, activations) on 118 datasets [6].
+All of this work is bounded by the supply of real data, 25 to 208 datasets. TabRepo reports
+a saturating effect around 150 datasets or configurations. We keep the greedy forward
+selection, but run it on synthetic tasks, whose supply is unlimited, and change the scoring
+function (Section 3.4).
+A second line transfers knowledge into the optimizer rather than into a set of configurations.
+One line of work fits the Gaussian-process prior on evaluations from previous tasks [18–22].
+OptFormer pre-trains a text transformer on optimization logs [23]. Recent works such as
+PFNs4BO and its successors, pretrain PFNs on synthetic optimization tasks [24–27]. All of
+these search sequentially and need the surrogate model at tuning time. Our configuration
+set is built once offline and can be evaluated in parallel.
+Synthetic priors for tabular data. Synthetic priors are the engine of tabular foundation
+models. Among others, the recent TabPFN, TabICL, Mitra, LimiX, Xiaomi-TabLDM, Causilo,
+and EXAONE Tabular are pretrained on synthetic tables alone [1–4, 28–33]. A typical
+synthetic prior has three parts: a directed graph over variables, an edge function that
+maps parents to a child, and an observation process. Graphs are random DAGs in TabPFN,
+Cauchy random graphs with varied connectivity in TabICLv2, and hierarchical causal models
+in LimiX. Edge functions started as small neural networks and grew to include decision
+trees and discretization in TabPFNv2, tree ensembles in TabICL, and Gaussian processes,
+polynomials, and products in TabICLv2 [2, 33]. Related in spirit, recent work distills a
+PFN into a tree ensemble or an MLP on a given dataset [34, 35]. However, distillation
+requires PFN during the training phase and has yet to demonstrate significant performance
+improvements.
+3. Method
+In this section, we present PriorTune, a method for meta-tuning strong hyperparameter
+configurations of conventional tabular models on synthetic data (Figure 2). Offline, we
+sample N tasks from a synthetic prior Q (Section 3.2), fit a pool C of C configurations once
+per task (Section 3.3), and greedily select K of them (Section 3.4). Online, a real task
+3
+
+
+Algorithm 1 PriorTune subset selection
+Require: cached validation and test predictions of every c ∈C on synthetic tasks
+D1, . . . , DN; subset size K; number of draws R; deployment rule E ∈{T, T+E} equa-
+tion 1
+1: Draw references R1, . . . , RR ∼Unif(ΠK) and, for every task i, bootstrap resamples
+D(1)
+val,i, . . . , D(R)
+val,i of its validation rows
+2: S0 ←∅
+3: for k = 1, . . . , K do
+4:
+for each candidate c ∈C \ Sk−1 do
+5:
+# deploy both with E on resample r, score on test; h(a, b) = 1a<b + 1
+21a=b
+6:
+eU(c) ←
+1
+NR
+N
+∑
+i=1
+R
+∑
+r=1
+h
+(
+L(r)
+i (Sk−1 ∪{c}), L(r)
+i (Rr)
+)
+7:
+end for
+8:
+ck ←arg maxc eU(c), ties broken by the lowest configuration id
+9:
+Sk ←Sk−1 ∪{ck}
+10: end for
+11: return SK
+fits only the K selected configurations and deploys them by validation, either the best one
+(tuned) or a greedy ensemble (tuned and ensembled).
+3.1 Setup
+Notation. We consider regression and classification on tabular data. We denote the synthetic
+data generator by Q and a dataset by D. The loss ℓis the native metric of the task, oriented
+so that lower is better: RMSE for regression, log-loss for multiclass, and 1−ROC-AUC for
+binary classification, as in TabArena and BeyondArena. We split each dataset into train,
+validation, and test subsets Dtrain, Dval, Dtest.
+Benchmarks. We use TabArena [11] and BeyondArena [12], which together cover 155
+to 1.3 million rows, 3 to 22,215 features, and i.i.d., grouped, and temporal splits. Table 2
+summarizes both suites. The main results (Section 4) use the full BeyondArena with every
+outer train-test split. The ablations of Section 5 use TabArena-Lite, the first train-test split.
+Each split has up to 8 inner train-validation splits. No benchmark data enters the selection.
+3.2 Synthetic data generation
+For all main experiments, we sample tasks from the TabICLv2 prior [3]. Three settings of
+the prior matter most, and we keep them close to the third pretraining stage of TabICLv2.
+Dataset size is log-uniform between 400 and 60,000 rows. The feature count is uniform
+between 1 and a cap that falls from 100 to 20 as the row count grows. The sampled datasets
+are filtered using both of the available filters: reject if the target node of the graph shares
+no ancestors with feature nodes, and reject if ExtraTrees cannot beat the constant predictor.
+We fix the task mix at 2,000 regression, 1,400 binary, and 600 multiclass datasets with 3
+to 10 classes, and split each dataset 64/16/20 into train, validation, and test, stratified for
+classification. Appendix A.3 lists all settings.
+4
+
+
+3.3 Models
+For our main runs, we use LightGBM [7], LightGBM with TabPrep [8], MLP with cosine
+embeddings [9], and TabPack [10]. We select these models for their tradeoff between
+training and inference speed and performance (Figure 1). Each configuration in the pool C
+with C = 4,000 is an independent draw from the model’s published search space, which
+we list in Appendix A.2. TabPack is a packed ensemble of MLPs, so its unit of sampling is a
+single MLP configuration: it shares the pool of C = 4,000 MLP configurations, from which
+we select its K = 64 members.
+3.4 Subset selection
+The selection mimics the deployment rule and scores against random subsets of the same
+size. Following TabArena and BeyondArena, we distinguish two deployment rules: tuned
+(T), where the validation-best member is deployed, and tuned and ensembled (T+E), where
+validation builds a greedy ensemble [36]. We implement the whole procedure as a greedy
+forward selection algorithm: at each iteration starting from an empty set, we add a configu-
+ration, score it under the given deployment rule, and select the one that yields the highest
+winrate against the random subset (Algorithm 1). Appendix B states the objective formally.
+Below we motivate each choice on a small example (see Section 5.1 for ablation).
+Table 1 gives a toy instance under the tuned rule: four configurations A to D, three synthetic
+tasks D1 to D3 for selection, one held-out task D4 standing for a real dataset, and a subset
+size of K = 2.
+Selecting on validation, scoring on test. Under both deployment rules, the model (or
+ensemble) is selected on the validation split and scored on the test split. Our objective mimics
+this, which selects configurations that are stable across validation and test. The alternative,
+selecting on test directly or on a single out-of-fold score as TabRepo and AutoGluon do
+[5], hides that instability. In Table 1, A and D are unstable: their validation and test losses
+disagree on most datasets, whereas B and C are stable. Both selections pick B first, then
+diverge: test-only selection returns {B, A}, validation-then-test returns the stable {B, C}.
+On the held-out D4, {B, A} deploys A and loses; {B, C} deploys C and wins.
+Comparing against the random baseline. The alternative is to use losses directly: TabRepo
+adds the configuration that most lowers the mean error of the best member over datasets
+[5]. Raw losses mix metrics and scales across tasks. In Table 1, any rule on raw losses selects
+Table 1 | A toy example under the tuned rule. Four configurations, three synthetic datasets D1–D3
+used for selection (D1 scored by RMSE, the rest by log-loss) and one held-out dataset D4 (log-loss).
+Cells are validation / test losses (lower is better); the last row is the test loss of the deployed member
+of a random reference subset. We select a subset of K = 2 from the empty set.
+D1
+D2
+D3
+D4, held out
+Configuration
+val
+test
+val
+test
+val
+test
+val
+test
+A
+105
+103
+0.28
+0.36
+0.60
+0.45
+0.38
+0.47
+B
+96
+96
+0.30
+0.31
+0.53
+0.53
+0.41
+0.41
+C
+95
+97
+0.34
+0.34
+0.55
+0.55
+0.40
+0.40
+D
+60
+60
+0.29
+0.40
+0.52
+0.60
+0.39
+0.50
+Random reference
+–
+100
+–
+0.32
+–
+0.50
+–
+0.42
+5
+
+
+1100
+1200
+1300
+Elo
+Task
+Scale
+Dimensionality
+Features
+Tuned (T): FT subsets
+−50
+0
+50
+Gain over
+random (Elo)
+FT subset minus random subset, same model and rule
+1100
+1200
+1300
+1400
+1500
+1600
+Elo
+Tuned + ensembled (T+E): FTE subsets
+IID
+N = 103
+Grouped
+N = 18
+Temporal
+N = 21
+Tiny
+N = 52
+Small
+N = 38
+Medium
+N = 30
+Large
+N = 22
+Low
+N = 91
+High
+N = 51
+Text
+N = 16
+High card.
+N = 30
+All
+N = 142
+0
+50
+Gain over
+random (Elo)
+FTE subset minus random subset, same model and rule
+Kumo-Tabular
+RealMLP
+LightGBM-TabPrep
+TabPack
+MLP
+LightGBM
+Figure 3 | Elo on the full BeyondArena by dataset group. Top: tuned (T), our models with their
+FT subsets. Bottom: tuned and ensembled (T+E), our models with their FTE subsets. Under each
+panel, the bars show the Elo gain of each meta-tuned subset over the same model with its random
+subset.
+D first, since it cuts the RMSE on D1 by 36 points, which outweighs every other gain in the
+table, but D has the worst test loss on every other dataset. Ranking objectives are preferred
+over regression objectives for the same reason in offline model-based optimization [37].
+Stability. The third design choice is to resample both the validation split and the random
+reference. A single validation split decides which member is deployed: in Table 1, C beats B
+on the validation split of D1 by one RMSE point, and another validation sample may deploy
+B instead. We therefore draw R = 16 bootstrap resamples of the validation rows, paired
+with R independent random references Rr; with cached predictions the cost is negligible,
+and averaging over references is unbiased with variance O(1/R) (Proposition 4).
+4. Main results
+Setup. We evaluate on the full BeyondArena core (142 datasets) under the benchmark’s
+protocol: every outer train-test split, 8-fold bagging within each, native metrics, and K = 25
+configurations per dataset (the official budget). TabPack fits its K = 64 members. FT and
+FTE denote the subsets meta-tuned for T and T+E. A random subset has 25 draws from
+the same search space. We rank methods by Elo, which counts pairwise wins and losses
+against all other methods. Figure 3 reports Elo within each BeyondArena dataset group.
+Appendix A.4.1 reports alternative metric, the median improvement over the tuned MLP.
+State of the art and gains over random subsets. Under T, LightGBM-TabPrep with its FT
+subset has the highest Elo of all tuned methods (Figure 1). Under T+E, LightGBM-TabPrep
+6
+
+
+0.575
+0.600
+0.625
+R = 16 (ours)
+R = 8
+R = 4
+R = 2
+R = 1
+Validation only
+Reference only
+Neither
+Normalized error
+Counts
+Draws R
+Resampling kept
+TabRepo algorithms
+LightGBM
+0.58
+0.60
+0.62
+0.64
+Win rate vs. random-K on held-out synthetic tasks (±1.96 SE)
+LightGBM-TabPrep
+0.60
+0.65
+0.70
+MLP
+K = 25
+K = 64
+K = 200
+Figure 4 | Selection rules, synthetic out-of-fold, T deployment. Each of 200 repetitions selects on
+3,000 random synthetic tasks and deploys on the other 1,000. Points are win rates against random-K
+baselines that no selection saw, ±1.96 standard errors over repetitions; the shaded row is our rule.
+Values in Table 10.
+with its FTE subset ranks 7th, above RealMLP and TabPFN-3. The 6 methods above it
+are pretrained foundation models: TabPFN-3.5 (fast and regular), Causilo, and 3 sizes of
+Kumo-Tabular [38] (Figure 10 in the appendix shows the full leaderboard). Across groups
+(Figure 3), LightGBM-TabPrep leads RealMLP on small and medium datasets, and RealMLP
+leads on tiny and large datasets and on text features. Compared to Kumo-Tabular, LightGBM-
+TabPrep loses on i.i.d. splits and on tiny to medium datasets, but leads it on grouped and
+temporal splits and on large datasets (1313 against 1183 Elo). The bars of Figure 3 show
+the gain of each meta-tuned subset over its random subset. LightGBM-TabPrep gains in
+every group, by 21 to 72 Elo under T+E and by 5 to 76 under T. The other models gain 5
+to 28 Elo overall, but lose to their random subsets in some groups, most often on grouped
+and temporal splits. These gains cost nothing at deployment, and Section 5.3 shows that,
+on TabArena, random subsets of any size up to the full pool of 4,000 do not close the gap.
+Accuracy and inference cost. The right panel of Figure 1 plots Elo against the latency of a
+single-row prediction. Each PFN appears in three modes: recompute, and a key-value (KV)
+cache kept on the CPU or on the GPU. Up to 1313 Elo, the Pareto front consists of LightGBM,
+CatBoost, TabPack, and LightGBM-TabPrep. LightGBM-TabPrep with its FTE subset under
+T+E reaches 1313 Elo at 4.4 ms. The references with a similar Elo are 2.6 to 740 times
+slower: RealMLP under T+E reaches 1297 Elo at 11 ms, TabPFN-3 1279 at 243 to 3,308 ms,
+and TabICLv2 1215 at 102 to 1,412 ms. Above 1313 Elo, the front consists of the 3 sizes of
+Kumo-Tabular with a KV cache, from 1361 Elo at 81 ms to 1455 Elo at 236 ms. Meta-tuning
+changes only which configurations are fitted, so the latency stays within a factor of 1.8 of
+the random subset.
+5. Ablations
+All ablations use subsets selected under T and report the win rate of the meta-tuned subset
+against random subsets of the same size on TabArena (details in Appendix A.1.2). We
+use T because T+E selection runs a Caruana ensemble per candidate at every step, which
+is expensive. TabPack is absent: it is an online ensemble of MLP members, so the MLP
+configurations cover it. The main text shows K = 200, TabArena’s default tuning budget,
+and we include K = 25, 64 in Appendix A.4.
+7
+
+
+215
+218
+221
+224
+Budget B = C ⋅N
+0.50
+0.55
+0.60
+0.65
+Win rate vs. random-200
+LightGBM
+215
+218
+221
+224
+Budget B = C ⋅N
+LightGBM-TabPrep
+215
+218
+221
+224
+Budget B = C ⋅N
+MLP
+Synthetic
+TabRepo (182 datasets, 16,000 configs)
+Figure 5 | TabArena, T deployment, win rate against a random subset of the same size. Synthetic
+versus TabRepo meta-training data at K = 200. Dots are (C, N) cells; lines are the best cell within
+each factor-of-two budget bin. For TabRepo (182 datasets), we evaluated 16,000 configurations, so
+its curve stops at B = 16,000 × 182.
+5.1 Selection rule
+Figure 4 ablates the choices of Section 3.4. To avoid potential data leak, we evaluate
+out-of-fold on synthetic tasks: randomly select 3,000 datasets, deploy under T on the other
+1,000, repeat 200 times. All rules choose from the same 4,000 configurations and are scored
+against the same random-K baselines (Appendix A.1.2.1).
+Comparing to TabRepo. The TabRepo algorithm scores the best member of a subset directly,
+with no validation-then-test step, so we give it one score per task on the joined validation and
+test rows. We replace the raw loss with TabRepo’s normalized error, (ℓ−ℓbest)/(ℓmedian−ℓbest)
+clipped to [0, 1] per task [5], which removes the metric scale. From the empty set, each step
+adds the configuration that minimizes the mean over tasks of the best normalized error
+in the subset. It trails R = 16 for every model and K, by 0.010 to 0.038: even with the
+scale gone, the loss shape steers the selection into suboptimal regions. A naive improvement
+is to count instead the tasks on which a candidate improves the best member (i.e., a win
+rate against the current subset). The improved version beats the base in all nine cases,
+by 0.004 to 0.017. However, it still trails R = 16 by 0.014 to 0.024 for LightGBM and
+LightGBM-TabPrep, where scoring the best member hides configurations whose validation
+rank does not hold on test, and ties it on the MLP (−0.003 to +0.003).
+Resampling validation and references. The plain hill-climb, with one validation split
+and one reference, trails R = 16 by 0.014 to 0.031. If we resample (16 times) just the
+validation, we close 60 to 84% of the gap. If we resample just the random references, we
+close 41 to 62%. Both matter, but validation noise appears to matter more. The win rate
+rises monotonically in R for every model and K: by 0.015 to 0.030 from R = 1 to R = 16,
+most at K = 200.
+5.2 Synthetic versus real meta-training data
+TabRepo [5] is the standard real-data source for meta-tuning: 200 datasets, of which we
+drop 18 that overlap with or share a source with TabArena (listed in Appendix A.4). We fit
+16,000 configurations (our pool of 4,000 and 12,000 further draws) on the 182 datasets and
+select on them with the same protocol. Figure 5 compares the two sources at equal budget
+B = C · N. Per task, real data is worth more at smaller budgets: up to 218 subsets selected
+8
+
+
+1
+10
+100
+1000
+Random subset size K0
+0.2
+0.4
+0.6
+Win rate vs. random-200
+K0 = K
+LightGBM
+1
+10
+100
+1000
+Random subset size K0
+K0 = K
+LightGBM-TabPrep
+1
+10
+100
+1000
+Random subset size K0
+K0 = K
+MLP
+Random K0 of 16,000 (mean, 95% of 200 draws)
+Meta-tuned K (synthetic)
+Meta-tuned K (TabRepo)
+Figure 6 | TabArena, T deployment, K = 200. Random subsets of growing size K′ against the
+random-K baseline. Solid curve and band: mean and 95% CI over 200 random subsets of size
+K′. Horizontal lines are the K configurations meta-tuned on all 4,000 configurations, with 4,000
+synthetic tasks or the 182 TabRepo datasets, averaged against the same baselines.
+on the synthetic data show lower win rates, but from 219 to 220 on, synthetic data overtakes
+TabRepo. TabRepo saturates: over its last two doublings, to 16,000 configurations, its curve
+gains at most 0.008. We attribute this to the TabRepo size: with 182 datasets, the subsets
+start to overfit the source datasets. Synthetic data allows us to sidestep this, because we
+can continue scaling the data size indefinitely: at 224 it ends 0.02 to 0.08 above TabRepo’s
+best for every model and every K. At K = 25 and 64 the crossover lies between 220 and 222
+(Appendix A.4).
+5.3 Meta-tuning versus more random search
+A cheaper alternative to meta-tuning is to fit more random configurations. Figure 6 scores
+random subsets of size K′ against the random-K baseline (details in Appendix A.1.2.3).
+The mean curve rises, peaks at 0.50 to 0.53 for K′ between 500 and 750, and falls to 0.49
+to 0.51 at K′ = 4,000: larger random subsets overfit the validation split. At K = 25 and 64,
+the mean curve peaks higher, at 0.51 to 0.60, but the meta-tuned subset still sits at least
+0.07 above it (Appendix A.4). For a practitioner with a fixed budget, the 200 meta-tuned
+configurations replace a random search over 4,000 configurations that fits twenty times
+more models and still scores lower on average.
+5.4 Choice of prior
+We repeat the selection on synthetic tasks from the TabICLv1 [28] and TabPFNv1 [1]
+priors (Appendix A.3), with 2,000 configurations on 2,000 datasets for LightGBM, LightGBM-
+TabPrep, and the MLP (Figure 7). With all 2,000 configurations and tasks, the prior matters
+most for plain LightGBM: TabICLv2 leads at every K, by up to 0.09 over TabPFNv1 (0.644
+against 0.551 at K = 25). With TabPrep, the three priors are within 0.02 of each other at
+every K. For the MLP, TabICLv2 wins at K = 25 and 64 and TabPFNv1 at K = 200. No prior
+wins everywhere, and the prior of TabPFNv1 appears to be competitive. We use TabICLv2,
+the newest prior, for the main experiments.
+5.5 Scaling
+Figure 8 shows the win rate over the full (C, N) grid. It rises at almost every step along
+both axes, and neither axis has saturated at 4,000. Appendix B motivates two forms: the
+9
+
+
+300
+600
+1200
+Configurations C (N = 2000)
+0.50
+0.55
+0.60
+0.65
+LightGBM
+300
+600
+1200
+Configurations C (N = 2000)
+LightGBM-TabPrep
+300
+600
+1200
+Configurations C (N = 2000)
+MLP
+200
+400
+800
+1600
+Synthetic datasets N (C = 2000)
+0.50
+0.55
+0.60
+0.65
+200
+400
+800
+1600
+Synthetic datasets N (C = 2000)
+200
+400
+800
+1600
+Synthetic datasets N (C = 2000)
+Win rate vs. random-200
+TabICLv2
+TabICLv1
+TabPFNv1
+Figure 7 | TabArena, T deployment, win rate against a random subset of the same size, K = 200.
+Three priors, each with 2,000 configurations on 2,000 synthetic tasks, for LightGBM, LightGBM-
+TabPrep, and the MLP. Top: as C grows at N = 2,000; bottom: as N grows at C = 2,000. Win rates
+are averaged over 2,000 repetitions.
+300
+500
+1000
+2000
+4000
+Configurations C
+200
+300
+400
+500
+750
+1000
+1500
+2000
+3000
+4000
+Synthetic datasets N
+LightGBM
+300
+500
+1000
+2000
+4000
+Configurations C
+LightGBM-TabPrep
+300
+500
+1000
+2000
+4000
+Configurations C
+MLP
+0.52
+0.54
+0.56
+0.58
+0.60
+0.62
+0.64
+Win rate vs. random-200
+Figure 8 | TabArena, T deployment, win rate against a random subset of the same size over the
+(C, N) grid, K = 200. Win rates are averaged over 2,000 repetitions.
+estimation error over N synthetic tasks decays as 1/
+√
+N (Proposition 2), and the number of
+improvements available in a pool grows as log C (Proposition 1). We fit both forms to the
+curves at C = 4,000 and N = 4,000 and obtain R2 between 0.92 and 1.00 for a −b/
+√
+N
+and between 0.90 and 0.98 for a + b log2 C, over all three models and all K. In Figures 17
+and 18 in the appendix, the curve in C is steeper than the curve in N for every model: at
+K = 200, a doubling of C is worth 1.2 to 1.7 doublings of N, and the curve in N tends
+to flatten above about 1,000 tasks. Once there are a few thousand synthetic tasks, more
+configurations are the better use of a fixed budget. Tasks reduce the estimation error of the
+objective, whereas configurations add candidates worth finding.
+5.6 Selected hyperparameters
+Figure 9 compares the selected configurations with the distribution that we sample them
+from. For LightGBM, the selected configurations prefer more expressive trees, with a small
+10
+
+
+10−2
+10−1
+0
+1
+2
+LightGBM
+Density ratio
+Learning rate
+KS 0.39
+100
+101
+0
+1
+2
+Min. data in leaf
+KS 0.30
+0.2
+0.4
+0.6
+0.8
+1.0
+0
+1
+2
+L1 regularization
+KS 0.22
+10−3
+10−2
+10−1
+0
+2
+4
+MLP
+Density ratio
+Learning rate (Muon)
+KS 0.52
+10−4
+10−3
+0.0
+0.5
+1.0
+1.5
+2.0
+Learning rate (AdamW)
+KS 0.22
+8
+12
+16
+20
+24
+28
+32
+0.00
+0.05
+0.10
+0.15
+0.20
+Share
+Embedding dim
+Sampling distribution
+200 selected configurations (model colour)
+Figure 9 | Selected hyperparameters against their sampling distribution: K = 200, T regime,
+selected from the full pool of 4000 configurations on 4000 synthetic datasets. Lines: density of the
+200 selected configurations divided by the sampling density (grey, flat at 1); ticks: selected values;
+bars: shares (grey: sampling). All hyperparameters, also of LightGBM-TabPrep, are in Figures 19–21.
+minimum data in a leaf and weak L1 regularization, together with a small learning rate: 21%
+of the selected learning rates are below the 0.1 quantile of the sampling distribution. For
+the MLP, the pattern is similar. The selected configurations prefer small learning rates, with
+45% of the Muon learning rates below the 0.1 quantile, and larger embeddings: the largest
+dimension, 32, has a share of 21% against 14% in the sampling. For these hyperparameters,
+the range or the shape of the search space is thus possibly a poor fit, and a wider or reshaped
+space can contain better configurations.
+6. Conclusion
+We have shown that the synthetic priors built for PFN pretraining are a scalable source
+of meta-training tasks for conventional tabular models. PriorTune selects a subset of
+hyperparameter configurations on synthetic tasks alone, by win rate against random subsets
+under the deployment rule. We show that when scaled the synthetic tasks beat real datasets
+of TabRepo at equal budgets. The selected subsets beat random subsets of any size, improve
+LightGBM, LightGBM-TabPrep, the MLP, and TabPack on the TabArena and BeyondArena
+benchmarks, and make LightGBM-TabPrep the highest-ranked model in Elo on BeyondArena
+that is not a pretrained foundation model, above TabPFN-3 and RealMLP, at lower latency
+than both. The released subsets are drop-in search spaces: a practitioner replaces random
+search over the published space with the K selected configurations.
+11
+
+
+7. Limitations
+We do not apply PriorTune to tabular foundation models. They are pretrained on tasks
+from the same kind of prior, so the selection can prefer configurations that change them the
+least. Newer priors do not always help PriorTune: the newest prior helps plain LightGBM
+most but gives no clear gain for LightGBM-TabPrep and the MLP (Section 5.4). The grid
+is fitted once per model and search space, so a new search space needs a new grid. The
+synthetic tasks have at most 60,000 rows and 100 features, so the selection does not see
+tasks as large as the largest real datasets. The ablations use the tuned rule only, because
+selection for ensembles is expensive. The error bars measure variation across repetitions,
+not uncertainty over new datasets. Our theory motivates the forms of the scaling curves but
+does not prove them; the fits are empirical.
+AI use statement
+We used generative AI tools (Claude Code, Codex) to implement parts of the experiment and
+analysis code, to draft and edit parts of the text, and to search for and format references. We
+did not use them to generate data, develop the theory, prove claims, propose hypotheses, or
+design the method and experiments. The authors checked and tested all code, cross-checked
+every number against the experiment logs, verified all references, and reviewed all text. We
+take full responsibility for the content of this work.
+Reproducibility statement
+Section 3 and Algorithm 1 specify the selection procedure and its fixed settings (R = 16, tie
+rule, 40 Caruana steps). Appendix A.1 gives the evaluation protocol on both benchmarks,
+the repetition scheme of the ablations, the compute used, and the latency measurement.
+Appendix A.2 lists the complete hyperparameter search space of every model. Appendix A.3
+describes the three synthetic priors and Table 9 the exact sampling settings and seeds.
+Appendix A.4 lists the TabRepo datasets excluded for overlap with TabArena. Appendix B
+states all assumptions and gives complete proofs of the propositions. The benchmarks
+(TabArena, BeyondArena, TabRepo) are public. The supplementary material contains the
+code, the selected subsets for every model and K, the seeds, and the score caches of all fits,
+from which every table and figure can be regenerated.
+12
+
+
+References
+[1] Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. TabPFN:
+A transformer that solves small tabular classification problems in a second. In Interna-
+tional Conference on Learning Representations (ICLR), 2023.
+[2] Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer,
+Shi Bin Hoo, Robin Tibor Schirrmeister, and Frank Hutter. Accurate predictions on
+small data with a tabular foundation model. Nature, 637:319–326, 2025.
+[3] Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. TabICLv2: A
+better, faster, scalable, and open tabular foundation model. In International Conference
+on Machine Learning (ICML), 2026. URL https://arxiv.org/abs/2602.11139.
+[4] Léo Grinsztajn, Klemens Flöge, Oscar Key, et al. TabPFN-3: Technical report. arXiv
+preprint arXiv:2605.13986, 2026.
+[5] David Salinas and Nick Erickson. TabRepo: A large scale repository of tabular model
+evaluations and its AutoML applications. In Proceedings of the Third International
+Conference on Automated Machine Learning, volume 256 of Proceedings of Machine
+Learning Research, pages 19/1–30, 2024. URL https://proceedings.mlr.press/
+v256/salinas24a.html.
+[6] David Holzmüller, Léo Grinsztajn, and Ingo Steinwart. Better by default: Strong
+pre-tuned MLPs and boosted trees on tabular data. In Advances in Neural Information
+Processing Systems (NeurIPS), 2024.
+[7] Guolin Ke, Qi Meng, Thomas Finley, Taifeng Wang, Wei Chen, Weidong Ma, Qiwei
+Ye, and Tie-Yan Liu. LightGBM: A highly efficient gradient boosting decision tree. In
+Advances in Neural Information Processing Systems (NeurIPS), 2017.
+[8] Andrej Tschalzev, Nick Erickson, Yuyang Wang, Huzefa Rangwala, Stefan Lüdtke,
+Heiner Stuckenschmidt, and Christian Bartelt. TabPrep: Closing the feature engineer-
+ing gap in tabular benchmarks. arXiv preprint arXiv:2606.02384, 2026.
+[9] Yury Gorishniy, Ivan Rubachev, and Artem Babenko. On embeddings for numerical
+features in tabular deep learning. In Advances in Neural Information Processing Systems
+(NeurIPS), 2022.
+[10] Yury Gorishniy, Akim Kotelnikov, Ivan Rubachev, and Artem Babenko. TabPack: Effi-
+cient hyperparameter ensembles for tabular deep learning. In International Conference
+on Machine Learning (ICML), 2026. URL https://arxiv.org/abs/2607.05380.
+[11] Nick Erickson, Lennart Purucker, Andrej Tschalzev, David Holzmüller, Prateek Mu-
+talik Desai, David Salinas, and Frank Hutter. TabArena: A living benchmark for
+machine learning on tabular data. In Advances in Neural Information Processing Sys-
+tems (NeurIPS), Datasets and Benchmarks Track, 2025. URL https://arxiv.org/abs/
+2506.16791.
+[12] Lennart Purucker, Andrej Tschalzev, Nick Erickson, Blayer, David Holzmüller, Arazi,
+Pfefferle, Tajjar, Gaël Varoquaux, and Frank Hutter. Beyond IID: How general are
+tabular foundation models, really? arXiv preprint arXiv:2606.30410, 2026.
+[13] Matthias Feurer, Jost Tobias Springenberg, and Frank Hutter. Initializing Bayesian
+hyperparameter optimization via meta-learning. In Proceedings of the AAAI Conference
+on Artificial Intelligence, pages 1128–1135, 2015. doi: 10.1609/aaai.v29i1.9354.
+13
+
+
+[14] Martin Wistuba, Nicolas Schilling, and Lars Schmidt-Thieme. Sequential model-free
+hyperparameter tuning. In IEEE International Conference on Data Mining (ICDM),
+pages 1033–1038, 2015. doi: 10.1109/ICDM.2015.20.
+[15] Florian Pfisterer, Jan N. van Rijn, Philipp Probst, Andreas C. Müller, and Bernd Bischl.
+Learning multiple defaults for machine learning algorithms. In Proceedings of the
+Genetic and Evolutionary Computation Conference Companion (GECCO), pages 241–242,
+2021. doi: 10.1145/3449726.3459523. Extended version: arXiv:1811.09409.
+[16] Fela Winkelmolen, Nikita Ivkin, H. Furkan Bozkurt, and Zohar Karnin. Practical
+and sample efficient zero-shot HPO. arXiv preprint arXiv:2007.13382, 2020. URL
+https://arxiv.org/abs/2007.13382.
+[17] Nick Erickson, Jonas Mueller, Alexander Shirkov, Hang Zhang, Pedro Larroy, Mu Li, and
+Alexander Smola. AutoGluon-Tabular: Robust and accurate AutoML for structured data.
+arXiv preprint arXiv:2003.06505, 2020. URL https://arxiv.org/abs/2003.06505.
+[18] Valerio Perrone, Rodolphe Jenatton, Matthias W. Seeger, and Cédric Archambeau.
+Scalable hyperparameter transfer learning. In Advances in Neural Information Processing
+Systems (NeurIPS), 2018.
+[19] Matthias Feurer, Benjamin Letham, Frank Hutter, and Eytan Bakshy. Practical transfer
+learning for Bayesian optimization. arXiv preprint arXiv:1802.02219, 2018. URL
+https://arxiv.org/abs/1802.02219.
+[20] Martin Wistuba and Josif Grabocka. Few-shot Bayesian optimization with deep kernel
+surrogates. In International Conference on Learning Representations (ICLR), 2021. URL
+https://arxiv.org/abs/2101.07667.
+[21] Zi Wang, George E. Dahl, Kevin Swersky, Chansoo Lee, Zachary Nado, Justin Gilmer,
+Jasper Snoek, and Zoubin Ghahramani. Pre-trained Gaussian processes for Bayesian
+optimization.
+Journal of Machine Learning Research, 25(212):1–83, 2024.
+URL
+https://arxiv.org/abs/2109.08215.
+[22] Zhou Fan, Xinran Han, and Zi Wang. HyperBO+: Pre-training a universal prior
+for Bayesian optimization with hierarchical Gaussian processes.
+arXiv preprint
+arXiv:2212.10538, 2023. URL https://arxiv.org/abs/2212.10538. Full version
+of a NeurIPS 2022 workshop paper.
+[23] Yutian Chen, Xingyou Song, Chansoo Lee, Zi Wang, Qiuyi Zhang, David Dohan,
+Kazuya Kawakami, Greg Kochanski, Arnaud Doucet, Marc’Aurelio Ranzato, Sagi Perel,
+and Nando de Freitas. Towards learning universal hyperparameter optimizers with
+transformers. In Advances in Neural Information Processing Systems (NeurIPS), 2022.
+URL https://arxiv.org/abs/2205.13320.
+[24] Samuel Müller, Matthias Feurer, Noah Hollmann, and Frank Hutter. PFNs4BO: In-
+context learning for Bayesian optimization. In International Conference on Machine
+Learning (ICML), volume 202 of Proceedings of Machine Learning Research, pages
+25444–25470, 2023. URL https://proceedings.mlr.press/v202/muller23a.html.
+[25] Rosen Ting-Ying Yu, Cyril Picard, and Faez Ahmed. GIT-BO: High-dimensional Bayesian
+optimization with tabular foundation models. In International Conference on Learning
+Representations (ICLR), 2026. URL https://arxiv.org/abs/2505.20685.
+[26] Theodore Rogers and Srividya Ponnada. Zero-shot Bayesian optimization with TabPFN:
+Competitive with state-of-the-art without per-task training. In International Conference
+14
+
+
+on Automated Machine Learning (AutoML), 2026. Listed on the Amazon Science
+publications page; no arXiv version found.
+[27] Xinyu Zhang, Conor Hassan, Julien Martinelli, Daolang Huang, and Samuel Kaski.
+In-context multi-objective optimization. In International Conference on Learning Repre-
+sentations (ICLR), 2026. URL https://arxiv.org/abs/2512.11114.
+[28] Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. TabICL:
+A tabular foundation model for in-context learning on large data. In International
+Conference on Machine Learning (ICML), 2025.
+[29] Xiyuan Zhang, Danielle C. Maddix, Junming Yin, Nick Erickson, Abdul Fatir Ansari,
+Boran Han, Shuai Zhang, Leman Akoglu, Christos Faloutsos, Michael W. Mahoney,
+Cuixiong Hu, Huzefa Rangwala, George Karypis, and Bernie Wang. Mitra: Mixed
+synthetic priors for enhancing tabular foundation models. In Advances in Neural
+Information Processing Systems (NeurIPS), 2025. URL https://arxiv.org/abs/2510.
+21204.
+[30] Xingxuan Zhang, Gang Ren, Han Yu, et al. LimiX: Unleashing structured-data modeling
+capability for generalist intelligence. arXiv preprint arXiv:2509.03505, 2025. URL
+https://arxiv.org/abs/2509.03505.
+[31] Penghui Wang, Wei Liu, Hong Wang, Chengyue Huang, Yuxi Sun, Zirui Wang, Hong-
+ming Huang, Quan Wang, Zhenwei Xin, Ping Hou, Jie Yu, Chunxiao Liu, Erli Meng,
+and Bin Wang. Xiaomi-TabLDM: A tabular foundation model technical report. arXiv
+preprint arXiv:2609.03880, 2026. URL https://arxiv.org/abs/2609.03880.
+[32] Minyong Cho, Minho Jeong, Dooho Lee, Jinmo Lee, and Jaemin Yoo. Causilo technical
+report. arXiv preprint arXiv:2609.22866, 2026. URL https://arxiv.org/abs/2609.
+22866.
+[33] Moonjung Eo, Min-Kook Suh, Hye-Seung Cho, Jiwon Kim, Seoyoon Kim, Sangjun
+Nam, and Soonyoung Lee. EXAONE Tabular 1.0: Technical report. arXiv preprint
+arXiv:2608.25774, 2026. URL https://arxiv.org/abs/2608.25774.
+[34] Aditya Tanna, Nassim Bouarour, Mohamed Bouadi, Vinay Kumar Sankarapu, and
+Pratinav Seth. Pocket foundation models: Distilling TFMs into CPU-ready gradient-
+boosted trees. arXiv preprint arXiv:2605.18654, 2026. URL https://arxiv.org/abs/
+2605.18654.
+[35] Qi Qin, Jiajie Zhu, Dali Chen, Yuzhao Zhang, Jia-Xing Han, Peng Zhang, Ying Yan,
+Yifan Sun, and Yu Su. GEAR: Generative expansion and real anchoring for two-stage
+distillation of tabular foundation models. arXiv preprint arXiv:2608.18849, 2026. URL
+https://arxiv.org/abs/2608.18849.
+[36] Rich Caruana, Alexandru Niculescu-Mizil, Geoff Crew, and Alex Ksikes. Ensemble
+selection from libraries of models. In Proceedings of the Twenty-First International
+Conference on Machine Learning (ICML), 2004.
+[37] Rong-Xi Tan, Ke Xue, Shen-Huan Lyu, Haopu Shang, Yao Wang, Yaoyuan Wang,
+Sheng Fu, and Chao Qian. Offline model-based optimization by learning to rank.
+In International Conference on Learning Representations (ICLR), 2025. URL https:
+//arxiv.org/abs/2410.11502.
+[38] NVIDIA. Kumo relational and kumo tabular: Overview. https://docs.nvidia.com/
+sdgm/kumo-relational/about-kumo-relational/overview, 2026.
+Accessed 2026-
+10-30.
+15
+
+
+[39] Andrej Tschalzev, Stefan Lüdtke, Heiner Stuckenschmidt, and Christian Bartelt. Lost in
+aggregation: How benchmarks overlook irreplaceable model strengths. arXiv preprint
+arXiv:2608.18919, 2026.
+[40] Alfréd Rényi. Théorie des éléments saillants d’une suite d’observations. Annales
+scientifiques de l’Université de Clermont-Ferrand 2, 8(2):7–13, 1962.
+16
+
+
+Appendix contents
+A
+Computation
+18
+A.1
+Setup
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+A.1.1
+Main results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+A.1.2
+Ablations
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 18
+A.1.3
+Compute
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 20
+A.1.4
+Inference latency . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 21
+A.2
+Hyperparameter search spaces . . . . . . . . . . . . . . . . . . . . . . . . . . 22
+A.3
+Synthetic priors . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 23
+A.3.1
+Graph structure . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24
+A.3.2
+Edge functions
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 24
+A.3.3
+Transformations and filters
+. . . . . . . . . . . . . . . . . . . . . . . 25
+A.3.4
+Sampling settings . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 25
+A.4 Additional results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+A.4.1
+Main results . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 26
+A.4.2
+Selection rule . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 27
+A.4.3
+Synthetic versus real meta-training data . . . . . . . . . . . . . . . . 30
+A.4.4
+Meta-tuning versus more random search . . . . . . . . . . . . . . . . 30
+A.4.5
+Choice of prior
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 31
+A.4.6
+Scaling
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 32
+A.4.7
+Selected hyperparameters . . . . . . . . . . . . . . . . . . . . . . . . 36
+B
+Theory
+39
+B.1
+Setup and main propositions . . . . . . . . . . . . . . . . . . . . . . . . . . . 39
+B.1.1
+Setup
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 39
+B.1.2
+Upper bound on the improvement
+. . . . . . . . . . . . . . . . . . . 40
+B.1.3
+Transfer from synthetic to real tasks
+. . . . . . . . . . . . . . . . . . 40
+B.1.4
+Analysis of the forward-selection heuristic . . . . . . . . . . . . . . . 41
+B.2
+Proofs . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 42
+17
+
+
+A. Computation
+A.1 Setup
+A.1.1 Main results
+Datasets. Table 2 shows distribution of features and sample sizes of both benchmarks. For
+full list of datasets, their selection criteria, and description, see the original work [11, 12].
+Table 2 | Benchmark statistics. Row and feature counts are per dataset (minimum / median /
+maximum).
+TabArena
+BeyondArena
+Datasets
+51
+142
+Binary / multiclass / regression
+30 / 8 / 13
+73 / 25 / 44
+Splits: i.i.d. / grouped / temporal
+51 / 0 / 0
+103 / 18 / 21
+Rows
+748 / 6,497 / 150,000
+155 / 5,000 / 1,296,316
+Features
+4 / 17 / 1,776
+3 / 23 / 22,215
+Evaluation. On BeyondArena, we use every outer split of the core benchmark. Within
+each outer split, every method is bagged over the 8 inner folds, and each configuration
+is trained once per fold. T deploys the validation-best configuration; T+E fits a 40-step
+Caruana ensemble on the same validation predictions. Both score the held-out test split
+with the native metric.
+Subsets. FT subsets are selected with the T objective and FTE subsets with the T+E objective
+(40 Caruana steps inside the selection), both with R = 16 on all 4,000 configurations and
+4,000 synthetic tasks. No benchmark data enters the selection. TabPack’s FTE subset is the
+K = 64 subset selected with the T+E objective on the MLP pool and deployed as one pack
+of those members.
+A.1.2 Ablations
+All ablations select under the T deployment rule, deploy under T, and report the win rate
+against a random-K baseline.
+A.1.2.1
+Selection rule (Section 5.1)
+Protocol. We run 200 repetitions. Each splits the 4,000 synthetic tasks at random into 3,000
+selection tasks and 1,000 held-out tasks. Every rule selects K out of 4,000 configurations on
+the selection tasks and is deployed under T on the held-out tasks. There it is compared with
+200 random-K baselines, and its win rate is averaged over them. All rules in a repetition
+use the same tasks and baselines. Error bars in Figure 4 are ±1.96 standard errors of the
+win rate over the 200 repetitions.
+Our rule. It draws, once per repetition, 16 bootstrap resamples of each task’s validation
+rows and 16 random-K references Rr. R < 16 pairs the first R resamples with the first
+R references. Validation only pairs the 16 resamples with R1, and reference only pairs the
+original validation split with the 16 references.
+TabRepo algorithms. They use no validation resamples and no references. They score the
+best member of a subset on each dataset’s joined validation and test rows, with the native
+18
+
+
+metric recomputed on the union. The first version adds, at each step, the configuration that
+minimizes the mean over datasets of the best normalized error, (ℓ−ℓbest)/(ℓmedian −ℓbest)
+clipped to [0, 1], with ℓbest and ℓmedian taken over the 4,000 configurations. The second
+starts from the configuration with the lowest mean rank, then adds the one that improves
+the best member on the most tasks. Both break ties by a random configuration order drawn
+per repetition.
+A.1.2.2
+Synthetic versus real meta-training data (Section 5.2)
+Cells. A cell (C, N) selects K of C configurations on N meta-training tasks by Algorithm 1
+with R = 16. Synthetic cells use our pool of 4,000 configurations and 4,000 synthetic tasks.
+TabRepo cells use the 182 TabRepo datasets and a bank of 16,000 configurations: our pool
+of 4,000 plus 12,000 further draws from the same search spaces, fitted on TabRepo and
+TabArena. Validation resamples are drawn once per task and shared across repetitions. Ties
+in validation selection and in the greedy step go to the lowest configuration id.
+Repetitions. We run 2,000 repetitions, shared by all cells. A repetition permutes the configu-
+rations and the tasks once; each cell takes the first C configurations and N tasks of that
+permutation.
+Evaluation. The selected subset is deployed on TabArena under T and compared with the
+first K configurations of the repetition’s permutation of our 4,000-configuration pool. Both
+synthetic and TabRepo cells share this baseline. Also both synthetic and TabRepo C = K
+cells therefore have 0.5 by construction.
+Reported values. Each win rate is the mean over the 2,000 repetitions, its standard error is
+below 0.003 in every cell and is not drawn. It measures variation across repetitions on the
+fixed benchmark, not uncertainty over new datasets. In Figure 5, each cell (C, N) is a dot
+at its budget B = C · N, so the dots above one B are all cells with that budget. The line
+joins the best cells within each B.
+A.1.2.3
+Meta-tuning versus more random search (Section 5.3)
+Meta-tuned lines. The synthetic line is the cell C = N = 4,000 of Appendix A.1.2.2. The
+TabRepo line selects on all 182 TabRepo datasets from our pool of 4,000 configurations,
+with the same protocol, repetitions, and baselines. Each line is the mean win rate over the
+2,000 repetitions.
+Random subsets. For every K′, we draw 200 subsets of K′ configurations uniformly from the
+16,000-configuration bank, independently across K′, and deploy each under T on TabArena.
+Each subset is compared with all 2,000 random-K baselines of the meta-tuned lines, and its
+win rate is averaged over them. The band therefore reflects only the draw of the random
+subset: we report the mean over the 200 subsets and the 95% CI band.
+A.1.2.4
+Choice of prior (Section 5.4)
+Cells. For LightGBM, LightGBM-TabPrep, and the MLP, a pool of 2,000 configurations is fitted
+on 2,000 tasks (datasets) from each of TabICLv2, TabICLv1, and TabPFNv1 (Appendix A.3).
+Within a model, the configuration pool and the TabArena evaluation are shared, so only the
+priors affect the selection of the K configurations. A cell (C, N) selects K of C configurations
+on N tasks by Algorithm 1 with R = 16.
+Repetitions and evaluation. As in Appendix A.1.2.2: 2,000 repetitions shared by all cells,
+each permuting the configurations and the tasks once. The selected subset is deployed on
+19
+
+
+TabArena under T and compared with the first K configurations of the permutation. Win
+rates are means over the repetitions, with standard errors below 0.003.
+A.1.2.5
+Scaling (Section 5.5)
+Cells. The synthetic cells of Appendix A.1.2.2, with all 4,000 configurations and 4,000
+synthetic tasks available: C and N range from K to 4,000, with the same 2,000 repetitions,
+baselines, and reported values.
+Fits. We fit a−b/
+√
+N to the win rate against N at C = 4,000 and a+b log2 C to the win rate
+against C at N = 4,000, by least squares on the means; the C = K cell, 0.5 by construction,
+is left out of the second fit.
+A.1.2.6
+Selected hyperparameters (Section 5.6)
+Subset. We take the K = 200 subset selected under T on all 4,000 configurations and 4,000
+synthetic tasks. For TabPrep settings, only the selected configurations with TabPrep enabled
+count.
+Distributions. For each hyperparameter, the sampling distribution F is given in Appendix A.2.
+For a continuous hyperparameter, we plot the density of the selected values divided by the
+sampling density, fsel(x)/f(x). The sampling distribution is then flat at 1, and a value above
+1 is selected more often than it is sampled from the prior. We estimate this ratio with a
+Gaussian kernel (Scott bandwidth) and plot it as the coloured line. The Kolmogorov–Smirnov
+(KS) distance is supx | ˆFsel(x) −F(x)|, where ˆFsel is the empirical distribution function of the
+selected values. It is in [0, 1]: 0 when the selected values follow the sampling distribution
+exactly, and larger when they move away from it. Categorical hyperparameters are shown
+as shares.
+A.1.3 Compute
+We report compute in A100 hours. CPU work is converted at AWS on-demand prices:1 1
+A100 hour costs as much as 61.5 vCPU-hours. Table 3 summarizes the costs.
+PriorTune, once per model. (i) Configuration×task grid. We fit MLPs with the tensorized
+code of TabPack [10]: one fit takes 0.1 A100 seconds on average on the synthetic tasks, so
+the 16 million fits of the 4,000 × 4,000 grid take 400 A100 hours. One LightGBM-TabPrep
+fit takes about 5 core-seconds, so its grid takes 20,000 core-hours, about 300 A100 hours.
+(ii) Selection. Under T, selecting a subset from the cached predictions takes seconds. Under
+T+E, selecting 200 configurations takes about 10 A100 hours.
+PriorTune, per dataset. A new dataset fits only the K selected configurations, so the cost
+equals that of tuning with K random ones. As a proxy, we take the benchmark’s tuned
+LightGBM on BeyondArena-Lite (26 configurations, 8 folds, 16 vCPUs): 8 vCPU-hours per
+dataset on average (median 2.4), that is, 0.1 A100 hours (median 0.04).
+PFNs, once. Pretraining TabICLv2 takes 24.5 H100-days, about 1,180 A100 hours [3].
+TabICL takes 20 days on three A100s, 1,440 A100 hours [28]; TabPFNv2 takes about two
+weeks on eight RTX 2080 Ti, 2,690 GPU-hours [2], or about 460 A100 hours. TabPFN-3
+does not report its pretraining compute [4].
+1For GPU, p4d.24xlarge instance, $21.96 per hour for eight A100s. For CPU, c7i.16xlarge instance, $2.86
+per hour for 64 vCPUs. https://aws.amazon.com/ec2/pricing/on-demand/, US East (N. Virginia), accessed
+October 2026.
+20
+
+
+PFNs, per dataset. In-context learning replaces fitting with one fit-and-predict pass. On
+BeyondArena-Lite, TabICLv2 takes 0.48 A100 hours per dataset on average (median 26
+seconds). TabPFN-3 takes 0.70 GPU-hours on average (median 53 seconds).
+Table 3 | Compute in A100 hours; CPU work converted at 61.5 vCPU-hours per A100 hour. Per-
+dataset costs are means over the 142 BeyondArena-Lite datasets, medians in parentheses.
+PriorTune
+PFN
+Once per model
+Grid: 400 (MLP)
+Pretraining: 1,180 (TabICLv2)
+300 (LightGBM-TabPrep)
+1,440 (TabICL)
+Selection: < 0.01 (T), 10 (T+E, K = 200)
+460 (TabPFNv2)
+not reported (TabPFN-3)
+Per dataset
+Fit K = 25: 0.1 (0.04), LightGBM proxy
+Fit and predict: 0.48 (0.007), TabICLv2
+A.1.4 Inference latency
+Datasets and fits. We measure latency (Figure 1) on 10 BeyondArena datasets that cover
+its dataset groups (Table 4). For each dataset, we fix one outer train-test split. Under T, we
+deploy the validation-best configuration. Under T+E, we build the 40-step greedy ensemble
+of TabArena on the validation predictions. Ensemble members predict sequentially, and the
+ensemble averages their predictions. TabPack tensorizes the ensemble. In-context models
+use the inner training and validation splits as context and run at default settings, which
+include their internal ensembling: 8 estimators for TabPFN-3 and TabICLv2, and 16, 8, and
+8 for the large, medium, and small Kumo-Tabular. The Elo of Figure 1 comes from the full
+BeyondArena.
+Table 4 | Datasets of the latency measurement. Rows are those of the outer training split.
+Dataset
+Task
+Split
+Rows
+Features
+credit-g
+binary
+i.i.d.
+666
+20
+mice-protein
+multiclass
+grouped
+720
+77
+coffee-rating
+regression
+temporal
+2,137
+12
+predict-students
+multiclass
+i.i.d.
+2,949
+36
+churn
+binary
+i.i.d.
+3,333
+19
+emscad
+binary
+i.i.d.
+11,640
+17
+video-transcoding
+regression
+grouped
+44,897
+19
+sdss17
+multiclass
+i.i.d.
+52,035
+11
+sf-permit-time
+regression
+temporal
+60,784
+37
+kick
+binary
+temporal
+68,012
+32
+Timing. For each method and dataset, the fitted model is kept in memory. We do 5 warm-up
+predict calls on single test rows and then time 50 calls. We report the median over calls
+and then over the 10 datasets. All methods run on one host. GBDTs run on 16 CPU threads.
+DNNs and in-context models run on one GPU.
+KV cache. We time each PFN in three modes. In recompute, every call re-encodes the
+training context. With a key-value (KV) cache, the encoded context is computed once at fit
+time and kept on either the GPU or on the CPU. Table 5 lists the options. The KV cache of
+21
+
+
+TabPFN-3 is quantized to int8 by default, so its cached predictions differ from recompute
+by up to 0.14 in probability. For TabICLv2, they differ by up to 0.015.
+Table 5 | Options of the in-context models for the three timed modes. TabPFN-3 and TabICLv2 take
+them in the constructor (tabpfn 9.0.0, tabicl 2.2.0). Kumo-Tabular takes them in the TabArena
+wrapper.
+Model
+Recompute
+KV cache on GPU
+KV cache on CPU
+TabPFN-3
+fit_mode=
+fit_mode="fit_with_cache"
+fit_mode="fit_with_cache"
+"fit_preprocessors"a
+keep_cache_on_device=True
+keep_cache_on_device=False
+TabICLv2
+kv_cache=Falsea
+kv_cache=True
+kv_cache=Trueb
+Kumo-Tabular
+cache_context=False
+cache_context=Truec
+cache_context=Truea
+aDefault. bTabICL has no option to keep the cache on the CPU: we move it to the CPU after fit and copy it to the
+GPU in every call. cThe wrapper keeps the cache on the CPU: we move it to the GPU once after fit.
+Inference with TabPrep. For TabPrep, we compile the feature generation in Numba and
+make it faster in two ways: (i) the fitted feature generators become lookup tables, and
+(ii) we compute only the generated features that the booster (LightGBM) splits on. The
+compiled predictor gives identical predictions. Without compilation, LightGBM-TabPrep
+under T costs 44 to 51 ms per row through AutoGluon, against 0.8 to 0.9 ms compiled, 51
+to 54 times slower.
+A.2 Hyperparameter search spaces
+Every pool is a set of independent random draws from the search space below; no con-
+figuration is tuned on any dataset. The same draws are fitted on every synthetic and real
+task.
+LightGBM. We use the LightGBM search space of TabArena [11], shown in Table 6. Training
+follows the AutoGluon LGBModel semantics: up to 10,000 boosting rounds with AutoGluon’s
+adaptive early stopping (offset 20, rate 0.3, maximum patience 300 rounds, scaled down
+above 10,000 training rows) on the validation split. The pool has C = 4,000 configurations.
+LightGBM with TabPrep. The same LightGBM space, with the TabPrep feature generators
+of Tschalzev et al. [8] prepended to the pipeline. Following the published protocol, TabPrep
+is enabled for one configuration in four; an enabled configuration also draws the eight
+TabPrep axes in Table 7. The pool has C = 4,000 configurations and shares its LightGBM
+draws with the plain LightGBM pool, so the two pools differ only in preprocessing.
+MLP with cosine embeddings. The MLP is the independent member model of TabPack
+[10]: a feed-forward MLP with cosine numerical embeddings [9], trained with the Muon
+optimizer for the hidden weights and AdamW for the rest. The pool is a frozen registry
+of C = 4,000 draws from the space in Table 8. The seven sampled axes follow TabPack’s
+cosine base model; the hidden width is fixed at 384. Members are trained individually with
+per-member optimizer steps, up to 256 epochs, and early stopping after 16 non-improving
+validations, without TabPack’s online ensemble.
+TabPack. TabPack [10] trains 64 MLP members as one packed tensor program and combines
+them with the greedy online ensemble of the TabPack paper. The members are the first
+64 configurations of the MLP registry above. A meta-tuned TabPack is a pack of K = 64
+22
+
+
+Table 6 | The hyperparameter tuning space for LightGBM.
+Parameter
+Distribution
+Learning rate
+LogUniform[5e-3, 1e-1]
+Feature fraction
+Uniform[0.4, 1.0]
+Bagging fraction
+Uniform[0.7, 1.0]
+Bagging frequency
+1
+# leaves
+LogUniformInt[2, 200]
+Min. data in leaf
+LogUniformInt[1, 64]
+Extra trees
+{False, True}
+Min. data per group
+LogUniformInt[2, 100]
+Categorical L2
+LogUniform[5e-3, 2.0]
+Categorical smoothing
+LogUniform[1e-3, 100]
+Max. categories to one-hot
+LogUniformInt[8, 100]
+L1 regularization
+Uniform[1e-4, 1.0]
+L2 regularization
+Uniform[1e-4, 2.0]
+Max. boosting rounds
+10,000
+Early stopping
+AutoGluon adaptive (offset 20, rate 0.3, max. 300)
+Table 7 | The TabPrep axes drawn for the one-in-four configurations with TabPrep enabled.
+Parameter
+Distribution
+TabPrep enabled
+Bernoulli(0.25)
+OpenFE max. features
+{2000, 1000}
+OpenFE generation seed
+{42, 84, 168, 336, 672}
+Cat. combination max. features
+{100, 500}
+Cat. combination generation seed
+{42, 84, 168, 336, 672}
+Random-subset feature combination # subsets
+{50, 1, 100}
+Random-subset generation seed
+{42, 84, 168, 336, 672}
+OOF target encoding generation seed
+{42, 84, 168, 336, 672}
+Group-by max. features
+{500, 100, 1000}
+configurations selected from the same pool of 4,000 MLP configurations with the T+E
+objective and deployed with the same online ensemble; Figure 1 and Figure 3 use this
+subset.
+A.3 Synthetic priors
+All three priors are structural causal models: a directed acyclic graph over latent variables,
+a random function per edge set, and an observation process that turns node values into a
+table. This section lists the three parts for each prior.
+23
+
+
+Table 8 | The hyperparameter tuning space for the MLP with cosine embeddings.
+Parameter
+Distribution
+# blocks
+UniformInt[1, 4]
+Block width
+384
+Dropout rate
+{0.0, Uniform[0.0, 0.5]}
+Embedding dim
+UniformInt[8, 32], step=4
+Embedding init. scale
+LogUniform[1e-2, 1e1]
+Learning rate (AdamW)
+LogUniform[1e-4, 5e-3]
+Learning rate (Muon)
+LogUniform[1e-3, 1e-1]
+Weight decay
+LogUniform[1e-3, 1.0]
+Batch size
+dataset-dependent (TabArena rule)
+Max epochs
+256
+Early-stopping patience
+16
+A.3.1 Graph structure
+TabICLv2. A random Cauchy DAG with LogInt(2, 32) nodes. The probability of an edge
+from node i to node j is σ(A + Bi + Cj), where A, Bi, Cj are independent standard Cauchy
+variables: A sets the overall density, Bi and Cj the out- and in-degree of each node. Features
+and the target are assigned to random nodes. A graph is resampled until the feature nodes
+and the target node share an ancestor.
+TabICLv1. A layered MLP graph as in TabPFNv1: num_layers layers of width hidden_dim,
+both drawn from log-scaled truncated normals with per-dataset means in [1, 6] and [5, 130],
+with block-wise or Bernoulli dropout of edges. In causal mode (sampled per dataset) features
+and target are read from hidden activations; otherwise the root causes are the features and
+the last layer is the target.
+TabPFNv1. The same layered MLP graph, with layer count and width from gamma meta-
+distributions (means up to 6 and 300), num_causes root variables, edge dropout, and the
+same causal or non-causal read-out. With probability 1/(1 + ew), w ∼U(2, 10), the dataset
+is instead a draw from an RBF Gaussian process on Gaussian inputs [1].
+A.3.2 Edge functions
+TabICLv2. Eight function types: MLP, tree ensemble (symmetric trees, LogInt(1, 128) trees
+of depth 1 to 7), discretization to random centers, Gaussian process with a random kernel,
+linear, quadratic, EM-style cluster assignment, and product. The first three follow TabPFNv2,
+and the other five are new. With several parents, the prior either concatenates them and
+applies one function, or applies a function per parent and aggregates by sum, product, max,
+or log-sum-exp. Each node output is standardized, rescaled by a random feature-importance
+vector, and multiplied by a random node importance.
+TabICLv1. With probability 0.7 an MLP layer: a random affine map followed by an activation
+drawn from 19 fixed functions (Identity, Tanh, LeakyReLU, ELU, ReLU, ReLU6, SELU, SiLU,
+Softplus, Hardtanh, sign, sine, RBF, exponential,
+p
+|x|, 1|x|≤1, x2, |x|) or a random Fourier-
+feature function. Activations may differ between layers. With probability 0.3 a tree layer:
+24
+
+
+an XGBoost multi-output regressor with at most 4 trees of depth at most 4, fitted on
+standard-normal targets and evaluated on the parent values.
+TabPFNv1. A random affine map followed by one activation per dataset, shared by all
+layers, drawn from Tanh, Identity, or ReLU.
+A.3.3 Transformations and filters
+TabICLv2. Each scalar feature is min-max scaled and then warped by a Kumaraswamy
+function, with exponents drawn from LogNum(0.2, 5). Categorical features come from
+discretizing sub-vectors of node values into 2 to 9 categories. Outliers are clamped at 4
+standard deviations, and standardized values are clipped to [−100, 100]. Constant columns
+are removed, and the feature order and class labels are permuted. Two filters reject datasets.
+The ancestor filter rejects a graph whose target shares no ancestor with the features. The
+ExtraTrees test fits 25 trees of depth 6 with bootstrapping and keeps a dataset only if their
+out-of-bag error beats the mean predictor in at least 95% of 200 bootstrap resamples.
+TabICLv1. Gaussian noise is added after every layer, with a standard deviation drawn per
+dataset from LogNum(10−4, 0.3). Root causes come from a normal, a uniform, or a mixed
+distribution. With probability 0.2, a dataset has categorical features. Each column then
+becomes categorical independently, with a uniformly drawn probability, and its values are
+binned by rank into max(2, round(Γ(1, 10))) categories. Outliers are clamped at 4 standard
+deviations, and the features and the regression target are standardized. Class labels are
+permuted. The original prior applies no filter. We apply the ExtraTrees test of TabICLv2, so
+that all three corpora are filtered alike.
+TabPFNv1. Gaussian noise is added at every node, with a mean and a standard deviation
+drawn per node. The standard deviation comes from LogNum(10−4, 0.3). Categorical
+features are generated as in TabICLv1: with probability 0.2, binned by rank into Γ(1, 10)
+categories. Outliers are removed, and the features and the target are z-normalized. Features
+are rescaled by the fraction of columns in use. For classification, class boundaries are
+sampled from the data, and class labels are permuted. The original prior applies no filter.
+We apply the ExtraTrees test of TabICLv2.
+A.3.4 Sampling settings
+Table 9 lists the sampling settings. TabICLv2 is the main prior of Section 3.2. TabICLv1
+and TabPFNv1 share one shape specification: dataset i has the same task type, row count,
+feature count, and class count in both sets, so a difference between them is a difference of
+generator alone.
+25
+
+
+Table 9 | Sampling settings of the three synthetic priors.
+LogU: log-uniform.
+Splits are
+train/validation/test and stratified for classification.
+Setting
+TabICLv2
+TabICLv1
+TabPFNv1
+Generator
+graph_scm
+mix_scm
+prior_bag
+Datasets
+4,000
+2,000
+2,000
+Task mix (reg/bin/multi)
+2,000 / 1,400 / 600
+0.4 / 0.3 / 0.3
+0.4 / 0.3 / 0.3
+Multiclass classes
+U{3, . . . , 10}
+U{3, . . . , 10}
+U{3, . . . , 10}
+Rows
+LogU[400, 60,000]
+LogU[1,024, 32,768]
+LogU[1,024, 32,768]
+Features
+U[1, cap(n)], cap 100 →20
+LogU[4, 64]
+LogU[4, 64]
+Graph nodes
+LogInt(2, 32)
+MLP, mean layers [1, 6]
+MLP, gamma layers
+Categorical share
+clip(U(−0.5, 1.2), 0, 1)
+p = 0.2 per dataset
+p = 0.2 per dataset
+Node noise
+none
+LogNum(10−4, 0.3)
+LogNum(10−4, 0.3)
+Graph filter
+ancestor test
+none
+none
+Dataset filter
+ExtraTrees, p < 0.05
+ExtraTrees, p < 0.05
+ExtraTrees, p < 0.05
+Split
+64 / 16 / 20
+64 / 16 / 20
+64 / 16 / 20
+Attempts per dataset
+≤100
+≤64
+≤64
+Base seed
+20260804
+0
+0
+A.4 Additional results
+A.4.1 Main results
+Full leaderboard. Figure 10 shows the Elo of all 58 methods on the full BeyondArena.
+Kumo-Tabular
+TabPFN-3.5
+Kumo-Tabular-Medium
+TabPFN-3.5-Fast
+Causilo
+Kumo-Tabular-Small
+LightGBM-TabPrep FTE
+LightGBM-TabPrep FT
+RealMLP
+TabPFN-3
+LightGBM-TabPrep
+TabPack FTE
+MLP FTE
+TabM
+LightGBM FTE
+TabPack
+CatBoost
+MLP FT
+TabICLv2
+LightGBM FT
+MLP
+LightGBM
+XGBoost
+ExtraTrees
+RandomForest
+Linear
+800
+900
+1000
+1100
+1200
+1300
+1400
+1500
+Elo
+Default
+Tuned
+Tuned + Ensembled
+Figure 10 | Elo of all 58 methods on the full BeyondArena under default, tuned, and tuned-and-
+ensembled deployment. Our families are coloured as in Figure 1.
+Improvement over the MLP. Figure 11 repeats Figure 3 with the improvement over the
+tuned MLP, 100 (ℓbase −ℓ)/ℓbase. We average across the splits of each datasets and then take
+the median across datasets. Unlike Elo, the improvement keeps the size of each gain [39]
+and does not depend on the set of compared methods. However, it depends on the choice
+of the baseline and averaging conceals skewness. Elo has the opposite properties, so neither
+metric suits every application [39]. Under T, LightGBM-TabPrep with its FT subset has the
+highest median (+0.71). Under T+E, Kumo-Tabular (+6.04) and RealMLP (+1.69) lead
+LightGBM-TabPrep (+1.34). LightGBM-TabPrep leads Kumo-Tabular on grouped splits and
+on large datasets.
+26
+
+
+−0.5
+0.0
+0.5
+1.0
+1.5
+Median improvement
+over tuned MLP (%)
+Task
+Scale
+Dimensionality
+Features
+Tuned (T): FT subsets
+0
+1
+Gain over
+random (pp)
+FT subset minus random subset, same model and rule
+4
+6
+8
+Tuned + ensembled (T+E): FTE subsets
+0
+1
+2
+Median improvement
+over tuned MLP (%)
+IID
+N = 103
+Grouped
+N = 18
+Temporal
+N = 21
+Tiny
+N = 52
+Small
+N = 38
+Medium
+N = 30
+Large
+N = 22
+Low
+N = 91
+High
+N = 51
+Text
+N = 16
+High card.
+N = 30
+All
+N = 142
+0
+1
+Gain over
+random (pp)
+FTE subset minus random subset, same model and rule
+Kumo-Tabular
+RealMLP
+LightGBM-TabPrep
+TabPack
+MLP
+LightGBM
+Figure 11 | Median per-dataset improvement over the tuned MLP with a random subset on the full
+BeyondArena, by dataset group. Each dataset’s improvement is averaged over its splits. Top: tuned
+(T), our models with their FT subsets. Bottom: tuned and ensembled (T+E), our models with their
+FTE subsets. Under each panel, the bars show the gain of each meta-tuned subset over the same
+model with its random subset, as the difference of the two medians.
+A.4.2 Selection rule
+Table 10 gives the win rate of every selection rule of Figure 4.
+27
+
+
+Table 10 | Win rate against random-K of the selection rules of Section 5.1, synthetic out-of-fold
+(1,000 held-out tasks), T deployment, against random-K baselines that no selection saw; mean over
+200 repetitions (±1.96 standard errors of at most 0.0015). Draws R: our rule with R validation
+resamples paired with R references. Resampling kept: 16 validation resamples with one reference
+(Val.), 16 references on the original split (Ref.), or one of each (Neither). Bold: the best rule in the
+row.
+Draws R
+Resampling kept
+TabRepo
+Model
+K
+16
+8
+4
+2
+1
+Val.
+Ref.
+Neither Norm. Count
+LightGBM
+25
+0.636
+0.634
+0.632 0.627 0.620 0.630 0.630
+0.621
+0.617
+0.621
+64
+0.621
+0.618
+0.613 0.607 0.599 0.614 0.609
+0.600
+0.588
+0.602
+200 0.599
+0.596
+0.592 0.585 0.576 0.593 0.586
+0.574
+0.561
+0.575
+LightGBM-TabPrep 25
+0.636 0.636 0.633 0.629 0.622 0.632 0.631
+0.623
+0.618
+0.622
+64
+0.621
+0.619
+0.615 0.610 0.602 0.616 0.609
+0.601
+0.597
+0.607
+200 0.603
+0.599
+0.594 0.588 0.579 0.597 0.588
+0.577
+0.571
+0.588
+MLP
+25
+0.697
+0.696
+0.692 0.687 0.679 0.691 0.689
+0.681
+0.687
+0.693
+64
+0.669
+0.665
+0.661 0.654 0.646 0.664 0.655
+0.645
+0.658
+0.672
+200
+0.631
+0.626
+0.619 0.612 0.601 0.626 0.613
+0.600
+0.616
+0.633
+28
+
+
+212
+215
+218
+221
+224
+0.50
+0.55
+0.60
+0.65
+K = 25
+Win rate vs. random-25
+LightGBM
+212
+215
+218
+221
+224
+LightGBM-TabPrep
+212
+215
+218
+221
+224
+MLP
+212
+215
+218
+221
+224
+0.50
+0.55
+0.60
+0.65
+K = 64
+Win rate vs. random-64
+212
+215
+218
+221
+224
+212
+215
+218
+221
+224
+212
+215
+218
+221
+224
+Budget B = C ⋅N
+0.50
+0.55
+0.60
+0.65
+K = 200
+Win rate vs. random-200
+212
+215
+218
+221
+224
+Budget B = C ⋅N
+212
+215
+218
+221
+224
+Budget B = C ⋅N
+Synthetic
+TabRepo (182 datasets, 16,000 configs)
+Figure 12 | Synthetic versus TabRepo meta-training data at equal budget, as in Figure 5, for K = 25,
+64, and 200.
+29
+
+
+A.4.3 Synthetic versus real meta-training data
+Figure 12 repeats Figure 5 for K ∈{25, 64, 200}. At K = 25, TabRepo is ahead at equal
+budget up to 220 to 222 for all three models. The synthetic tasks end above its best for all
+three (Figure 12).
+TabRepo overlap. Of the 200 TabRepo datasets we exclude 18. Ten are content-identical
+to or listed as overlapping with a TabArena dataset: Amazon_employee_access, APSFail-
+ure, Bioresponse, blood-transfusion-service-center, diabetes, Diabetes130US, diamonds,
+hiva_agnostic, jm1, splice. Eight share the source data of a TabArena dataset under a
+different curation: bank-marketing, churn, credit-g, houses, qsar-biodeg, wine-quality-red,
+wine-quality-white, wine_quality.
+1
+10
+100
+1000
+0.0
+0.2
+0.4
+0.6
+K = 25
+Win rate vs. random-25
+K0 = K
+LightGBM
+1
+10
+100
+1000
+K0 = K
+LightGBM-TabPrep
+1
+10
+100
+1000
+K0 = K
+MLP
+1
+10
+100
+1000
+0.0
+0.2
+0.4
+0.6
+K = 64
+Win rate vs. random-64
+K0 = K
+1
+10
+100
+1000
+K0 = K
+1
+10
+100
+1000
+K0 = K
+1
+10
+100
+1000
+Random subset size K0
+0.0
+0.2
+0.4
+0.6
+K = 200
+Win rate vs. random-200
+K0 = K
+1
+10
+100
+1000
+Random subset size K0
+K0 = K
+1
+10
+100
+1000
+Random subset size K0
+K0 = K
+Random K0 of 16,000 (mean, 95% of 200 draws)
+Meta-tuned K (synthetic)
+Meta-tuned K (TabRepo)
+Figure 13 | Random subsets of growing size K′ against the random-K baseline, as in Figure 6, for
+K = 25, 64, and 200.
+A.4.4 Meta-tuning versus more random search
+Figure 13 repeats Figure 6 for K ∈{25, 64, 200}.
+30
+
+
+A.4.5 Choice of prior
+Figures 14 and 15 repeat the top and bottom rows of Figure 7 for K ∈{25, 64, 200}.
+50
+200
+800
+0.50
+0.55
+0.60
+0.65
+K = 25
+Win rate vs. random-25
+LightGBM
+50
+200
+800
+LightGBM-TabPrep
+50
+200
+800
+MLP
+75
+300
+1200
+0.50
+0.55
+0.60
+0.65
+K = 64
+Win rate vs. random-64
+75
+300
+1200
+75
+300
+1200
+300
+600
+1200
+Configurations C (N = 2000)
+0.50
+0.55
+0.60
+0.65
+K = 200
+Win rate vs. random-200
+300
+600
+1200
+Configurations C (N = 2000)
+300
+600
+1200
+Configurations C (N = 2000)
+TabICLv2
+TabICLv1
+TabPFNv1
+Figure 14 | Three priors with 2,000 configurations on 2,000 synthetic tasks, as in the top row of
+Figure 7: win rate against the number of configurations C at N = 2,000, for K = 25, 64, and 200.
+31
+
+
+25
+100
+400
+1600
+0.50
+0.55
+0.60
+0.65
+K = 25
+Win rate vs. random-25
+LightGBM
+25
+100
+400
+1600
+LightGBM-TabPrep
+25
+100
+400
+1600
+MLP
+64
+256
+1024
+0.50
+0.55
+0.60
+0.65
+K = 64
+Win rate vs. random-64
+64
+256
+1024
+64
+256
+1024
+200
+400
+800
+1600
+Synthetic datasets N (C = 2000)
+0.50
+0.55
+0.60
+0.65
+K = 200
+Win rate vs. random-200
+200
+400
+800
+1600
+Synthetic datasets N (C = 2000)
+200
+400
+800
+1600
+Synthetic datasets N (C = 2000)
+TabICLv2
+TabICLv1
+TabPFNv1
+Figure 15 | As Figure 14, against the number of synthetic tasks N at C = 2,000 (bottom row of
+Figure 7).
+A.4.6 Scaling
+Figure 16 shows the win rate over the (C, N) grid, as in Figure 8, for K ∈{25, 64, 200}.
+Figures 17 and 18 show the curves along N and along C.
+32
+
+
+100
+200
+500
+1500 4000
+25
+50
+75
+100
+125
+150
+200
+300
+400
+500
+750
+1000
+1500
+2000
+3000
+4000
+K = 25
+Synthetic datasets N
+LightGBM
+100
+200
+500
+1500 4000
+LightGBM-TabPrep
+100
+200
+500
+1500 4000
+MLP
+100
+200
+500
+1500
+4000
+64
+75
+100
+125
+150
+200
+300
+400
+500
+750
+1000
+1500
+2000
+3000
+4000
+K = 64
+Synthetic datasets N
+100
+200
+500
+1500
+4000
+100
+200
+500
+1500
+4000
+300
+500
+1000
+2000
+4000
+Configurations C
+200
+300
+400
+500
+750
+1000
+1500
+2000
+3000
+4000
+K = 200
+Synthetic datasets N
+300
+500
+1000
+2000
+4000
+Configurations C
+300
+500
+1000
+2000
+4000
+Configurations C
+0.52
+0.54
+0.56
+0.58
+0.60
+0.62
+0.64
+0.66
+Win rate vs. random-K
+Figure 16 | Win rate over the (C, N) grid, as in Figure 8, for K = 25, 64, and 200.
+33
+
+
+25
+100
+400
+1600
+0.50
+0.55
+0.60
+0.65
+0.70
+K = 25
+Win rate vs. random-25
+LightGBM
+0.640 −0.61/√N
+R2 = 0.97
+25
+100
+400
+1600
+LightGBM-TabPrep
+0.645 −0.61/√N
+R2 = 0.92
+25
+100
+400
+1600
+MLP
+0.684 −0.50/√N
+R2 = 0.98
+64
+256
+1024
+0.50
+0.55
+0.60
+0.65
+0.70
+K = 64
+Win rate vs. random-64
+0.648 −0.84/√N
+R2 = 0.98
+64
+256
+1024
+0.660 −0.97/√N
+R2 = 0.95
+64
+256
+1024
+0.681 −0.88/√N
+R2 = 0.97
+200
+400
+800
+1600
+3200
+Synthetic datasets N
+0.50
+0.55
+0.60
+0.65
+0.70
+K = 200
+Win rate vs. random-200
+0.641 −0.93/√N
+R2 = 1.00
+200
+400
+800
+1600
+3200
+Synthetic datasets N
+0.649 −1.17/√N
+R2 = 0.99
+200
+400
+800
+1600
+3200
+Synthetic datasets N
+0.669 −1.38/√N
+R2 = 0.97
+C = 4000
+Smaller C (lighter = fewer)
+Fit a −b/√N
+Figure 17 | Win rate against the number of synthetic datasets N, one curve per pool size C, with
+the fit a −b/
+√
+N at C = 4,000, for K = 25, 64, and 200.
+34
+
+
+50
+200
+800
+3200
+0.50
+0.55
+0.60
+0.65
+0.70
+K = 25
+Win rate vs. random-25
+LightGBM
+0.502 + 0.0109 log2 C
+R2 = 0.97
+50
+200
+800
+3200
+LightGBM-TabPrep
+0.502 + 0.0127 log2 C
+R2 = 0.94
+50
+200
+800
+3200
+MLP
+0.506 + 0.0158 log2 C
+R2 = 0.90
+75
+300
+1200
+0.50
+0.55
+0.60
+0.65
+0.70
+K = 64
+Win rate vs. random-64
+0.440 + 0.0171 log2 C
+R2 = 0.93
+75
+300
+1200
+0.424 + 0.0202 log2 C
+R2 = 0.94
+75
+300
+1200
+0.375 + 0.0263 log2 C
+R2 = 0.96
+300
+600
+1200
+2400
+Configurations C
+0.50
+0.55
+0.60
+0.65
+0.70
+K = 200
+Win rate vs. random-200
+0.427 + 0.0170 log2 C
+R2 = 0.96
+300
+600
+1200
+2400
+Configurations C
+0.432 + 0.0173 log2 C
+R2 = 0.93
+300
+600
+1200
+2400
+Configurations C
+0.295 + 0.0302 log2 C
+R2 = 0.98
+N = 4000
+Smaller N (lighter = fewer)
+Fit a + b log2 C
+Figure 18 | Win rate against the number of configurations C, one curve per number of synthetic
+datasets N, with the fit a + b log2 C at N = 4,000, for K = 25, 64, and 200.
+35
+
+
+A.4.7 Selected hyperparameters
+Figures 19–21 show all hyperparameters of each model, as in Figure 9.
+10−2
+10−1
+0
+1
+2
+Density ratio
+Learning rate
+KS 0.39
+0.4
+0.6
+0.8
+1.0
+0.0
+0.5
+1.0
+Feature fraction
+KS 0.09
+0.8
+1.0
+0.0
+0.5
+1.0
+Bagging fraction
+KS 0.08
+101
+102
+0.0
+0.5
+1.0
+# leaves
+KS 0.11
+100
+101
+0
+1
+2
+Density ratio
+Min. data in leaf
+KS 0.30
+False
+True
+0.0
+0.2
+0.4
+Extra trees
+101
+102
+0.0
+0.5
+1.0
+1.5
+Min. data per group
+KS 0.13
+10−2
+10−1
+100
+0.0
+0.5
+1.0
+Categorical L2
+KS 0.05
+10−2
+100
+102
+0.0
+0.5
+1.0
+Density ratio
+Categorical smoothing
+KS 0.06
+101
+102
+0.0
+0.5
+1.0
+1.5
+Max. cat. to one-hot
+KS 0.09
+0.5
+1.0
+0
+1
+2
+L1 regularization
+KS 0.22
+1
+2
+0.0
+0.5
+1.0
+L2 regularization
+KS 0.07
+Sampling distribution
+200 selected configurations (LightGBM)
+Figure 19 | All hyperparameters of LightGBM: the 200 selected configurations against the sampling
+distribution, as in Figure 9.
+36
+
+
+10−2
+10−1
+0
+1
+2
+Density ratio
+Learning rate
+KS 0.41
+0.4
+0.6
+0.8
+1.0
+0.0
+0.5
+1.0
+1.5
+Feature fraction
+KS 0.10
+0.8
+1.0
+0.0
+0.5
+1.0
+Bagging fraction
+KS 0.06
+101
+102
+0.0
+0.5
+1.0
+# leaves
+KS 0.11
+100
+101
+0
+1
+2
+Density ratio
+Min. data in leaf
+KS 0.25
+False
+True
+0.0
+0.2
+0.4
+Extra trees
+101
+102
+0.0
+0.5
+1.0
+1.5
+Min. data per group
+KS 0.14
+10−2
+10−1
+100
+0.0
+0.5
+1.0
+Categorical L2
+KS 0.07
+10−2
+100
+102
+0.0
+0.5
+1.0
+Density ratio
+Categorical smoothing
+KS 0.03
+101
+102
+0.0
+0.5
+1.0
+Max. cat. to one-hot
+KS 0.04
+0.5
+1.0
+0
+1
+2
+L1 regularization
+KS 0.26
+1
+2
+0.0
+0.5
+1.0
+L2 regularization
+KS 0.09
+False
+True
+0.0
+0.2
+0.4
+0.6
+0.8
+Share
+TabPrep enabled
+2000
+1000
+0.0
+0.2
+0.4
+OpenFE max. feat.
+(n = 37 with TabPrep)
+100
+500
+0.0
+0.2
+0.4
+Cat. comb. max. feat.
+(n = 37 with TabPrep)
+50
+1
+100
+0.0
+0.2
+0.4
+Random subsets
+(n = 37 with TabPrep)
+500
+100
+1000
+0.0
+0.2
+0.4
+Share
+Group-by max. feat.
+(n = 37 with TabPrep)
+Sampling distribution
+200 selected configurations (LightGBM-TabPrep)
+Figure 20 | All hyperparameters of LightGBM-TabPrep, as in Figure 9. The TabPrep settings count
+only the 37 selected configurations with TabPrep enabled.
+37
+
+
+10−4
+10−3
+0.0
+0.5
+1.0
+1.5
+2.0
+Density ratio
+Learning rate (AdamW)
+KS 0.22
+10−3
+100
+0.0
+0.5
+1.0
+1.5
+Weight decay
+KS 0.14
+10−3
+10−2
+10−1
+0
+2
+4
+Learning rate (Muon)
+KS 0.52
+10−2
+101
+0.0
+0.5
+1.0
+Embedding init. scale
+KS 0.13
+0.0
+0.2
+0.4
+0.0
+0.5
+1.0
+Density ratio
+Dropout rate
+P(0): 0.50 / 0.58
+8 12 16 20 24 28 32
+0.00
+0.05
+0.10
+0.15
+0.20
+Embedding dim
+1
+2
+3
+4
+0.0
+0.1
+0.2
+0.3
+# blocks
+Sampling distribution
+200 selected configurations (MLP)
+Figure 21 | All hyperparameters of the MLP, as in Figure 9. The dropout rate is 0 with probability
+0.5 and uniform otherwise; the label gives the share at 0 (sampled / selected), and the curve is the
+continuous part.
+38
+
+
+B. Theory
+B.1 Setup and main propositions
+B.1.1 Setup
+Fix a model f, a learning algorithm A, a candidate pool C of C hyperparameter configu-
+rations, and a deployment budget 1 ≤K ≤C. A subset is S ∈ΠK := {S ⊆C : |S| = K}.
+The goal is to choose one subset that performs well on the target distribution of real tasks,
+using synthetic tasks for meta-training. Performance is win rate against a uniformly random
+subset of the same size. All statements condition on the candidate pool.
+Tasks and deployment. Let P and Q be the target (e.g. TabArena or BeyondArena bench-
+marks [11, 12]) and source (e.g. sampled from the TabICLv2 prior [3]) distributions over
+tasks. Sample a target task τ ∼P, which specifies a row distribution Pτ. Sample the rows
+of D independently from Pτ and split the dataset into training, validation, and test sets of
+prescribed sizes. For each configuration, fit
+ˆfc = A(f, c, ξ, D),
+where ξ collects the randomness in the dataset split and in the training of every configuration
+(initialization, subsampling, and any other stochastic step of A). Each configuration is fitted
+once per task, and every subset that contains it, including the random reference it is
+compared against, reuses that fit. A deployment rule E takes as an input a subset (its fitted
+members, train and validation subsets) and outputs a single predictor. We then score it on
+the test set:
+L(S; D, ˆf, ξ) = ℓ
+(
+E(S; D, ˆf, ξ); Dtest
+)
+.
+(1)
+We require that E be deterministic given its inputs and that the same E be applied to a
+subset and to any subset it is compared against.
+Two deployment rules. We use the two regimes of Erickson et al. [11], Purucker et al.
+[12]. Tuned (T) keeps the validation-best member,
+ET(S) = ˆfc∗,
+c∗= arg min
+c∈S
+ℓ( ˆfc; Dval).
+Tuned and ensembled (T+E) runs B steps of greedy ensemble selection with replacement on
+the validation split [36]. Writing wc for the share of the B slots taken by configuration c,
+ET+E(S) =
+∑
+c∈S
+wc ˆfc,
+wc ≥0,
+∑
+c∈S
+wc = 1.
+The tuned regime is the special case of tuned and ensembled that puts all weight on one
+member.
+Population objective. Let h(a, b) = 1a<b + 1
+21a=b. The per-task utility of a subset is
+u(S, τ) = ED, ˆf,ξ|τ, R∼Unif(ΠK)
+h
+h
+(
+L(S; D, ˆf, ξ), L(R; D, ˆf, ξ)
+)i
+,
+(2)
+and the population objective is
+UP(S) = Eτ∼P[u(S, τ)],
+S∗
+P ∈arg max
+S∈ΠK
+UP(S).
+(3)
+A uniformly random subset scores ES∼Unif(ΠK)[UP(S)] = 1/2 by exchangeability (proof in
+§B.2), so UP(S) −1/2 is the gain over random search at the same budget.
+39
+
+
+Evaluations and statistics. Given a task τ, let ω = (D, ˆf, ξ) be the evaluation, with law µτ
+on a space Ω, and write L(S; ω) for the deployed loss equation 1. The deployment rule is
+deterministic given its inputs, so once ω is fixed the deployed loss of every subset is fixed:
+L(S; ·) is a map on Ω, which we assume measurable, as the expectation in equation 2 already
+requires. Write ¯P = Eτ∼P[µτ] and ¯Q = Eτ∼Q[µτ] for the marginal laws of ω. A statistic is a
+measurable map Φ : Ω→X, and PΦ = ¯P ◦Φ−1, QΦ = ¯Q ◦Φ−1 are the laws of Φ(ω). In
+this notation, equation 2–equation 3 read
+UP(S) = Eτ∼P Eω∼µτ ER[h(L(S; ω), L(R; ω))] ,
+R ∼Unif(ΠK) independent of (τ, ω).
+B.1.2 Upper bound on the improvement
+Suppose we have access to the target distribution P itself, so UP is known on all of ΠK and
+selection carries no estimation error. We ask how many of the subsets in ΠK improve upon
+the best subset seen so far. Suppose the M =
+(C
+K
+)
+subsets are revealed in uniformly random
+order. A subset improves the oracle’s choice precisely when its utility sets a new record.
+Proposition 1 (Oracle record count) If the oracle utilities are distinct, the ith revealed subset
+sets a record with probability 1/i over the uniformly random reveal order. Counting the initial
+subset as a record,
+E[number of records among the M subsets] =
+M
+∑
+i=1
+1
+i = log M + O(1).
+The count is a sum of independent Bernoulli variables with mean log M + O(1) [40]:
+improvements arrive at rate 1/i and thin out as the search proceeds. Since log M =
+K log(C/K) + O(K), at fixed K ≪C doubling the pool adds about K log 2 of them. Meta-
+tuning thus is the problem of recovering enough of the log M improvements, having access
+only to the N source tasks.
+B.1.3 Transfer from synthetic to real tasks
+The target distribution is not available for meta-tuning: we observe only a benchmark of
+real tasks, which we reserve for evaluation. We therefore select the subset on a source
+distribution Q of synthetic tasks and transfer it. We sample N independent source tasks
+τi ∼Q and one evaluation (Di, ˆfi, ξi) for each. Write Li(S) = L(S; Di, ˆfi, ξi). The empirical
+counterpart of equation 3 iŝ
+UN(S) = 1
+N
+N
+∑
+i=1
+ER∼Unif(ΠK) [h(Li(S), Li(R))] ,
+(4)
+and E[̂UN(S)] = UQ(S) for every fixed subset. Its expectation is UQ, not UP; we quantify
+the price of this approximation.
+Assumption 1 (Comparison fidelity) Source and target subset comparisons satisfy
+sup
+S,T ∈ΠK
+|[UP(S) −UP(T )] −[UQ(S) −UQ(T )]| ≤ε.
+(5)
+Proposition 2 (Transfer of subset selection) Let̂ S be the subset returned by the selector
+and
+ηN = max
+S∈ΠK̂ UN(S) −̂ UN(̂S)
+40
+
+
+its suboptimality on the source tasks. Under Assumption 1, with probability at least 1 −δ,
+UP(S∗
+P) −UP(̂S) ≤ε + 2
+s
+log(2
+(C
+K
+)
+/δ)
+2N
++ ηN.
+(6)
+The bound separates selection error, source-target mismatch, and finite-task uncertainty.
+The number of source tasks reduces the second term, of order
+p
+log M/N, but cannot
+remove systematic reversals of subset preferences (ε) or the error of the selection algorithm
+(ηN). We next investigate when Assumption 1 holds.
+Lemma 1 (Comparison discrepancy through a statistic) The comparison factors through
+Φ if for every (S, R) ∈ΠK × ΠK there is a measurable gS,R : X →[0, 1], depending on (S, R)
+only, such that
+h(L(S; ω), L(R; ω)) = gS,R(Φ(ω))
+for every ω ∈Ω.
+(7)
+If the comparison factors through Φ, then Assumption 1 holds with ε = 2 TV(PΦ, QΦ), where
+TV(P, Q) = supA |P(A) −Q(A)|. If moreover Φ = κ ◦Ψ for a statistic Ψ : Ω→Y and a
+measurable κ : Y →X, then the comparison also factors through Ψ, and TV(PΦ, QΦ) ≤
+TV(PΨ, QΨ).
+Proposition 3 (Rank sufficiency) Let Φ(ω) be the ordering of the M losses {L(S; ω)}S∈ΠK,
+ties recorded. Then, for any deployment rule, Assumption 1 holds with ε = 2 TV(PΦ, QΦ).
+Under ET the same holds for the finer statistic Ψ(ω), the validation and test orderings of the
+pool C.
+Hence what must transfer is the ranking of subsets by deployed loss. Under T this reduces
+to the validation and test ordering of individual configurations. Whether the synthetic prior
+preserves these orderings is an empirical question.
+B.1.4 Analysis of the forward-selection heuristic
+The inner expectation in equation 4 runs over
+(C
+K
+)
+references, so in practice we draw R
+independent references Rr ∼Unif(ΠK) and optimize
+eUN,R(S) =
+1
+NR
+N
+∑
+i=1
+R
+∑
+r=1
+h(Li(S), Li(Rr)) .
+(8)
+Proposition 4 (Reference averaging) Write ER and VarR for the average over the R refer-
+ence draws with the source tasks held fixed. For every fixed subset,
+ER
+h
+eUN,R(S)
+i
+=̂ UN(S),
+VarR
+(
+eUN,R(S)
+)
+≤1
+4R.
+(9)
+References thus add no bias, and their sampling noise vanishes as 1/R.
+Forward selection. Exhaustive search over
+(C
+K
+)
+subsets is impractical. Starting from S0 = ∅,
+we run
+ck ∈arg max
+c∈C\Sk−1
+eUN,R(Sk−1 ∪{c}),
+Sk = Sk−1 ∪{ck},
+k = 1, . . . , K.
+We return exactly K configurations, even if an addition lowers the objective. The objective
+is not monotone in general, so forward selection is a heuristic with no generic greedy-
+optimality guarantee. In Proposition 2, both the gap between eUN,R and̂ UN and the greedy
+suboptimality enter through ηN.
+41
+
+
+B.2 Proofs
+Proof of the random-K baseline. Let S, R be i.i.d. uniform on ΠK, independent of (τ, ω),
+and write a = L(S; ω), b = L(R; ω), so that ES[UP(S)] = Eτ,ω ES,R[h(a, b)]. For fixed
+(τ, ω), the pairs (S, R) and (R, S) have the same law, so ES,R[h(a, b)] = ES,R[h(b, a)], and
+adding the two with h(a, b) + h(b, a) = 1 gives ES,R[h(a, b)] = 1
+2 for every (τ, ω), hence
+ES[UP(S)] = 1
+2.
+□
+Proof of Proposition 1. Write M =
+(C
+K
+)
+and let Ui = UP(Si) be the utility of the ith
+revealed subset. Let ρi be the rank of Ui, from largest to smallest, among U1, . . . , Ui, so
+that Ii = 1ρi=1 indicates a record. We first show that ρ1, . . . , ρM are independent with ρi
+uniform on {1, . . . , i}; this is the classical record theorem of Rényi [40].
+Let π be the permutation that sorts (U1, . . . , UM). Because the reveal order is uniform
+and the utilities are distinct, every ordering is equally likely, so π is uniform over the M!
+permutations. The rank vector (ρ1, . . . , ρM) is a function of π, and this function is a bijection
+onto {1} × {1, 2} × · · · × {1, . . . , M}: it is injective because π is recovered by inserting Ui at
+position ρi among U1, . . . , Ui−1 for i = 1, . . . , M, and both sets have M! elements. Hence
+(ρ1, . . . , ρM) is uniform on that product set, and for each marginal we can calculate
+Pr(ρi = ki) =
+1
+∑
+k1=1
+2
+∑
+k2=1
+· · ·
+i−1
+∑
+ki−1=1
+i+1
+∑
+ki+1=1
+· · ·
+M
+∑
+kM=1
+1
+M! = M!
+i
+· 1
+M! = 1
+i ,
+since the retained sums have 1 · 2 · · · (i −1) · (i + 1) · · · M = M!/i terms. For independence,
+we observe that Pr(ρ1 = k1, . . . , ρM = kM) = 1/M! = Pr(ρ1 = k1) · · · Pr(ρM = kM).
+Therefore we also have that Pr(Ii = 1) = Pr(ρi = 1) = 1/i, and I1, . . . , IM are independent
+because each is a function of a different ρi. By linearity, E P
+i Ii = P
+i Pr(Ii = 1) = HM,
+and comparing the sum with
+R
+x−1dx gives log(M + 1) ≤HM ≤1 + log M. Finally
+(C/K)K ≤M ≤(C/K)KeK gives log M = K log(C/K) + O(K).
+□
+Proof of Proposition 2. Fix S ∈ΠK. By equation 4, ˆUN(S) is the mean of N i.i.d.
+terms in [0, 1] with mean UQ(S). Hoeffding’s inequality gives Pr(| ˆUN(S) −UQ(S)| >
+t) ≤2 exp(−2Nt2), and a union bound over the
+(C
+K
+)
+subsets gives
+Pr
+(
+sup
+S∈ΠK
+| ˆUN(S) −UQ(S)| > t
+)
+≤2
+C
+K
+
+exp(−2Nt2).
+(10)
+Setting the right-hand side to δ and solving for t yields tN =
+q
+log(2
+(C
+K
+)
+/δ)/(2N). On the
+complementary event, which has probability at least 1 −δ, let S∗maximize UP. Then
+UP(S∗) −UP( ˆS) ≤UQ(S∗) −UQ( ˆS) + ε
+by equation 5
+≤ˆUN(S∗) −ˆUN( ˆS) + ε + 2tN
+by uniform concentration
+≤ηN + ε + 2tN
+by the definition of ηN.
+The bound holds for any selector. Ours maximizes the Monte Carlo objective eUN,R rather
+than̂ UN, and both that gap and the greedy heuristic’s are part of ηN.
+□
+Proof of Lemma 1. Since R ∼Unif(ΠK) is independent of (τ, ω) and all terms are bounded,
+the objective equation 3 and the factoring equation 7 give
+UP(S) = Eτ∼P Eω∼µτ ER[h(L(S; ω), L(R; ω))]
+= ER Eτ∼P Eω∼µτ [gS,R(Φ(ω))] = ER EPΦ[gS,R],
+(11)
+42
+
+
+where the last equality uses that ¯P = Eτ∼P[µτ] is the marginal law of ω and PΦ is the
+law of Φ(ω) under it; likewise UQ(S) = ER EQΦ[gS,R]. For any measurable g : X →[0, 1],
+the layer-cake formula gives |EP g −EQg| = |
+R 1
+0 (P(g > t) −Q(g > t)) dt| ≤TV(P, Q).
+Applying it to each gS,R and averaging over R gives |UP(S) −UQ(S)| ≤TV(PΦ, QΦ) for
+every S. Applying this to S and T and using the triangle inequality yields equation 5 with
+ε = 2 TV(PΦ, QΦ).
+If Φ = κ ◦Ψ, then equation 7 holds with Ψ and gS,R ◦κ in place of Φ and gS,R. Since
+{Φ ∈A} = {Ψ ∈κ−1(A)}, |PΦ(A)−QΦ(A)| = |PΨ(κ−1(A))−QΨ(κ−1(A))| ≤TV(PΨ, QΨ)
+for every A.
+□
+Proof of Proposition 3. Let Φ(ω) = (rankω(S))S∈ΠK be the vector of ranks of the losses
+{L(S; ω)}S∈ΠK, equal losses receiving equal rank; it takes values in a finite set. Since
+h(a, b) depends only on whether a < b, a = b, or a > b, and dense ranks preserve
+this, h(L(S; ω), L(R; ω)) = 1rankω(S)<rankω(R) + 1
+21rankω(S)=rankω(R), which is equation 7.
+Lemma 1 gives ε = 2 TV(PΦ, QΦ).
+Under ET, let Ψ(ω) be the pair of dense-rank vectors of the pool C under the validation
+losses and under the test losses. The deployed member of S is its validation-rank minimizer,
+ties broken by a fixed rule, and the deployed losses of two subsets compare as the test ranks
+of their deployed members, so Φ = κ ◦Ψ for a fixed κ. The second part of Lemma 1 applies.
+□
+Proof of Proposition 4. Fix S, hold the source tasks fixed, and set Zr = 1
+N
+PN
+i=1 h(Li(S),
+Li(Rr)), so that eUN,R(S) = R−1 P
+r Zr. The Zr are i.i.d. functions of the independent draws
+Rr, lie in [0, 1], and have mean̂ UN(S) by equation 4. Hence ER[eUN,R(S)] =̂ UN(S), and
+VarR(eUN,R(S)) = R−1 Var(Z1) ≤1/(4R), since a variable supported on [0, 1] has variance
+at most 1/4.
+□
+43

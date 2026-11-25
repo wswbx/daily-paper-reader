@@ -1,0 +1,1970 @@
+ElTab: Elastically Looped Tabular Transformers
+Mieszko Komisarczyk1,∗, Saurabh Mathur1,∗, Maurice Kraus1, Sriraam Natarajan2, Kristian Kersting1,3,4
+1 Department of Computer Science, Technical University of Darmstadt, Germany
+2 Department of Computer Science, University of Texas at Dallas, USA
+3 Hessian Center for Artificial Intelligence (hessian.AI), Darmstadt, Germany
+4 German Research Center for Artificial Intelligence (DFKI), Darmstadt, Germany
+∗These authors contributed equally.
+Abstract
+Tabular transformer models such as TabPFN
+achieve strong predictive performance but in-
+cur substantial inference costs, making them
+difficult to deploy in resource-constrained set-
+tings. While looped transformers reduce pa-
+rameter count through weight sharing, they
+can lose significant predictive power when
+stopped early.
+To address this challenge,
+we introduce the Elastically Looped Tabular
+Transformer (ElTab), a single model trained
+to operate across different computational
+budgets through supervision at randomly
+sampled early exits.
+Across 30 OpenML
+classification datasets, a single ElTab model
+matches six depth-specific looped models
+while cutting training cost by more than half,
+and matches a 12-layer TabPFN-style base-
+line with 25% fewer inference FLOPs. These
+results show that elastic-depth training yields
+a single model that adapts to the deployment
+budget at hand, offering a favorable trade-off
+among predictive performance, storage, and
+computational cost.
+1
+INTRODUCTION
+Tabular
+foundation
+models
+such
+as
+TabPFN(Hollmann et al., 2025) have emerged as
+general-purpose models for tabular prediction, achiev-
+ing
+strong
+predictive
+performance
+across
+diverse
+datasets. They predict on a new dataset in a single
+forward pass, conditioning a pretrained Transformer
+on the dataset’s labeled examples instead of fitting
+dataset-specific parameters. However, this in-context
+prediction is expensive, as its cost grows with both
+backbone depth and attention that is quadratic in
+the number of context rows.
+Since depth is fixed
+at training time, a resource-constrained deployment
+cannot trade accuracy for compute at inference; its
+only option is to train a smaller model.
+Looped Transformers (Giannou et al., 2023) reduce the
+parameter count while preserving effective depth by re-
+peatedly applying a shared stack of blocks. In tabular
+models, a single looped block has recently been shown
+to match a six-layer nanoTabPFN (Balef et al., 2026).
+However, weight sharing alone does not make a model
+computationally adaptive. While a looped model can
+be stopped early, its intermediate representations are
+never trained to support predictions. In our experi-
+ments (Figure 3), stopping a fixed-depth looped model
+after three of its six loops costs 7.3 AUC-ROC points
+on average across 30 OpenML datasets.
+To address this problem, we introduce ElTab, an Elas-
+tically Looped Tabular Transformer, whose recurrence
+depth can be adjusted to the computational budget
+available at inference time.
+At each training step,
+ElTab supervises both the full-depth output and one
+randomly sampled shallower exit, and distills the full-
+depth prediction into that exit. Thus, ElTab learns to
+predict after any loop, saving compute proportional to
+the context size for each skipped loop. To summarize,
+we make the following contributions:
+• We introduce ElTab, an elastically looped tabular
+foundation model that supports 6 inference bud-
+gets without retraining.
+• We propose an elastic-depth training objective
+that combines early-exit supervision with self-
+distillation.
+• We evaluate ElTab on 30 OpenML classification
+benchmarks across 6 inference budget, showing
+that it matches an ensemble of 6 depth-specific
+looped models while reducing the training cost by
+57%. It matches the predictive performance of a
+arXiv:2610.41819v1  [cs.LG]  30 Oct 2026
+
+
+I use this title instead because the last one was very long
+1
+2
+3
+4
+5
+6
+0.5
+0.6
+0.7
+0.8
+0.9
+1
+box: IQR; line: median; whiskers: 1.5×IQR; dots: outliers
+Inference budget (loops; 1 loop = 3 blocks)
+Predictive Performance (AUC-ROC)
+(a) A single ElTab model matches the oracle at every budget
+ElTab (one model)
+Fixed-depth: random training depth
+Fixed-depth: oracle training depth
+0
+10
+20
+30
+40
+50
+60
+ElTab
+(one model)
+Six
+budget-specific
+models
+stacked gray segments: Looped3x1–Looped3x6
+measured on one NVIDIA A100
+34.89 kWh saved
+25.73
+60.62
+Energy to obtain all six depths
+(b) ElTab needs 58% less training energy (kWh)
+Figure 1: ElTab matches six budget-specific models, cutting training energy consumption by more
+than half. (a) Per-dataset AUC-ROC on 30 OpenML datasets at each inference budget. Fixed-depth looped
+models are budget-specific, because their depth is set at training time, before the inference budget is known.
+This depth can be chosen at random (gray) or, as an idealized upper bound, by an oracle that knows the budget
+in advance (orange). A single ElTab model (blue), trained without knowing the budget, matches the oracle at
+every budget. (b) Estimated GPU energy for full training on one NVIDIA A100. Covering all six budgets with
+budget-specific models requires training six models (gray segments), which consume 60.6 kWh in total. A single
+ElTab model covers the same budgets with 25.7 kWh.
+12-layer TabPFN-style baseline while using 25%
+fewer inference FLOPs.
+• We perform a centered kernel alignment study
+showing that elastic training makes latent rep-
+resentations similar across depths, demonstrating
+its robustness to truncation.
+2
+RELATED WORK
+ElTab is related to three lines of research: tabular
+foundation models, looped Transformers, and meth-
+ods for elastic inference budgets.
+Tabular foundation models. Tabular foundation
+models are pretrained neural networks that solve new
+tabular prediction tasks without task-specific training.
+They predict on a new dataset by conditioning the
+network on the dataset’s labeled examples alongside
+the test queries, producing predictions in a single for-
+ward pass. The first such model, TabPFN (Hollmann
+et al., 2022, 2025), is pretrained on millions of syn-
+thetic datasets sampled from a prior (M¨uller et al.,
+2021), yielding strong predictive performance across
+diverse tabular benchmarks. Its architecture is based
+on the Transformer (Vaswani et al., 2017), with atten-
+tion across rows that makes predictions invariant to
+row order. However, inference cost grows quadratically
+with the number of rows and linearly with the num-
+ber of layers. Successive TabPFN versions have grown
+deeper (Grinsztajn et al., 2025), raising inference cost
+and limiting their use in compute-constrained settings.
+One line of work lowers inference cost by replacing
+some or all Transformer layers with state-space mod-
+els (Koch et al., 2025; Komisarczyk et al., 2026b), trad-
+ing some of attention’s expressiveness for efficiency.
+This trade-off is fixed by the architecture at training
+time. We instead repeatedly apply a few shared layers
+and train them elastically, allowing the trade-off be-
+tween accuracy and compute to be chosen at inference
+time.
+Looped Transformers.
+Looped Transformers ad-
+dress the tension between the need for computational
+depth and parameter efficiency by applying the same
+layers repeatedly (Giannou et al., 2023). Instead of
+learning a deep stack of distinct layers, they learn a
+shallow stack and feed its output back as input over
+several iterations, refining the representation at no ad-
+ditional parameter cost. Applying a single block recur-
+rently can match the performance of a deeper stack of
+distinct blocks (Dehghani et al., 2018). Small looped
+models also match or exceed much larger models on
+reasoning benchmarks such as ARC-AGI (Jolicoeur-
+Martineau, 2025; Komisarczyk et al., 2026a).
+For
+tabular data, a single looped nanoTabPFN block
+has recently been shown to match a six-layer nano-
+TabPFN (Balef et al., 2026). However, looping alone
+
+
+Mieszko Komisarczyk, Saurabh Mathur, Maurice Kraus, Sriraam Natarajan, Kristian Kersting
+Shared stack Fµ (B blocks)
+f1
+⋯
+fB
+h (` ¡ 1)
+h (`)
+repeat for ` = 1; …; L
+D; Xq
+Embedder
+EÃ
+Decoder
+gÁ
+P(yq j D; Xq; M)
+exit at
+` = M
+Figure 2: ElTab architecture. ElTab predicts the labels of query rows from a labeled context using three
+components. An embedder (Eψ) turns the table into token representations. A shared stack of Transformer
+blocks (Fθ) then refines these representations and can be applied repeatedly, up to L times. Finally, a decoder
+(gϕ) turns the refined query representations into class probabilities. Because ElTab is trained to predict after
+every loop, it can stop after any loop M ≤L, letting the deployment choose how much compute to spend. All
+loops share the same weights and decoder.
+does not let a model adapt to the inference compute
+budget. Truncating a looped model trained at a fixed
+depth degrades its accuracy substantially (Section 4).
+ElTab addresses this limitation by training a looped
+TabPFN-style model to predict at any loop count.
+Elastic inference depth. Deployment settings differ
+in the compute they can afford, yet training a separate
+model for each budget multiplies training and stor-
+age costs. Early-exit networks address this problem
+by attaching predictions to intermediate layers, allow-
+ing a single model to stop inference before the final
+layer (Teerapittayanon et al., 2016; Xin et al., 2020;
+Elhoushi et al., 2024). Their shallower exits improve
+when trained to match the final prediction (Zhang
+et al., 2019). The same principle has been applied to
+looped Transformers for latent reasoning, where con-
+ditioning each loop on its position and step size allows
+truncated models to degrade gracefully (Jeddi et al.,
+2026). ElTab extends elastic-depth training to tabular
+in-context learning.
+3
+ELASTICALLY LOOPED
+TABULAR TRANSFORMERS
+Tabular foundation models such as TabPFN are effec-
+tive but expensive. Inference compute budgets may
+change dynamically, precluding its use. Training sep-
+arate models for each budget is infeasible due to high
+training and storage costs. We aim to build a single
+model that can support tabular predictive inference at
+different inference compute budgets. We formalize this
+budget-constrained inference as follows,
+Given: a labeled context D = {(xi, yi)}n
+i=1, unla-
+beled queries Xq, and a compute budget c ∈C.
+To
+Do:
+Estimate the predictive probabilities
+{P(Y |x; D)}x∈Xq at a cost no greater than c.
+We address this problem by introducing the ElTab
+(Elastically Looped Tabular Transformers) family of
+models.
+ElTab models consist of a small stack of
+template layers, applied repeatedly at inference, and
+trained to predict after every repetition. The number
+of repetitions determines the cost and can be selected
+at deployment to fit the budget.
+3.1
+The ElTab Family of Models
+We formalize the ElTab family of models through three
+components. The embedder maps the context and
+the queries to token representations. The template
+stack refines these representations by applying the
+same layers repeatedly.
+Finally, the decoder maps
+the refined representations to class logits. The tem-
+plate stack is applied at most L times, and the de-
+ployed model meets a budget by choosing how many
+times to apply it. We formalize ElTab as follows.
+Definition 1 (ElTab architecture). Let Eψ denote the
+embedder, let
+F [B]
+θ
+= fθB ◦· · · ◦fθ1
+(1)
+be a stack of B Transformer blocks, and let gϕ denote
+the decoder. Given a context set D and query inputs
+Xq, the embedder produces the initial representations
+h(0) = Eψ(D, Xq).
+(2)
+Let L denote the maximum supported repetition depth.
+Repeated applications of the stack produce
+h(ℓ) = F [B]
+θ
+
+h(ℓ−1)
+,
+ℓ= 1, . . . , L.
+(3)
+The parameters θ = (θ1, . . . , θB) are shared across all
+applications of the stack.
+Let h(ℓ)
+q
+denote the query-token representations con-
+tained in h(ℓ). The prediction logits at depth ℓare
+zℓ= gϕ
+
+h(ℓ)
+q
+
+,
+ℓ= 1, . . . , L.
+(4)
+
+
+I use this title instead because the last one was very long
+The same decoder gϕ is used at every depth.
+Given a computational budget c, the inference depth is
+M(c) = max {m ∈{1, . . . , L} | CElTab(m) ≤c} , (5)
+assuming that the feasible set is nonempty. Under bud-
+get c, ElTab applies the stack M(c) times and returns
+zM(c).
+The modules (Eψ, F [B]
+θ
+, gϕ) define the ElTab architec-
+ture, L is its maximum repetition depth, and M(c) is
+its budget-dependent inference depth.
+The model applies B · M blocks while storing the pa-
+rameters of only B. Its inference cost therefore grows
+approximately linearly with M at a fixed parameter
+count.
+3.2
+Training
+ElTab is pretrained on synthetic classification tasks
+drawn from a prior π, following the training proto-
+col of recent TabPFN-style models (Koch et al., 2025;
+Komisarczyk et al., 2026b). Each task consists of a
+labeled context and a set of query examples. At ev-
+ery training step, we sample a shortcut depth k uni-
+formly from {1, . . . , L −1} and perform two separate
+forward passes through the same shared model: a full-
+depth pass with L applications of the block stack and
+a shortcut pass with k applications. Both predictions
+are supervised using the query labels. In addition, the
+shortcut prediction is distilled from the detached full-
+depth prediction, which serves as a fixed teacher for
+the distillation term. Sampling a new shortcut depth
+at each step provides supervision to every depth over
+the course of training. We formalize this training ob-
+jective below.
+Definition 2 (ElTab objective). Let Θ = (ψ, θ, ϕ) col-
+lect all parameters and τ = (D, Xq, yq) denote a task.
+For a sampled depth k, the loss function is defined as
+L(Θ; τ, k) = CE(yq, zL) + λs CE(yq, zk)
++ λd T 2 KL
+ sg[pL] ∥pk
+
+,
+(6)
+where pℓ= softmax(zℓ/T) with temperature T, and
+sg[·] denotes the stop-gradient operator. During model
+training, we minimize the expected loss
+Eτ∼π, k∼UL
+
+L(Θ; τ, k)
+
+,
+(7)
+where UL is the uniform distribution over {1, . . . , L −
+1}.
+We use λs = λd = 0.1 and T = 2.
+These small
+weights keep the full-depth term dominant.
+Setting
+both weights to zero recovers standard fixed-depth
+training. We optimize with AdamW at a learning rate
+of 10−4, an effective batch size of 64, and gradient-
+norm clipping at 1.0 for 200 epochs. Algorithm 1 sum-
+marizes the procedure.
+Algorithm 1 ElTab B×L Training
+Require: Task prior π; embedder Eψ; shared stack
+F [B]
+θ
+of B blocks; decoder gϕ; maximum loop depth
+L; weights λs, λd; temperature T
+1: while not converged do
+2:
+Sample (D, Xq, yq) ∼π
+3:
+Sample k ∼U({1, . . . , L −1})
+4:
+H(0)
+L
+←Eψ(D, Xq)
+▷full-depth forward pass
+5:
+for ℓ= 1, . . . , L do
+6:
+H(ℓ)
+L
+←F [B]
+θ
+
+H(ℓ−1)
+L
+
+7:
+end for
+8:
+zL ←gϕ
+
+H(L)
+L,q
+
+9:
+H(0)
+k
+←Eψ(D, Xq)
+▷separate shortcut
+forward pass
+10:
+for ℓ= 1, . . . , k do
+11:
+H(ℓ)
+k
+←F [B]
+θ
+
+H(ℓ−1)
+k
+
+12:
+end for
+13:
+zk ←gϕ
+
+H(k)
+k,q
+
+14:
+p(T )
+L
+←softmax(zL/T)
+15:
+p(T )
+k
+←softmax(zk/T)
+16:
+L ←CE(yq, zL) + λs CE(yq, zk)
++λdT 2DKL
+
+sg[p(T )
+L ]
+ p(T )
+k
+
+17:
+Update Θ = (ψ, θ, ϕ) using ∇ΘL
+18: end while
+Because the shortcut depth is sampled uniformly at
+each training step, every depth below L receives su-
+pervision over the course of training. The additional
+shortcut forward pass is used only during training. At
+inference time, ElTab performs a single forward pass
+and stops after the selected number of complete ap-
+plications of the shared block stack.
+Thus, a single
+set of learned parameters supports multiple accuracy–
+compute operating points.
+Algorithm 2 summarizes
+the inference procedure.
+As the inference depth in-
+creases, the computational cost grows linearly with the
+number of loops, whereas the parameter count remains
+fixed. The following proposition formalizes these prop-
+erties.
+
+
+Mieszko Komisarczyk, Saurabh Mathur, Maurice Kraus, Sriraam Natarajan, Kristian Kersting
+0.25
+0.5
+0.75
+1
+1.25
+1.5
+−60
+−10
+−8
+−6
+−4
+−2
+0
+less compute than TabPFN
+axis compressed below −10 pp
+Inference FLOPs (× TabPFN)
+Mean AUC-ROC change vs. TabPFN
+(percentage points)
+1
+2
+3
+4
+5
+6
+Inference loops (1 loop = 3 blocks)
+ElTab (one model)
+TabPFN
+Fixed, 1 loop
+Fixed, 2 loops
+Fixed, 3 loops
+Fixed, 4 loops
+Fixed, 5 loops
+Fixed, 6 loops
+Figure 3: Looped models match TabPFN with less compute at the budget they were trained for;
+ElTab does so across budgets. Change in mean AUC-ROC on 30 OpenML datasets relative to TabPFN
+(dotted line; star at its own compute), plotted against inference compute. Gray lines show six fixed-depth looped
+models, each trained for one budget and evaluated after every loop; rings mark the budget each was trained for.
+Each fixed-depth model comes close to TabPFN at its own budget, even below TabPFN’s compute, but drops
+sharply when run at any other budget. A single ElTab model (blue) stays close to TabPFN across budgets,
+matching it to within 0.27 points while using 25% fewer FLOPs.
+Algorithm 2 ElTab B×L Inference
+Require: Context D; queries Xq; inference budget
+M ∈{1, . . . , L}; stack F [B]
+θ
+of B blocks
+h(0) ←Eψ(D, Xq)
+for ℓ= 1, . . . , M do
+h(ℓ) ←F [B]
+θ
+ h(ℓ−1)
+end for
+return gϕ
+
+h(M)
+q
+
+▷query class logits
+Proposition 1 (Inference cost of ElTab). Consider
+an ElTab model with a layer template stack Fθ of B
+blocks and a maximum depth of L loops. The model
+predicts the labels of queries Xq from a context D, with
+N rows in total, and stops after M ∈{1, . . . , L} loops
+chosen to fit the inference budget. Denote the cost of
+this prediction by C(M, N), the cost of one block on
+this input by c(N), and the combined cost of the em-
+bedder Eψ and the decoder gϕ by c0(N). Then:
+1. The cost grows linearly with the number of loops:
+C(M, N) = c0(N) + BM c(N).
+2. If the embedder and decoder costs are negligible,
+stopping after M loops costs a fraction M/L of
+full depth: C(M, N)/C(L, N) ≈M/L.
+3. For hidden dimension d, the template layer stack
+has Θ(Bd2) parameters, independent of M, L,
+and N.
+4. With dense attention among the N rows and feed-
+forward width proportional to d, each block costs
+c(N) = O(N 2d + Nd2).
+Hence C(M, N) =
+O
+ BM(N 2d + Nd2)
+
+.
+The proof is given in Appendix B.
+4
+EMPIRICAL EVALUATION
+We evaluate the accuracy, efficiency, and internal rep-
+resentations of ElTab through the following questions.
+
+
+I use this title instead because the last one was very long
+40
+50
+60
+70
+80
+90
+100
+AUC-ROC (%)
+Trained for 1, 2 and 3 loops
+ElTab (one model)
+Fixed-depth, 1 loop
+Fixed-depth, 2 loops
+Fixed-depth, 3 loops
+Fixed-depth, 4 loops
+Fixed-depth, 5 loops
+Fixed-depth, 6 loops
+mfeat-fourier
+mfeat-zernike
+MiceProtein
+mfeat-morphological
+mfeat-karhunen
+steel-plates-fault
+kc2
+car
+wdbc
+pc3
+vehicle
+pc4
+banknote-authentication
+breast-w
+qsar-biodeg
+eucalyptus
+pc1
+tic-tac-toe
+balance-scale
+cylinder-bands
+diabetes
+climate-model-simulation-crashes
+blood-transfusion-service-center
+analcatdata authorship
+ilpd
+credit-g
+cmc
+analcatdata dmft
+credit-approval
+dresses-sales
+40
+50
+60
+70
+80
+90
+100
+AUC-ROC (%)
+Trained for 4, 5 and 6 loops
+Figure 4: A single ElTab model outperforms every fixed-depth model across budgets on nearly all
+datasets. AUC-ROC on each of 30 OpenML datasets, averaged over all six inference budgets, for ElTab and
+for fixed-depth looped models trained for one to six loops (top: one to three loops; bottom: four to six loops).
+Averaging over budgets reflects deploying one model at every budget, including those it was not trained for.
+Datasets are sorted by ElTab’s gain over the mean of the six fixed-depth models. ElTab matches or outperforms
+all six fixed-depth models on 28 of 30 datasets. Its gains are largest where the fixed-depth models depend most
+on their training depth, such as mfeat-fourier and MiceProtein.
+(Q1) Can looped models match the predictive perfor-
+mance of a standard TabPFN-style model at lower
+inference compute?
+(Q2) Can a single ElTab model match six indepen-
+dently trained fixed-depth looped models across
+inference budgets?
+(Q3) How does elastic training change the similarity of
+hidden representations across loop depths?
+4.1
+Models
+To answer these questions, we compare ElTab with
+two kinds of baselines. ElTab loops a stack of three
+blocks up to six times and is trained with the elastic
+objective.
+The first baseline is a standard 12-block
+TabPFN-style model, as in (Koch et al., 2025), which
+we refer to as TabPFN. The second is a set of depth-
+specific looped models (Looped3×1 to Looped3×6),
+each looping the same three-block stack a fixed number
+of times and trained only at that depth. All models use
+TabPFN-style blocks with identical dimensions (Koch
+et al., 2025).
+
+
+Mieszko Komisarczyk, Saurabh Mathur, Maurice Kraus, Sriraam Natarajan, Kristian Kersting
+Table 1:
+Training computation and checkpoint stor-
+age for the fixed-depth looped models and ElTab.
+FLOPs include profiler-supported operations in the
+forward pass, loss computation, and backward pass.
+Total FLOPs are computed over 200 epochs with 4,672
+microbatches per epoch. For ElTab, the reported com-
+putation is the expectation over uniformly sampled
+shortcut depths M ∈{1, . . . , 5}, together with the full-
+depth trajectory.
+Model
+FLOPs per
+batch
+(×1012)
+Total
+FLOPs
+(×1018)
+Ckpt.
+size
+(MB)
+Looped3x1
+0.415
+0.3874
+27 MB
+Looped3x2
+0.801
+0.7487
+27 MB
+Looped3x3
+1.188
+1.110
+27 MB
+Looped3x4
+1.575
+1.471
+27 MB
+Looped3x5
+1.961
+1.833
+27 MB
+Looped3x6
+2.348
+2.194
+27 MB
+Looped total
+8.288
+7.744
+162 MB
+ElTab
+3.536
+3.304
+27 MB
+4.2
+Datasets
+We compare these models on the 30 binary and multi-
+class classification datasets from OpenML-CC18 (Bis-
+chl et al., 2017) that contain at most 2,000 observa-
+tions, 100 features, and 10 classes, following (Koch
+et al., 2025). Each dataset is split into a context and
+a query set. We report AUC-ROC on the query set,
+computed for multiclass datasets.
+4.3
+Metrics
+We assessed each model based on predictive quality
+and inference efficiency. Predictive quality was quan-
+tified using the area under the receiver operating char-
+acteristic curve (AUC-ROC). On each dataset, results
+were averaged over five reproducible 50/50 train–test
+partitions, with every partition stratified to preserve
+all observed classes in both subsets. We present the
+mean AUC-ROC in the main text and report its stan-
+dard deviation across splits in the appendix.
+We quantify the energy savings of the elastic model
+relative to a fixed-depth baseline as
+Energy savings = Efixed −Eelastic
+Efixed
+× 100%
+where Efixed and Eelastic denote the energy consumed
+by the fixed-depth and elastic models, respectively, un-
+der the same evaluation conditions. Positive values in-
+dicate that the elastic model consumes less energy than
+the fixed-depth baseline, while negative values indicate
+higher energy consumption. We compute the energy
+savings separately for each dataset and experimental
+run and report the mean across datasets.
+(Answer, Q1:
+Looped vs. TabPFN) To eval-
+uate whether looped models can match TabPFN
+while spending less compute at inference, we compare
+TabPFN with the six fixed-depth looped models and
+ElTab on all 30 datasets. Because each loop applies
+three blocks and TabPFN applies twelve, four loops
+match TabPFN’s compute, and fewer loops use less.
+Figure 3 shows how AUC-ROC changes with infer-
+ence compute for each model. Each fixed-depth model
+comes close to TabPFN at the budget it was trained
+for, even below TabPFN’s compute.
+For example,
+the model trained for three loops matches TabPFN
+to within 0.13 points while using 25% fewer FLOPs.
+However, each fixed-depth model drops sharply when
+run at other budgets, by up to 58.6 points. In contrast,
+ElTab stays close to TabPFN across budgets, matching
+it to within 0.27 points at the same 25% saving. There-
+fore, looped models can match the predictive perfor-
+mance of TabPFN at lower inference compute.
+(Answer, Q2:
+Elastic vs. budget-specific) To
+evaluate whether one elastic model can match a set of
+budget-specific models, we compare ElTab with the six
+fixed-depth looped models, Looped3×1 to Looped3×6.
+Since each fixed-depth model commits to a depth at
+training time, we consider two ways of choosing that
+depth: (1) at random, and (2) an idealized method
+with an oracle that knows the inference budget in ad-
+vance. Figure 1(a) shows the per-dataset AUC-ROC of
+ElTab and both choices at each budget. ElTab tracks
+the oracle at every budget, matching it to within 0.12
+points on average and 0.45 points at most. In con-
+trast, a randomly chosen depth falls well below both,
+because a fixed-depth model drops sharply when run
+at budgets for which it was not trained (Figure 3).
+Figure 4 confirms this pattern on individual datasets.
+ElTab matches or outperforms all six fixed-depth mod-
+els on 28 of 30 datasets, on average across the six bud-
+gets. However, without an oracle, matching ElTab’s
+accuracy at every budget would require training all
+six fixed-depth models. ElTab instead uses 57% fewer
+training FLOPs and 58% less GPU energy (Table 1,
+Figure 1(b)), and needs one stored model instead of
+six. Therefore, a single ElTab model can match six
+fixed-depth looped models across inference budgets,
+without knowing the budget at training time.
+(Answer,
+Q3:
+Representations) To evaluate
+how elastic training changes hidden representations,
+we compare ElTab with the fixed-depth Looped3×6
+model, which shares its architecture and maximum
+depth. For each model, we measure the similarity of
+hidden representations after each pair of loops i, j ∈
+
+
+I use this title instead because the last one was very long
+1
+2
+3
+4
+5
+6
+1
+2
+3
+4
+5
+6
+Depth j
+Depth i
+CKAElTab −CKALooped
+0
+2.5 · 10−2
+5 · 10−2
+7.5 · 10−2
+0.1
+CKA difference
+Figure 5: Elastic training keeps early-exit repre-
+sentations close to the final one. Similarity of the
+hidden representations of ElTab after loops i and j,
+as compared to an equivalent fixed-depth Looped3×6
+model. Similarity is measured as centered kernel align-
+ment (CKA), which ranges from 0 (unrelated) to 1
+(identical up to rotation and scaling). Positive values
+(green) mean that ElTab’s representations at the two
+loops are more similar than those of Looped3×6. All
+off-diagonal entries are positive, and the largest dif-
+ferences occur between the earliest loops and the final
+loop, showing that elastic training aligns representa-
+tions most where early exits need it most.
+{1, . . . , 6} using centered kernel alignment (CKA) (Ko-
+rnblith et al., 2019). In both models, representations
+at nearby loops are more similar than those at distant
+loops, consistent with gradual refinement across loops.
+Figure 5 shows how this similarity differs between the
+two models. Every off-diagonal entry is positive, and
+the difference is largest between the earliest loops and
+the final loop. These earliest loops are also where a
+truncated fixed-depth model loses the most accuracy.
+Elastic training therefore aligns representations most
+at the exits that need it most, consistent with ElTab’s
+small accuracy loss when stopped early.
+5
+CONCLUSIONS AND FUTURE
+WORK
+In this work, we addressed the challenge of deploy-
+ing tabular foundation models in settings where avail-
+able compute is limited and variable. We introduced
+ElTab, a looped model trained to predict after every
+loop, allowing inference depth to be chosen based on
+the budget available at deployment, without requiring
+any retraining. One ElTab model matches TabPFN
+with 25% less inference compute, and matches a sepa-
+rately trained model at every budget for less than half
+the training cost. Thus, ElTab’s elastic training en-
+ables a single model to adapt to the compute budget
+available at deployment.
+There are several directions for future work. ElTab’s
+elastic training can be extended to adaptive computa-
+tion by learning a stopping rule from its per-loop pre-
+dictions, spending more compute on difficult queries
+and less on easy ones (Bae et al., 2025). It can also be
+extended beyond loop counts to computational paths,
+by sampling which blocks are applied, skipped, or re-
+peated during training (Jeddi et al., 2026). Finally, be-
+cause the elastic objective adds no parameters, it can
+be extended to larger tabular foundation models by
+applying it to their looped backbones. Together with
+these directions, elastically trained looped models offer
+a favorable trade-off between predictive performance
+and inference cost for tabular foundation models de-
+ployed under limited and variable compute.
+AI use statement
+In this work, we used generative AI tools to assist
+in developing the software implementation of the pre-
+sented method, to create and edit the code that ren-
+ders the presented figures, and to provide writing as-
+sistance to improve the clarity of the presentation. We
+have not used generative AI tools to generate, clean,
+or reformat any data sets; develop theoretical mod-
+els or the method’s conceptual frameworks; formulate,
+prove, or write down mathematical claims; propose or
+refine any hypotheses; assist with translation; or inter-
+pret scientific results. All AI-assisted work was care-
+fully reviewed and verified by the authors for correct-
+ness, including checking all generated or edited code
+to ensure it correctly corresponds to the method pre-
+sented in the paper.
+We take responsibility for the
+final content of this work, including text, claims, or
+artifacts produced with the aid of generative AI.
+Acknowledgements
+We gratefully acknowledge support from the BMFTR
+project XEI (grant number 16IS24079B), the Clus-
+ter of Excellence “Reasonable AI” funded by the
+German Research Foundation (DFG) under Ger-
+many’s Excellence Strategy (EXC-3057), the DY-
+NAMIC center funded by the LOEWE program of
+the Hessian Ministry of Science and Arts (grant
+number LOEWE1/16/519/03/09.001(0009)/98), Ger-
+man Federal Ministry for Economic Affairs and
+Energy (BMWE) through EU-SAI (grant number
+13IPC040G), and the US Army Research Office (award
+W911NF2010224).
+
+
+Mieszko Komisarczyk, Saurabh Mathur, Maurice Kraus, Sriraam Natarajan, Kristian Kersting
+References
+Bae, S., Kim, Y., Bayat, R., Kim, S., Ha, J., Schuster,
+T., Fisch, A., Harutyunyan, H., Ji, Z., Courville,
+A. C., and Yun, S. (2025). Mixture-of-recursions:
+Learning dynamic recursive depths for adaptive
+token-level computation.
+Balef, A. R., Koshil, M., and Eggensperger, K. (2026).
+Is one layer enough? understanding inference dy-
+namics in tabular foundation models. arXiv preprint
+arXiv:2605.06510.
+Bischl, B., Casalicchio, G., Feurer, M., Gijsbers, P.,
+Hutter, F., Lang, M., Mantovani, R. G., van Rijn,
+J. N., and Vanschoren, J. (2017). Openml bench-
+marking suites. arXiv preprint arXiv:1708.03731.
+Dehghani, M., Gouws, S., Vinyals, O., Uszkoreit, J.,
+and Kaiser, L. (2018). Universal transformers. arXiv
+preprint arXiv:1807.03819.
+Elhoushi, M., Shrivastava, A., Liskovich, D., Hosmer,
+B., Wasti, B., Lai, L., Mahmoud, A., Acun, B.,
+Agarwal, S., Roman, A., et al. (2024). Layerskip:
+Enabling early exit inference and self-speculative de-
+coding.
+In Proceedings of the 62nd Annual Meet-
+ing of the Association for Computational Linguistics
+(Volume 1: Long Papers), pages 12622–12642.
+Giannou, A., Rajput, S., Sohn, J.-y., Lee, K., Lee,
+J. D., and Papailiopoulos, D. (2023). Looped trans-
+formers as programmable computers.
+In Inter-
+national Conference on Machine Learning, pages
+11398–11442. PMLR.
+Grinsztajn, L., Fl¨oge, K., Key, O., Birkel, F., Jund, P.,
+Roof, B., J¨ager, B., Safaric, D., Alessi, S., Hayler,
+A., et al. (2025). Tabpfn-2.5: Advancing the state of
+the art in tabular foundation models. arXiv preprint
+arXiv:2511.08667.
+Hollmann, N., M¨uller, S., Eggensperger, K., and Hut-
+ter, F. (2022). Tabpfn: A transformer that solves
+small tabular classification problems in a second.
+arXiv preprint arXiv:2207.01848.
+Hollmann, N., M¨uller, S., Purucker, L., Krishnakumar,
+A., K¨orfer, M., Hoo, S. B., Schirrmeister, R. T.,
+and Hutter, F. (2025).
+Accurate predictions on
+small data with a tabular foundation model. Na-
+ture, 637(8045):319–326.
+Jeddi, A., Ciccone, M., and Taati, B. (2026). Loop-
+former: Elastic-depth looped transformers for latent
+reasoning via shortcut modulation. arXiv preprint
+arXiv:2602.11451.
+Jolicoeur-Martineau, A. (2025). Less is more: Recur-
+sive reasoning with tiny networks. arXiv preprint
+arXiv:2510.04871.
+Koch, F., Wever, M., Raisch, F., and Tischler, B.
+(2025).
+State-space models for tabular prior-data
+fitted networks. arXiv preprint arXiv:2510.14573.
+Komisarczyk, M., Mathur, S., Kraus, M., Natara-
+jan, S., and Kersting, K. (2026a). Recursive infer-
+ence machines for neural reasoning. arXiv preprint
+arXiv:2603.05234.
+Komisarczyk, M., Mathur, S., Kraus, M., Natara-
+jan, S., and Kersting, K. (2026b). Tydra: An effi-
+cient hybrid model for tabular data. arXiv preprint
+arXiv:2608.21199.
+Kornblith, S., Norouzi, M., Lee, H., and Hinton, G.
+(2019). Similarity of neural network representations
+revisited.
+In International conference on machine
+learning, pages 3519–3529. PMlR.
+M¨uller, S., Hollmann, N., Arango, S. P., Grabocka, J.,
+and Hutter, F. (2021). Transformers can do bayesian
+inference. arXiv preprint arXiv:2112.10510.
+Teerapittayanon, S., McDanel, B., and Kung, H.-T.
+(2016). Branchynet: Fast inference via early exit-
+ing from deep neural networks. In 2016 23rd inter-
+national conference on pattern recognition (ICPR),
+pages 2464–2469. IEEE.
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J.,
+Jones, L., Gomez, A. N., Kaiser, L., and Polosukhin,
+I. (2017). Attention is all you need. Advances in
+neural information processing systems, 30.
+Xin, J., Tang, R., Lee, J., Yu, Y., and Lin, J. (2020).
+Deebert: Dynamic early exiting for accelerating bert
+inference. In Proceedings of the 58th annual meet-
+ing of the association for computational linguistics,
+pages 2246–2251.
+Zhang, L., Song, J., Gao, A., Chen, J., Bao, C.,
+and Ma, K. (2019).
+Be your own teacher:
+Im-
+prove the performance of convolutional neural net-
+works via self distillation. In 2019 IEEE/CVF Inter-
+national Conference on Computer Vision (ICCV),
+pages 3712–3721. IEEE.
+
+
+Supplementary Materials
+A
+EXPERIMENTAL SETUP
+A.1
+Implementation
+Our code is available at https://anonymous.4open.science/r/ElTab--4684.
+A.2
+Hardware and Environment
+All models were trained and evaluated on a single A100 GPU with 80GB memory, ensuring a consistent compute
+environment across runs. Datasets for each training run were independently sampled from the same prior, so
+results remain comparable across models in terms of data distribution.
+B
+PROOFS
+Proposition (Inference cost of ElTab). Consider an ElTab model with a layer template stack Fθ of B blocks
+and a maximum depth of L loops. The model predicts the labels of queries Xq from a context D, with N rows in
+total, and stops after M ∈{1, . . . , L} loops chosen to fit the inference budget. Denote the cost of this prediction
+by C(M, N), the cost of one block on this input by c(N), and the combined cost of the embedder Eψ and the
+decoder gϕ by c0(N). Then:
+1. The cost grows linearly with the number of loops: C(M, N) = c0(N) + BM c(N).
+2. If the embedder and decoder costs are negligible, stopping after M loops costs a fraction M/L of full depth:
+C(M, N)/C(L, N) = M/L.
+3. For hidden dimension d, the template layer stack has Θ(Bd2) parameters, independent of M, L, and N.
+4. With dense attention among the N rows and feed-forward width proportional to d, each block costs c(N) =
+O(N 2d + Nd2). Hence C(M, N) = O
+ BM(N 2d + Nd2)
+
+.
+Proof.
+1. We use induction on B. Denote by CB(M, N) the cost of prediction with B blocks. For B = 1, the
+cost is that of an M-looped model with a single block, namely C1(M, N) = c0(N) + Mc(N). Now assume
+the claim holds for B and add a (B + 1)-th block after the first B blocks. In each of the M loops, this block
+adds a cost of c(N). Hence
+CB+1(M, N) = CB(M, N) + Mc(N) = c0(N) + BMc(N) + Mc(N) = c0(N) + (B + 1)Mc(N).
+(8)
+2. From Equation 8 we obtain
+C(M, N) = c0(N) + BMc(N),
+C(L, N) = c0(N) + BLc(N).
+(9)
+Since c0(N) is negligible,
+C(M, N)
+C(L, N) = c0(N) + BMc(N)
+c0(N) + BLc(N) ≈BMc(N)
+BLc(N) = M
+L .
+(10)
+3. Each transformer-based block has Θ(d2) parameters, and the weights are shared across loops, so the loop
+count M (and L) does not affect the parameter count.
+Therefore B blocks yield Θ(Bd2) parameters,
+independent of M, L, and N.
+
+
+Mieszko Komisarczyk, Saurabh Mathur, Maurice Kraus, Sriraam Natarajan, Kristian Kersting
+Table 2:
+Characteristics of the 30 OpenML classification datasets, filtered for TabPFN limitations.
+Name
+#
+Feat.
+#
+Cat.
+#
+Inst.
+#
+Class.
+#
+NaNs
+Min. Class
+Size
+OpenML
+ID
+balance-scale
+5
+1
+625
+3
+0
+49
+11
+mfeat-fourier
+77
+1
+2000
+10
+0
+200
+14
+breast-w
+10
+1
+699
+2
+16
+241
+15
+mfeat-karhunen
+65
+1
+2000
+10
+0
+200
+16
+mfeat-morphological
+7
+1
+2000
+10
+0
+200
+18
+mfeat-zernike
+48
+1
+2000
+10
+0
+200
+22
+cmc
+10
+8
+1473
+3
+0
+333
+23
+credit-approval
+16
+10
+690
+2
+67
+307
+29
+credit-g
+21
+14
+1000
+2
+0
+300
+31
+diabetes
+9
+1
+768
+2
+0
+268
+37
+tic-tac-toe
+10
+10
+958
+2
+0
+332
+50
+vehicle
+19
+1
+846
+4
+0
+199
+54
+eucalyptus
+20
+6
+736
+5
+448
+105
+188
+analcatdata authorship
+71
+1
+841
+4
+0
+55
+458
+analcatdata dmft
+5
+5
+797
+6
+0
+123
+469
+pc4
+38
+1
+1458
+2
+0
+178
+1049
+pc3
+38
+1
+1563
+2
+0
+160
+1050
+kc2
+22
+1
+522
+2
+0
+107
+1063
+pc1
+22
+1
+1109
+2
+0
+77
+1068
+banknote-authentication
+5
+1
+1372
+2
+0
+610
+1462
+blood-transfusion-service-center
+5
+1
+748
+2
+0
+178
+1464
+ilpd
+11
+2
+583
+2
+0
+167
+1480
+qsar-biodeg
+42
+1
+1055
+2
+0
+356
+1494
+wdbc
+31
+1
+569
+2
+0
+212
+1510
+cylinder-bands
+40
+22
+540
+2
+999
+228
+6332
+dresses-sales
+13
+12
+500
+2
+835
+210
+23381
+MiceProtein
+82
+5
+1080
+8
+1396
+105
+40966
+car
+7
+7
+1728
+4
+0
+65
+40975
+steel-plates-fault
+28
+1
+1941
+7
+0
+55
+40982
+climate-model-simulation-crashes
+21
+1
+540
+2
+0
+46
+40994
+4. Dense attention among N rows costs O(N 2d), and the projections and feed-forward layers cost O(Nd2),
+so c(N) = O(N 2d + Nd2).
+Assuming c0(N) is dominated by O(N 2d), Equation 8 gives C(M, N) =
+O
+ BM c(N)
+
+= O
+ BM(N 2d + Nd2)
+
+.
+B.1
+Datasets
+For evaluation of our models, we considered the 30 datasets from the OpenML-CC18 benchmark suite Bischl
+et al. (2017) with at most 2,000 samples, 100 features, and 10 classes, following Hollmann et al. (2022) and Koch
+et al. (2025). Table 2 presents these datasets along with their characteristics.
+B.2
+Results Evaluation
+Table B.2 presents the detailed AUC-ROC results for different depths of ElTab and TabPFN across all datasets.
+Table B.2 presents the detailed AUC-ROC results for all looped models and TabPFN across all datasets.
+
+
+I use this title instead because the last one was very long
+Table 3: Hyperparameters and architectural details of TabPFN, ElTab 3×6, and Looped 3×6.
+Hyperparameter
+TabPFN
+ElTab 3×6
+Looped 3×6
+Learning Rate
+1 × 10−5
+1 × 10−4
+1 × 10−4
+Dropout
+0.0
+0.0
+0.0
+Effective Batch Size
+64
+64
+64
+Microbatch Size
+8
+8
+8
+Microbatches per Epoch
+4672
+4672
+4672
+Optimizer Updates per Epoch
+584
+584
+584
+Aggregate k Gradients
+8
+8
+8
+Training Epochs
+200
+200
+200
+Embedding Size
+512
+512
+512
+FFN/Decoder Hidden Size
+1024
+1024
+1024
+Physical Transformer Layers
+12
+3
+3
+Core Repetitions
+—
+6
+6
+Maximum Effective Layer Applications
+12
+18
+18
+Number of Attention Heads
+4
+4
+4
+Recompute Attention
+Attention only
+Attention only
+Attention only
+Use AMP
+False
+False
+False
+Optimizer
+AdamW
+AdamW
+AdamW
+Parameter Count
+25.82M
+6.90M
+6.90M
+Training Passes per Microbatch
+One 12-layer pass
+One full 18-layer pass
++ one sampled shortcut pass
+One 18-layer pass
+Shortcut Depth Sampling
+—
+d ∼Uniform{1, 2, 3, 4, 5}
+—
+Shortcut Effective Depths
+—
+{3, 6, 9, 12, 15}
+—
+Full-Depth CE Weight
+1.0
+1.0
+1.0
+Shortcut CE Weight
+—
+0.1
+—
+Consistency/KL Weight
+—
+0.1
+—
+Distillation Temperature
+—
+2.0
+—
+
+
+Mieszko Komisarczyk, Saurabh Mathur, Maurice Kraus, Sriraam Natarajan, Kristian Kersting
+Table 4: AUCROC on the 30 OpenML classification datasets for ElTab evaluated at inference depths 1–6,
+compared with TabPFN. Values are means over 5 splits with 95% Student-t confidence intervals.
+The best
+AUCROC (higher is better) in each row is bold.
+DID
+ElTab d=1
+ElTab d=2
+ElTab d=3
+ElTab d=4
+ElTab d=5
+ElTab d=6
+TabPFN
+11
+0.9781 ± 0.0078
+0.9916 ± 0.0050
+0.9946 ± 0.0048
+0.9960 ± 0.0037
+0.9965 ± 0.0031
+0.9967 ± 0.0029
+0.9974 ± 0.0021
+14
+0.9588 ± 0.0034
+0.9703 ± 0.0037
+0.9726 ± 0.0045
+0.9730 ± 0.0040
+0.9731 ± 0.0046
+0.9731 ± 0.0044
+0.9735 ± 0.0041
+15
+0.9923 ± 0.0010
+0.9940 ± 0.0012
+0.9944 ± 0.0010
+0.9945 ± 0.0009
+0.9946 ± 0.0008
+0.9947 ± 0.0008
+0.9942 ± 0.0009
+16
+0.9902 ± 0.0055
+0.9962 ± 0.0020
+0.9968 ± 0.0017
+0.9970 ± 0.0015
+0.9969 ± 0.0017
+0.9967 ± 0.0017
+0.9964 ± 0.0019
+18
+0.9531 ± 0.0061
+0.9626 ± 0.0030
+0.9631 ± 0.0036
+0.9633 ± 0.0031
+0.9634 ± 0.0028
+0.9635 ± 0.0022
+0.9629 ± 0.0033
+22
+0.9736 ± 0.0059
+0.9805 ± 0.0026
+0.9810 ± 0.0019
+0.9818 ± 0.0018
+0.9823 ± 0.0020
+0.9823 ± 0.0023
+0.9826 ± 0.0021
+23
+0.6968 ± 0.0123
+0.7050 ± 0.0145
+0.7038 ± 0.0156
+0.7082 ± 0.0153
+0.7093 ± 0.0147
+0.7092 ± 0.0158
+0.7114 ± 0.0145
+29
+0.9339 ± 0.0124
+0.9352 ± 0.0109
+0.9347 ± 0.0113
+0.9350 ± 0.0120
+0.9352 ± 0.0121
+0.9349 ± 0.0119
+0.9354 ± 0.0122
+31
+0.7894 ± 0.0086
+0.7858 ± 0.0078
+0.7881 ± 0.0057
+0.7884 ± 0.0077
+0.7881 ± 0.0089
+0.7869 ± 0.0090
+0.7896 ± 0.0074
+37
+0.8371 ± 0.0161
+0.8334 ± 0.0188
+0.8397 ± 0.0164
+0.8413 ± 0.0166
+0.8414 ± 0.0173
+0.8415 ± 0.0173
+0.8413 ± 0.0164
+50
+0.8385 ± 0.0146
+0.8691 ± 0.0228
+0.9320 ± 0.0215
+0.9536 ± 0.0149
+0.9804 ± 0.0089
+0.9881 ± 0.0089
+0.9751 ± 0.0094
+54
+0.9261 ± 0.0080
+0.9420 ± 0.0070
+0.9533 ± 0.0044
+0.9574 ± 0.0036
+0.9596 ± 0.0033
+0.9605 ± 0.0034
+0.9572 ± 0.0038
+188
+0.8971 ± 0.0088
+0.9116 ± 0.0079
+0.9146 ± 0.0107
+0.9151 ± 0.0111
+0.9157 ± 0.0108
+0.9157 ± 0.0101
+0.9148 ± 0.0111
+458
+0.9999 ± 0.0001
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+469
+0.5837 ± 0.0084
+0.5846 ± 0.0088
+0.5834 ± 0.0164
+0.5755 ± 0.0159
+0.5742 ± 0.0161
+0.5780 ± 0.0134
+0.5755 ± 0.0109
+1049
+0.8926 ± 0.0107
+0.9282 ± 0.0173
+0.9293 ± 0.0143
+0.9312 ± 0.0145
+0.9321 ± 0.0152
+0.9326 ± 0.0147
+0.9331 ± 0.0183
+1050
+0.8263 ± 0.0347
+0.8311 ± 0.0342
+0.8306 ± 0.0342
+0.8301 ± 0.0350
+0.8306 ± 0.0348
+0.8311 ± 0.0361
+0.8238 ± 0.0278
+1063
+0.8243 ± 0.0426
+0.8339 ± 0.0404
+0.8353 ± 0.0415
+0.8338 ± 0.0422
+0.8347 ± 0.0432
+0.8347 ± 0.0438
+0.8340 ± 0.0420
+1068
+0.8246 ± 0.0377
+0.8601 ± 0.0594
+0.8755 ± 0.0533
+0.8790 ± 0.0499
+0.8758 ± 0.0497
+0.8756 ± 0.0504
+0.8716 ± 0.0548
+1462
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1464
+0.7579 ± 0.0156
+0.7560 ± 0.0200
+0.7557 ± 0.0185
+0.7564 ± 0.0182
+0.7578 ± 0.0179
+0.7585 ± 0.0190
+0.7564 ± 0.0217
+1480
+0.7264 ± 0.0445
+0.7347 ± 0.0464
+0.7383 ± 0.0417
+0.7376 ± 0.0407
+0.7392 ± 0.0403
+0.7399 ± 0.0398
+0.7389 ± 0.0447
+1494
+0.9237 ± 0.0131
+0.9308 ± 0.0135
+0.9320 ± 0.0144
+0.9326 ± 0.0136
+0.9326 ± 0.0139
+0.9325 ± 0.0137
+0.9339 ± 0.0135
+1510
+0.9964 ± 0.0044
+0.9964 ± 0.0048
+0.9964 ± 0.0047
+0.9964 ± 0.0047
+0.9962 ± 0.0048
+0.9963 ± 0.0048
+0.9965 ± 0.0040
+6332
+0.7935 ± 0.0289
+0.7832 ± 0.0324
+0.7800 ± 0.0337
+0.7741 ± 0.0320
+0.7743 ± 0.0321
+0.7756 ± 0.0321
+0.7815 ± 0.0274
+23381
+0.4930 ± 0.0704
+0.5115 ± 0.0802
+0.4978 ± 0.0706
+0.5145 ± 0.0993
+0.5125 ± 0.1030
+0.5190 ± 0.1001
+0.5092 ± 0.0954
+40966
+0.9994 ± 0.0004
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+40975
+0.9768 ± 0.0122
+0.9754 ± 0.0148
+0.9740 ± 0.0157
+0.9839 ± 0.0106
+0.9853 ± 0.0109
+0.9855 ± 0.0119
+0.9874 ± 0.0081
+40982
+0.9453 ± 0.0168
+0.9483 ± 0.0182
+0.9484 ± 0.0174
+0.9502 ± 0.0163
+0.9503 ± 0.0163
+0.9497 ± 0.0167
+0.9553 ± 0.0132
+40994
+0.9168 ± 0.0165
+0.9400 ± 0.0128
+0.9430 ± 0.0093
+0.9430 ± 0.0108
+0.9419 ± 0.0083
+0.9419 ± 0.0089
+0.9411 ± 0.0090
+Mean
+0.8748
+0.8830
+0.8863
+0.8881
+0.8891
+0.8898
+0.8890
+Table 5: AUCROC on the 30 OpenML classification datasets for fixed-depth looped models (3×1 to 3×6)
+compared with TabPFN. Values are means over 5 splits with 95% Student-t confidence intervals.
+The best
+AUCROC (higher is better) in each row is bold.
+DID
+Looped 3×1
+Looped 3×2
+Looped 3×3
+Looped 3×4
+Looped 3×5
+Looped 3×6
+TabPFN
+11
+0.9908 ± 0.0059
+0.9940 ± 0.0043
+0.9959 ± 0.0036
+0.9964 ± 0.0034
+0.9971 ± 0.0023
+0.9976 ± 0.0027
+0.9974 ± 0.0021
+14
+0.9676 ± 0.0036
+0.9726 ± 0.0035
+0.9729 ± 0.0045
+0.9725 ± 0.0044
+0.9730 ± 0.0046
+0.9734 ± 0.0045
+0.9735 ± 0.0041
+15
+0.9935 ± 0.0010
+0.9945 ± 0.0009
+0.9944 ± 0.0005
+0.9942 ± 0.0008
+0.9945 ± 0.0008
+0.9945 ± 0.0008
+0.9942 ± 0.0009
+16
+0.9943 ± 0.0030
+0.9958 ± 0.0021
+0.9961 ± 0.0019
+0.9967 ± 0.0017
+0.9967 ± 0.0017
+0.9969 ± 0.0018
+0.9964 ± 0.0019
+18
+0.9591 ± 0.0034
+0.9634 ± 0.0034
+0.9634 ± 0.0033
+0.9630 ± 0.0025
+0.9626 ± 0.0035
+0.9634 ± 0.0026
+0.9629 ± 0.0033
+22
+0.9759 ± 0.0052
+0.9796 ± 0.0036
+0.9813 ± 0.0022
+0.9819 ± 0.0016
+0.9819 ± 0.0013
+0.9815 ± 0.0014
+0.9826 ± 0.0021
+23
+0.7057 ± 0.0142
+0.7084 ± 0.0147
+0.7086 ± 0.0138
+0.7100 ± 0.0126
+0.7105 ± 0.0138
+0.7093 ± 0.0133
+0.7114 ± 0.0145
+29
+0.9339 ± 0.0115
+0.9340 ± 0.0119
+0.9352 ± 0.0134
+0.9342 ± 0.0119
+0.9344 ± 0.0123
+0.9348 ± 0.0131
+0.9354 ± 0.0122
+31
+0.7879 ± 0.0064
+0.7880 ± 0.0074
+0.7873 ± 0.0081
+0.7863 ± 0.0080
+0.7865 ± 0.0083
+0.7862 ± 0.0087
+0.7896 ± 0.0074
+37
+0.8311 ± 0.0188
+0.8419 ± 0.0129
+0.8426 ± 0.0167
+0.8411 ± 0.0167
+0.8424 ± 0.0157
+0.8412 ± 0.0173
+0.8413 ± 0.0164
+50
+0.8733 ± 0.0179
+0.9311 ± 0.0139
+0.9538 ± 0.0118
+0.9727 ± 0.0092
+0.9692 ± 0.0144
+0.9904 ± 0.0073
+0.9751 ± 0.0094
+54
+0.9395 ± 0.0080
+0.9473 ± 0.0068
+0.9530 ± 0.0056
+0.9592 ± 0.0038
+0.9600 ± 0.0037
+0.9617 ± 0.0041
+0.9572 ± 0.0038
+188
+0.9051 ± 0.0101
+0.9133 ± 0.0092
+0.9147 ± 0.0112
+0.9136 ± 0.0100
+0.9149 ± 0.0108
+0.9149 ± 0.0105
+0.9148 ± 0.0111
+458
+1.0000 ± 0.0001
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+469
+0.5700 ± 0.0116
+0.5722 ± 0.0189
+0.5841 ± 0.0167
+0.5820 ± 0.0150
+0.5760 ± 0.0100
+0.5719 ± 0.0130
+0.5755 ± 0.0109
+1049
+0.9222 ± 0.0143
+0.9299 ± 0.0139
+0.9302 ± 0.0164
+0.9310 ± 0.0167
+0.9308 ± 0.0172
+0.9314 ± 0.0180
+0.9331 ± 0.0183
+1050
+0.8307 ± 0.0268
+0.8316 ± 0.0330
+0.8295 ± 0.0374
+0.8292 ± 0.0348
+0.8309 ± 0.0365
+0.8320 ± 0.0368
+0.8238 ± 0.0278
+1063
+0.8355 ± 0.0387
+0.8308 ± 0.0382
+0.8340 ± 0.0419
+0.8327 ± 0.0400
+0.8343 ± 0.0415
+0.8350 ± 0.0416
+0.8340 ± 0.0420
+1068
+0.8587 ± 0.0582
+0.8806 ± 0.0560
+0.8727 ± 0.0524
+0.8734 ± 0.0497
+0.8674 ± 0.0482
+0.8722 ± 0.0487
+0.8716 ± 0.0548
+1462
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1464
+0.7521 ± 0.0216
+0.7558 ± 0.0167
+0.7555 ± 0.0188
+0.7579 ± 0.0180
+0.7581 ± 0.0191
+0.7594 ± 0.0192
+0.7564 ± 0.0217
+1480
+0.7355 ± 0.0441
+0.7366 ± 0.0364
+0.7376 ± 0.0340
+0.7382 ± 0.0351
+0.7398 ± 0.0358
+0.7406 ± 0.0359
+0.7389 ± 0.0447
+1494
+0.9297 ± 0.0134
+0.9325 ± 0.0153
+0.9321 ± 0.0137
+0.9317 ± 0.0134
+0.9324 ± 0.0132
+0.9325 ± 0.0138
+0.9339 ± 0.0135
+1510
+0.9956 ± 0.0053
+0.9963 ± 0.0048
+0.9965 ± 0.0048
+0.9965 ± 0.0046
+0.9964 ± 0.0048
+0.9966 ± 0.0046
+0.9965 ± 0.0040
+6332
+0.7753 ± 0.0331
+0.7729 ± 0.0280
+0.7598 ± 0.0340
+0.7609 ± 0.0316
+0.7643 ± 0.0272
+0.7687 ± 0.0296
+0.7815 ± 0.0274
+23381
+0.4654 ± 0.0985
+0.5101 ± 0.0819
+0.5266 ± 0.1027
+0.5204 ± 0.1110
+0.5139 ± 0.0958
+0.5207 ± 0.1031
+0.5092 ± 0.0954
+40966
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+1.0000 ± 0.0000
+40975
+0.9723 ± 0.0182
+0.9768 ± 0.0133
+0.9846 ± 0.0110
+0.9798 ± 0.0130
+0.9849 ± 0.0112
+0.9846 ± 0.0106
+0.9874 ± 0.0081
+40982
+0.9430 ± 0.0182
+0.9480 ± 0.0177
+0.9492 ± 0.0161
+0.9504 ± 0.0169
+0.9515 ± 0.0165
+0.9504 ± 0.0157
+0.9553 ± 0.0132
+40994
+0.9360 ± 0.0158
+0.9372 ± 0.0142
+0.9398 ± 0.0120
+0.9389 ± 0.0097
+0.9404 ± 0.0095
+0.9393 ± 0.0080
+0.9411 ± 0.0090
+Mean
+0.8793
+0.8858
+0.8877
+0.8882
+0.8882
+0.8894
+0.8890

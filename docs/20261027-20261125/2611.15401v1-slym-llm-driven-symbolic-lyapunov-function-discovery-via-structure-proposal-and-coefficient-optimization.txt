@@ -1,0 +1,897 @@
+SLyM: LLM-Driven Symbolic Lyapunov Function Discovery via
+Structure Proposal and Coefficient Optimization
+Zihao Fu∗, Xingchen Li∗, Keyou You
+Abstract— Lyapunov functions are the cornerstone of stabil-
+ity analysis for dynamical systems, yet synthesizing a symbolic
+form remains difficult as no universal constructive algorithm ex-
+ists. To address this challenge, we introduce SLyM, a framework
+that harnesses the knowledge and reasoning of large language
+models (LLMs) to discover symbolic Lyapunov functions. To
+avoid charging the LLM with ill-suited numerical generation,
+SLyM decomposes the construction into structure proposal and
+coefficient optimization: the LLM draws on its prior knowledge
+of Lyapunov constructions to propose the function structure,
+whose coefficients then follow from a convex program. Local-
+search structures are folded back into supervision, extending
+coverage to systems missed by the initial proposer. Across
+all benchmarks, SLyM consistently outperforms the evaluated
+neural, sum-of-squares, and generative baselines.
+I. INTRODUCTION
+Lyapunov functions provide the foundational framework
+for stability analysis of dynamical systems. For a given
+system, once a Lyapunov function is constructed, its stability
+can be validated and the result provides key theoretical
+support for control design [1], [2], [3]. However, synthesizing
+such a function remains notoriously difficult: no universal
+constructive algorithm exists, and classical converse theo-
+rems guarantee existence without providing any systematic
+means to determine a symbolic form [2].
+Classical practice relies on parameterized families or
+system-specific constructions—such as energies, lineariza-
+tions, or backstepping [2], [4]—which are confined to par-
+ticular structures and posited anew for each system. Com-
+putational tools automate this search over prescribed finite-
+dimensional spaces: sum-of-squares (SOS) programming [5]
+and fixed-basis methods [6], [7] fix the basis in advance
+and optimize only coefficients. Yet fixing the representation
+beforehand severely limits expressiveness: even globally
+asymptotically stable polynomial systems need not admit any
+polynomial Lyapunov function [8], while non-polynomial
+dynamics remain largely inaccessible.
+Rather than fixing a basis a priori, neural Lyapunov meth-
+ods parameterize Lyapunov functions as neural networks [9],
+[10]. Despite their expressive flexibility, these models yield
+implicit black-box representations whose verification poses
+severe scalability bottlenecks—frequently causing satisfia-
+bility modulo theories (SMT) timeouts even on modest 4–
+*These authors contributed equally to this work.
+This work was supported by National Natural Science Foundation of
+China (62325305). (Corresponding author: Keyou You)
+Zihao Fu, Xingchen Li, and Keyou You are with the Department
+of Automation, and Beijing National Research Center for Info. Sci. &
+Tech. (BNRist), Tsinghua University, Beijing 100084, China. (e-mail:
+{fuzh24,lixc21}@mails.tsinghua.edu.cn, youky@tsinghua.edu.cn)
+6-dimensional systems [3]. In contrast, compact symbolic
+Lyapunov functions can ease verification and provide explicit
+expressions for stability analysis [2].
+To discover such symbolic functions, large language mod-
+els (LLMs) offer an expressive, data-driven prior. Pretrained
+on extensive mathematical and engineering literature, an
+LLM internalizes canonical Lyapunov constructions—from
+positive-definite quadratic backbones to energy-like poten-
+tials and cross-terms that neutralize nonlinear drift. Further-
+more, by exploiting structural cues in the dynamics, the
+model can suggest candidate terms tailored to the system,
+spanning polynomial and non-polynomial forms alike. The
+success of LLMs in mathematical discovery further under-
+scores the promise of this direction [11], [12].
+We therefore introduce SLyM (Symbolic Lyapunov func-
+tions with LLM), an LLM-driven framework that decom-
+poses Lyapunov-function construction into two subproblems:
+structure proposal, which determines candidate symbolic
+terms, and coefficient optimization, which computes their
+numerical weights. This separation matters: recent sym-
+bolic methods emit complete expressions with embedded
+constants [13], [14], burdening generative models with ill-
+suited numerical fitting. In contrast, SLyM decouples the
+two: conditioned on system dynamics, the LLM leverages its
+symbolic prior to propose a coefficient-free structure beyond
+rigid fixed bases, while continuous coefficients are obtained
+by convex optimization.
+To better adapt the LLM to this task, we adopt a two-stage
+training strategy. First, supervised fine-tuning on successful
+examples teaches the LLM the mapping from system dy-
+namics to valid structures. Second, structures discovered by
+local structure search are folded back into the training loop,
+enabling the model to internalize search-time discoveries and
+propose viable structures more directly on unseen systems.
+Our contributions are threefold: First, we propose SLyM,
+an LLM-driven framework that decomposes symbolic Lya-
+punov discovery into structure proposal and coefficient op-
+timization, choosing system-dependent structures from a
+library of symbolic building blocks while avoiding ill-
+suited numerical generation. Second, we develop a search-
+augmented training scheme that folds search-recovered struc-
+tures back into supervision, extending coverage to systems
+missed by the initial proposer. Third, SLyM consistently
+outperforms the evaluated neural, sum-of-squares, and gener-
+ative baselines across extensive benchmarks. Furthermore, on
+systems drawn from the control literature, it finds accepted
+candidates different from the reference functions in the cited
+publications.
+arXiv:2611.15401v1  [eess.SY]  11 Nov 2026
+
+
+−1
+0
+1
+x0
+−1
+0
+1
+x1
+0
+V
+(a)
+−1
+0
+1
+x0
+−1
+0
+1
+x1
+(b)
+Fig. 1.
+A candidate recovered by SLyM for system (4): V = 90x2
+1 +
+x2
+2(75e2x1 +36ex1 +20). (a) Surface of V . (b) Level sets and trajectories
+inside the plotted sublevel region V ≤225.
+II. PRELIMINARIES
+A. Dynamical Systems and Lyapunov Functions
+Consider the autonomous system
+˙x = f(x),
+f ∈C1(U, Rn),
+U ⊆Rn open,
+(1)
+where n is the state dimension. We assume, without loss of
+generality, that the equilibrium of interest is at the origin, so
+that f(0) = 0. Let Ω⊂U be a compact set with 0 ∈int Ω.
+Given f and Ω, we seek a symbolic Lyapunov function on
+Ω. The standard Lyapunov condition for this system is stated
+as follows.
+Definition 1 (Lyapunov function [2]). A function V
+∈
+C1(U, R) is a Lyapunov function for the equilibrium x = 0
+of (1) on Ωif V is positive definite on Ωand its derivative
+along system trajectories is negative semidefinite, i.e.,
+V (0) = 0,
+V (x) > 0,
+∀x ∈Ω\ {0},
+(2)
+˙V (x) := ∇V (x)⊤f(x) ≤0,
+∀x ∈Ω.
+(3)
+By Lyapunov’s stability theorem, (2)–(3) imply that the
+origin is stable. To illustrate these conditions, consider the
+following non-polynomial planar system:
+(
+˙x1 = −7x1 −x2
+2ex1+x2,
+˙x2 = −6x2
+1x3
+2 + 5x2ex2 sin x1.
+(4)
+As shown in Fig. 1, condition (2) requires V to form a bowl-
+shaped surface with a unique minimum at the origin (Fig. 1a),
+while (3) ensures that system trajectories never cross outward
+across its nested level sets (Fig. 1b).
+B. Structured Lyapunov Discovery
+Definition 1 specifies the conditions a Lyapunov function
+must satisfy without prescribing a particular functional form.
+A common approach to synthesis is to fix a parametric
+family of candidate functions and solve for its unknown
+coefficients [6], [7]. In these methods, the structure is chosen
+in advance. We follow this structure–coefficient decomposi-
+tion while making the structure system dependent: structure
+proposal selects a compact set of component functions whose
+linear combination forms a candidate Lyapunov function,
+and coefficient optimization determines the corresponding
+numerical weights. An LLM performs the first task, while
+a convex program performs the second.
+To implement this decomposition, we define a library
+B ⊂C1(U, R) of candidate building blocks. Each b ∈B is
+formed from the state variables using multiplication, positive
+integer powers up to pmax, and composition with exp, sin,
+and cos. We write each term without a scalar prefactor and
+store that prefactor in the coefficient vector; for example,
+3x2
+1 is represented by the term x2
+1 with coefficient 3. After
+canonicalization, a candidate is specified by a subset S of
+these terms and its coefficient vector c:
+S = {b1, . . . , bm} ⊂B,
+1 ≤m ≤mmax,
+c = [c1, . . . , cm]⊤∈Rm,
+(5)
+where m = |S| and cj is the coefficient of bj.
+For example,
+V (x) = 1
+6x1(ex1 −1) + x2
+2 = 1
+6x1ex1 −1
+6x1 + x2
+2
+corresponds to the structure S = {x1ex1, x1, x2
+2} and the
+coefficient vector c = ( 1
+6, −1
+6, 1).
+For a given structure, the candidate and its Lie derivative
+are linear in c:
+VS,c(x) =
+m
+X
+j=1
+cjbj(x) = c⊤ΦS(x),
+˙VS,c(x) =
+m
+X
+j=1
+cj∇bj(x)⊤f(x) = c⊤˙ΦS(x),
+(6)
+where ΦS collects the selected terms and ˙ΦS is its derivative
+along the vector field. For fixed S, coefficient optimization
+is convex because both expressions are linear in c; structure
+proposal is the remaining combinatorial search. We formalize
+the resulting nested optimization by giving (2)–(3) a quanti-
+tative form with margin γ > 0, letting u, v ≥0 bound their
+violations:
+inf
+S⊂B
+m≤mmax
+Jγ(S) := min
+∥c∥∞≤1
+u,v≥0
+u + v
+s.t.
+VS,c(x) −VS,c(0) ≥γ∥x∥2 −u,
+˙VS,c(x) ≤−γ∥x∥2 + v,
+∀x ∈Ω.
+(7)
+For a fixed S, (7) minimizes the worst-case violations
+u + v over Ω. The bound ∥c∥∞≤1 prevents trivial scaling,
+and γ > 0 prevents V ≡0 from attaining zero loss. Thus,
+Jγ(S) = 0 yields a candidate satisfying the conditions in
+Definition 1 with ˙VS,c ≤−γ∥x∥2 after subtracting its value
+at the origin. These margin conditions are sufficient, not
+necessary. Section III describes how SLyM searches over S
+and relaxes the coefficient problem over Ωto a finite-sample
+convex program.
+III. SLYM: STRUCTURE PROPOSAL AND COEFFICIENT
+OPTIMIZATION
+For a fixed structure, (7) is convex in c; the difficulty lies
+in choosing S. Admissible structures grow combinatorially
+with the library, the structures making (2)–(3) feasible vary
+across systems, and each costs a coefficient fit. SLyM there-
+fore assigns the combinatorial choice to a learned proposer
+
+
+˙x = f(x)
+LLM proposer
+K samples S ∼πθ(·|f)
+coefficient optimization
+optimize coefficients c
+candidate validation
+local structure search
+edit one symbolic term
+structure S
+VS,c
+fail
+accepted
+VS,c
+pass
+training feedback
+Fig. 2.
+SLyM follows the two-level view in (7): structure proposal explores
+the symbolic structure with an LLM proposer and a local structure search,
+coefficient optimization computes the numerical weights, and candidate
+validation evaluates the resulting symbolic function. Stage 2 trains on
+structures recovered by local search after initial proposals fail.
+and the continuous one to optimization (Fig. 2): an LLM
+proposes structures, refined by local search when needed
+(Section III-A), search-recovered structures are fed back into
+training (Section III-B), and coefficients follow from a finite-
+sample convex program before validation (Section III-C).
+A. Structure Proposal
+The first step in the pipeline is to propose a compact
+structure adapted to the dynamics, whose form often suggests
+suitable terms: nonlinearities in f, such as exponential or
+trigonometric factors, tend to call for matching terms in
+V . A fixed basis may miss interactions needed by a par-
+ticular system, whereas a broad library makes search and
+verification expensive. An LLM can use the form of f to
+propose relevant symbolic structures; SLyM therefore leaves
+coefficient fitting and candidate validation to optimization.
+Because the structure controls expressiveness, a missing term
+can make (2)–(3) infeasible, while an oversized structure
+increases the fitting cost. The proposer samples structures
+as
+Sr ∼πθ(·|f),
+r = 1, . . . , K,
+Sr = {br1, . . . , brmr} ⊂B,
+1 ≤mr ≤mmax.
+(8)
+Here θ denotes the proposer parameters, K is the number
+of sampled structures, and mr = |Sr|. Since the model
+operates on text, f and S enter πθ as strings, in the format
+shown in Fig. 3. Equivalent structures are canonicalized
+and deduplicated before fitting, so repeated samples do not
+consume the proposal budget.
+When none of the K proposals passes validation, local
+structure search provides a deterministic fallback. It starts
+from the most promising proposals and builds a finite pool
+Bf
+⊂B from their terms, monomials of total degree
+two through four, and simple products involving elementary
+Prompt
+dynamics and requested output format
+system
+You propose symbolic basis structures for a Lyapunov
+function. Return exactly one JSON object and no
+prose. Do not output coefficients, a completed
+Lyapunov function, or a proof.
+user
+Variables: ["x1","x2"]
+Dynamics:
+dx1/dt = -4*x1**3*exp(x2) + 7*x1**2*x2
+dx2/dt = -4*x2**3 - 4*exp(x1)*sin(x2)*cos(x2)
+Return exactly this schema:
+{"basis":["term1","term2"]}
+Model output
+{"basis":["x1*exp(x1)","x1","x2**2"]}
+sample S ∼πθ(·|f)
+Fig. 3.
+Proposer interface. The prompt is a shortened excerpt of the stored
+messages; the output is the structure of the candidate 1
+6 x1(ex1 −1) + x2
+2
+recovered for that system.
+transcendental expressions already present in f (such as exp,
+sin, or cos), optionally multiplied by a state variable or its
+square. The pool is deduplicated and capped. Each step adds,
+deletes, or exchanges one term, refits the coefficients under a
+common fitting set and budget, and keeps an edit only when
+it strictly improves the recorded score.
+B. Training the Proposer
+The proposer is trained in two stages. Stage 1 learns the
+mapping from dynamics to structures using solved examples,
+while Stage 2 adds supervision for structures recovered on
+systems that Stage 1 misses. This feedback loop is the core
+of our training procedure.
+Stage 1: training on known structures. A pretrained model
+may encode general Lyapunov concepts without a system-
+specific mapping to valid structures. Stage 1 learns this
+mapping from pairs of dynamics and known structures. We
+discard scalar multipliers and retain only the terms, denoted
+by basis(V ), as in
+V = 2x2
+1 + 2x1x2 + x2
+2 + x2
+3,
+basis(V ) = {x1x2, x2
+1, x2
+2, x2
+3}.
+Each row pairs the serialized dynamics q = σ(f) with the
+serialized structure y = σ(S). Removing coefficients focuses
+training on structure selection rather than numerical fitting.
+From θ0, Stage 1 minimizes the autoregressive supervised
+fine-tuning (SFT) loss on D, which combines data from
+Alfarano et al. [13] with additional generated systems. For
+backward-generated examples, the generator first constructs
+V and then generates dynamics satisfying ∇V ⊤f ≤0. The
+objective is
+L1(θ) = −E(q,y)∼D
+
+
+|y|
+X
+j=1
+log πθ(yj | q, y<j)
+
+,
+(9)
+where y<j = (y1, . . . , yj−1) denotes the tokens preceding
+yj. One epoch with low-rank adapters [15] produces θ1.
+Stage 2: training on search-recovered structures. Stage 1
+only covers structures in D. We therefore run it on a fresh,
+
+
+Algorithm 1 Search-Augmented Proposer Training.
+Require: pretrained θ0; corpus D = {(f, S)}; fresh pool
+P, disjoint from D and from every benchmark; learning
+rate η; T steps per stage on weights wt
+Ensure: structure proposer πθ2
+Stage 1
+1: w0 ←θ0, wt+1 ←wt −η∇L1(wt), θ1 ←wT
+(9)
+Stage 2
+2: F ←∅
+3: for each system f ∈P do
+4:
+S1, . . . , SK ∼πθ1(·|f)
+(8)
+5:
+fit bcSr using ℓSr(·; X) and normalize
+(11)
+6:
+validate each VSr,bcSr (x) −VSr,bcSr (0)
+(2)–(3)
+7:
+if no proposal is accepted then
+8:
+Rf ←local search from the proposals ranked best
+by bJX
+9:
+F ←F ∪{(f, S) : S ∈Rf}
+10:
+end if
+11: end for
+12: w0 ←θ1, wt+1 ←wt −η∇L2(wt), θ2 ←wT
+(10)
+benchmark-disjoint pool P generated separately. For systems
+with no accepted proposal, local search recovers structures
+Rf; the corresponding pairs (q, y) = (σ(f), σ(S)) form F.
+Stage 2 continues SFT from θ1 on the mixed corpus DW : D
+plus W copies of each row in F (total |D| + W|F| rows).
+L2(θ) = −E(q,y)∼DW
+
+
+|y|
+X
+j=1
+log πθ(yj | q, y<j)
+
+.
+(10)
+The expectation is over these |D|+W|F| rows. Algorithm 1
+summarizes the loop; the fitting loss ℓS(·; X), fitted coeffi-
+cients bcS, and attained value bJX are defined in Section III-C.
+C. Coefficient Optimization
+Given S, we choose coefficients c so that the candidate
+satisfies the Lyapunov conditions. By (6), the constraints
+are affine in c; the continuous-domain problem is a semi-
+infinite LP, which we approximate by sampling Ω[6], [7],
+[16]. For fixed S, the sampled problem is convex in c; the
+combinatorial search is therefore concentrated on selecting
+S, while full-domain validation remains a separate step.
+Let X = {x(1), . . . , x(N)} ⊂Ωϵ, where Ωϵ = {x ∈Ω:
+∥x∥≥ϵ}. For fixed S, define Vc(x) = VS,c(x)−VS,c(0), so
+that Vc(0) = 0 and ˙Vc(x) = ˙VS,c(x). For coefficient fitting,
+we impose the Lyapunov inequalities at sampled points
+and use nonnegative slack variables ui and vi to measure
+violations. The inner radius avoids imposing a quadratic
+margin arbitrarily close to the origin; validation uses (2)–
+(3) on Ω.
+min
+c,u,v
+N
+X
+i=1
+(ui + vi)
+s.t.
+Vc(x(i)) ≥γ∥x(i)∥2 −ui,
+˙Vc(x(i)) ≤−γ∥x(i)∥2 + vi,
+ui, vi ≥0,
+∥c∥∞≤1.
+Here ui, vi are pointwise violations, in contrast to the uni-
+form bounds u, v in (7). Eliminating these slacks gives a
+hinge loss; we use its mean form to normalize the score:
+ℓS(c; X) := 1
+N
+N
+X
+i=1
+
+[γ∥x(i)∥2 −Vc(x(i))]+
++ [γ∥x(i)∥2 + ˙Vc(x(i))]+
+
+,
+JX(S) :=
+min
+∥c∥∞≤1 ℓS(c; X),
+(11)
+where [z]+ := max{z, 0}.
+We numerically minimize ℓS(c; X) subject to the box
+constraint ∥c∥∞≤1, then normalize and round the coef-
+ficients to obtain bcS, which need not attain JX(S). We rank
+structures by bJX(S) = ℓS(bcS; X) and validate the shifted
+candidate VS,bcS(x) −VS,bcS(0). Fitting samples do not cover
+all of Ω; validation checks candidates on Ω. Terms retain
+canonical scales, so scores depend on basis scale.
+IV. EVALUATION ON LITERATURE AND SYNTHETIC
+BENCHMARKS
+A. Evaluation Setup
+Benchmarks. We evaluate on two benchmarks. The lit-
+erature benchmark contains 109 published control examples
+with declared domains and reference Lyapunov functions;
+these systems are held out from both D and P. The synthetic
+benchmark contains 600 generated systems, equally divided
+among three families from Alfarano et al. [13] and labeled
+below: NonPoly is the non-polynomial family of two or
+three equations, Poly3 the polynomial family of two or three
+equations, and Poly5 the polynomial family of two to five
+equations. We follow their data-generation and split protocol,
+and exclude any system whose canonical dynamics appear
+in a training corpus. The split follows the instance-level
+protocol of Alfarano et al.
+Baselines. We compare with three neural methods,
+ANLC [17], FOSSIL [18], and LYZNET [19]; two SOS
+implementations, findlyap [13] and SOSTOOLS [5]; and
+the symbolic transformer of Alfarano et al. [13]. We evaluate
+eight ANLC configurations and run SOSTOOLS at degrees
+2, 4, and 6, validating every feasible solution.
+Common protocol. All methods receive the same 300 s
+per-system budget on the same machine, spent across their
+attempted degrees or configurations as each sees fit. What-
+ever candidates a method returns within that budget are
+judged by a single validation pipeline for (2)–(3), using in-
+terval/SMT checks, dense sampling, numerical falsification,
+and an origin-neighborhood routine. Acceptance uses the full
+pipeline; counts include formal and numerical screening. A
+system is accepted once one of its candidates clears the
+pipeline; anything else, a timeout included, is a failure.
+SLyM configuration. The proposer is Qwen3.5-2B [20],
+sampling K = 50 structures of at most mmax = 10 terms,
+with powers up to pmax = 12 and at most 80 operations per
+term; local structure search runs from at most eight seeds
+over a pool Bf capped at 60 terms. Coefficient optimization
+uses γ = 10−2 and ϵ = 0.3 unless the instance declares
+
+
+TABLE I
+BENCHMARK COMPARISON OF ACCEPTED SYSTEMS ACROSS METHODS.
+Neural
+SOS
+Generative
+SLyM
+(Ours)
+Test set
+Size
+ANLC [17]
+FOSSIL [18]
+LYZNET [19]
+findlyap [13]
+SOSTOOLS [5]
+transformer [13]
+Synthetic NonPoly
+200
+34 (17%)
+49 (25%)
+19 (10%)
+—
+—
+60 (30%)
+108 (54%)
+Synthetic Poly3
+200
+23 (12%)
+15 (8%)
+5 (3%)
+45 (23%)
+85 (43%)
+43 (22%)
+111 (56%)
+Synthetic Poly5
+200
+20 (10%)
+8 (4%)
+4 (2%)
+47 (24%)
+89 (45%)
+38 (19%)
+107 (54%)
+Synthetic, all
+600
+77 (13%)
+72 (12%)
+28 (5%)
+92 (15%)
+174 (29%)
+141 (24%)
+326 (54%)
+Control literature
+109
+63 (58%)
+50 (46%)
+44 (40%)
+51 (47%)
+68 (62%)
+41 (38%)
+92 (84%)
+A dash marks a setting the method does not support; percentages are over the full test set.
+1
+10
+100
+per-system time budget (s)
+0
+25
+50
+75
+% accepted
+Synthetic,all: 600 systems
+ANLC
+SOSTOOLS
+transformer
+SLyM (Ours)
+findlyap
+Fossil
+LyzNet
+1
+10
+100
+per-system time budget (s)
+0
+25
+50
+75
+100 Control literature: 109 systems
+ANLC
+SOSTOOLS
+transformer
+SLyM (Ours)
+findlyap
+Fossil
+LyzNet
+Fig. 4.
+Accepted-system rate versus per-system time budget on the synthetic (left) and literature (right) benchmarks. The budget is measured at inference
+and covers generation, coefficient optimization, validation, and local structure search; one-time training is excluded for SLyM and for the pretrained
+transformer alike.
+another inner radius, fitting on the subset of 2,000 points
+drawn from the enclosing box that lie in Ωϵ, corner-enriched
+on box domains; refits inside local search use a smaller
+subsample. Each stage is one epoch of LoRA fine-tuning
+(rank 16, scale 32, dropout 0.05, batch size 16; Stage 1
+learning rate 3 × 10−5 and sequence length 768; Stage 2:
+2 × 10−5 and 512) on the |D| = 30,000 known pairs,
+with Stage 2 including each of the |F| = 820 recovered
+rows W = 10 times. Training took 7.4 GPU-hours on one
+NVIDIA RTX 4090.
+B. Main Results and Solve Time
+Under the common acceptance criterion, SLyM accepts
+92/109 systems on the literature benchmark versus 68/109
+for SOSTOOLS (Table I), with accepted structures that dif-
+fer from the published forms, as illustrated in Table II, where
+coefficients are shown rounded and the rounded form is the
+one validated. On the synthetic benchmark, generated as
+in [13], it accepts 326/600 versus 174/600 for SOSTOOLS
+(174/400 on the polynomial strata it supports, against our
+218/400) and 141/600 for the symbolic transformer. It leads
+each synthetic stratum, including 108/200 non-polynomial
+systems outside the SOS setting.
+Fig. 4 shows the coverage–time trade-off: SOS reaches
+its synthetic total within 3 s, while SLyM exceeds every
+evaluated baseline’s final coverage within 4.7 s (literature)
+and 7.4 s (synthetic), both including generation. It finds
+299/326 synthetic successes within 10 s. Proposals are con-
+TABLE II
+REPRESENTATIVE LYAPUNOV FUNCTIONS DISCOVERED BY SLYM.
+Region-of-attraction example [21]
+˙x1 = x2,
+˙x2 = −x1 + 1
+3x3
+1 −x2
+published: V (x) = 3.421x2
+1 + 1.7217x1x2 + 2.8584x2
+2 + 0.45219x4
+1
++ 1.318x3
+1x2 + 1.5945x2
+1x2
+2 + 0.20294x1x3
+2 + 0.86584x4
+2
+SLyM: V (x) = x2
+1 + x1x2 + x2
+2
+Both hold on x⊤x ≤2.2 [21].
+Krasovskii example [22]
+˙x1 = −6x1 + 2x2,
+˙x2 = 2x1 −6x2 −2x3
+2
+published: V (x) = (−6x1 + 2x2)2 + (2x1 −6x2 −2x3
+2)2
+SLyM: V (x) = x4
+1 + x4
+2
+sumed sparingly: on 170 of the 326 accepted systems the first
+proposal already succeeds. Local structure search contributes
+21 of the total, evaluating a median of 217 edited structures
+and 3 validation calls per system, at a median post-generation
+cost of 2.34 s.
+C. Ablation: Decomposition and Training
+In Table III, moving from complete V
+to structures
+roughly doubles coverage across all proposers under fixed
+budgets: 64 →126 for the base model, 153 →297 after
+Stage 1, and 141 →263 for the symbolic transformer of
+Alfarano et al. [13]. Transformer terms are refit with the
+common coefficient optimizer.
+
+
+TABLE III
+ABLATIONS AT K = 50.
+SYNTHETIC
+Configuration
+NonPoly
+Poly3
+Poly5
+all
+Literature
+200
+200
+200
+600
+109
+Base model, complete V
+20
+23
+21
+64
+47
+Base model, structures
+47
+45
+34
+126
+78
+Stage 1, complete V
+59
+49
+45
+153
+73
+Stage 1, structures
+91
+107
+99
+297
+85
+Transformer [13], complete V
+60
+43
+38
+141
+41
+Transformer [13], structures
+87
+93
+83
+263
+59
+SLyM
+108
+111
+107
+326
+92
+Complete V : the proposer emits a full function with coefficients. Stage 1
+complete-V uses full-function targets; structure rows use term-only targets. Base
+model: Qwen3.5-2B without fine-tuning.
+1
+5
+10
+25
+50
+0
+25
+50
+% solved
+Synthetic, 600
+1
+5
+10
+25
+50
+0
+25
+50
+75
+100
+Control Literature, 109
+candidates sampled per system, K
+SLyM
+transformer
+Fig. 5. Acceptance versus initial proposal budget K. SLyM runs coefficient
+optimization and local structure search after its K structure proposals; the
+external transformer [13] generates K complete functions. The dashed line
+marks that transformer’s result at K = 50.
+Training the proposer adds further gains, especially where
+the base model is weakest. Moving from the base model
+to Stage 1 lifts synthetic coverage from 126 to 297 (Poly5:
+34 →99, NonPoly: 47 →91) and literature coverage from
+78 to 85. The final pipeline uses Stage 2 search-augmented
+supervision and reaches the 326 synthetic and 92 literature
+successes reported in Table I.
+Permutation and permutation-plus-rescaling reruns yield
+91 and 90 successes, respectively, versus 91/109 for the
+matched untransformed control, probing sensitivity to equiv-
+alent coordinate representations. Sweeping budget K shows
+that the pipeline accepts 276 synthetic systems even with
+one initial proposal (K = 1), followed by fitting and local
+search, and plateaus beyond K = 25 (Fig. 5), while Stage-1
+proposals vary by only ±3 across four generation seeds.
+V. CONCLUSION
+We presented SLyM, which discovers symbolic Lyapunov
+functions by decomposing the construction into structure
+proposal and coefficient optimization: the LLM proposes a
+coefficient-free structure beyond rigid fixed bases, a con-
+vex program supplies the weights, and search-recovered
+structures folded back into supervision extend the proposer
+beyond its training corpus. Across all benchmarks SLyM
+outperforms the evaluated neural, sum-of-squares, and gen-
+erative baselines, including on the non-polynomial systems
+outside the SOS setting. Future work will extend the structure
+library and search procedure to more complex systems for
+which the current pipeline finds no candidate.
+REFERENCES
+[1] A. M. Lyapunov, “The general problem of the stability of motion,”
+International Journal of Control, vol. 55, no. 3, pp. 531–772, 1992,
+English translation of the 1892 doctoral memoir.
+[2] H. K. Khalil, Nonlinear Systems, 3rd ed.
+Prentice Hall, 2002.
+[3] C. Dawson, S. Gao, and C. Fan, “Safe control with learned certificates:
+A survey of neural Lyapunov, barrier, and contraction methods for
+robotics and control,” IEEE Transactions on Robotics, vol. 39, no. 3,
+pp. 1749–1767, 2023.
+[4] S. H. Strogatz, Nonlinear Dynamics and Chaos, 2nd ed.
+Westview
+Press, 2015.
+[5] S. Prajna, A. Papachristodoulou, and P. A. Parrilo, “Introducing
+SOSTOOLS: A general purpose sum of squares programming solver,”
+in Proceedings of the 41st IEEE Conference on Decision and Control,
+vol. 1, 2002, pp. 741–746.
+[6] S. Sankaranarayanan, X. Chen, and E. ´Abrah´am, “Lyapunov function
+synthesis using Handelman representations,” IFAC Proceedings Vol-
+umes, vol. 46, no. 23, pp. 576–581, 2013.
+[7] M. A. Ben Sassi, S. Sankaranarayanan, X. Chen, and E. ´Abrah´am,
+“Linear relaxations of polynomial positivity for polynomial Lyapunov
+function synthesis,” IMA Journal of Mathematical Control and Infor-
+mation, vol. 33, no. 3, pp. 723–756, 2016.
+[8] A. A. Ahmadi, M. Krstic, and P. A. Parrilo, “A globally asymptotically
+stable polynomial vector field with no polynomial Lyapunov function,”
+in Proceedings of the 50th IEEE Conference on Decision and Control
+and European Control Conference, 2011, pp. 7579–7580.
+[9] Y.-C. Chang, N. Roohi, and S. Gao, “Neural Lyapunov control,” in
+Advances in Neural Information Processing Systems, vol. 32, 2019.
+[10] A. Abate, D. Ahmed, M. Giacobbe, and A. Peruffo, “Formal synthesis
+of Lyapunov neural networks,” IEEE Control Systems Letters, vol. 5,
+no. 3, pp. 773–778, 2021.
+[11] K. Yang, A. M. Swope, A. Gu, R. Chalamala, P. Song, S. Yu, S. Godil,
+R. J. Prenger, and A. Anandkumar, “LeanDojo: Theorem proving
+with retrieval-augmented language models,” in Advances in Neural
+Information Processing Systems, vol. 36, 2023, pp. 21 573–21 612.
+[12] B. Romera-Paredes, M. Barekatain, A. Novikov, M. Balog, M. P.
+Kumar, E. Dupont, F. J. R. Ruiz, J. S. Ellenberg, P. Wang, O. Fawzi,
+P. Kohli, and A. Fawzi, “Mathematical discoveries from program
+search with large language models,” Nature, vol. 625, no. 7995, pp.
+468–475, 2024.
+[13] A. Alfarano, F. Charton, and A. Hayat, “Global Lyapunov functions: A
+long-standing open problem in mathematics, with symbolic transform-
+ers,” in Advances in Neural Information Processing Systems, vol. 37,
+2024, pp. 93 643–93 670.
+[14] H. Zou, J. Feng, H. Zhao, and Y. Shi, “Analytical Lyapunov function
+discovery: An RL-based generative approach,” in Proceedings of the
+42nd International Conference on Machine Learning, ser. Proceedings
+of Machine Learning Research, vol. 267.
+PMLR, 2025, pp. 80 776–
+80 804.
+[15] E. J. Hu, Y. Shen, P. Wallis, Z. Allen-Zhu, Y. Li, S. Wang, L. Wang,
+and W. Chen, “LoRA: Low-rank adaptation of large language models,”
+in International Conference on Learning Representations, 2022.
+[16] R. Hettich and K. O. Kortanek, “Semi-infinite programming: Theory,
+methods, and applications,” SIAM Review, vol. 35, no. 3, pp. 380–429,
+1993.
+[17] D. Grande, A. Peruffo, E. Anderlini, and G. Salavasidis, “Augmented
+neural Lyapunov control,” IEEE Access, vol. 11, pp. 67 979–67 986,
+2023.
+[18] A. Edwards, A. Peruffo, and A. Abate, “FOSSIL 2.0: Formal certificate
+synthesis for the verification and control of dynamical models,” in
+Proceedings of the 27th ACM International Conference on Hybrid
+Systems: Computation and Control, 2024, pp. 1–10.
+[19] J. Liu, Y. Meng, M. Fitzsimmons, and R. Zhou, “LyZNet: A
+lightweight Python tool for learning and verifying neural Lyapunov
+functions and regions of attraction,” in Proceedings of the 27th
+ACM International Conference on Hybrid Systems: Computation and
+Control, 2024, pp. 1–8.
+[20] Qwen Team, “Qwen3.5: Towards native multimodal agents,” Feb.
+2026. [Online]. Available: https://qwen.ai/blog?id=qwen3.5
+[21] J. Anderson and A. Papachristodoulou, “Advances in computational
+Lyapunov analysis using sum-of-squares programming,” Discrete and
+Continuous Dynamical Systems – Series B, vol. 20, no. 8, pp. 2361–
+2381, 2015.
+[22] J.-J. E. Slotine and W. Li, Applied Nonlinear Control.
+Prentice Hall,
+1991.

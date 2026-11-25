@@ -1,0 +1,2762 @@
+IEEE
+1
+CoSyDelay: Cognitive Symbolic Regression for
+Traffic Delay Estimation
+Lindong Xie, Xiexin Zou, Yang Zhang, Beiyu Song, Zeren Xing, and Edward Chung*
+Abstract—Trustworthy estimation of traffic delays at signalized
+intersections is critical for modern transportation systems, as
+it supports proactive traffic control for congestion mitigation.
+Existing analytical methods often rely on idealized assumptions
+that limit their accuracy under complex traffic conditions,
+whereas data-driven methods may achieve strong estimation
+performance but usually lack transparent structures, which
+reduces confidence in their practical application. To address
+these limitations, we propose CoSyDelay, a cognitive symbolic
+regression (SR) framework for automatically deriving explicit
+and physically consistent empirical delay estimation expres-
+sions (DEEs). Specifically, CoSyDelay decomposes intersection-
+level delay estimation into turning-movement-level subproblems,
+thereby reducing the complexity of the symbolic search. During
+DEE learning, CoSyDelay constructs domain-informed symbolic
+inputs from traffic variables. Large language models (LLMs) are
+employed as symbolic search operators to iteratively generate and
+refine candidate expression structures, whose movement-specific
+coefficients are subsequently calibrated using approach-level de-
+lay labels. A composite fitness function evaluates the learned
+DEEs jointly in terms of estimation accuracy and compliance
+with specified traffic-delay principles. Experimental results on
+multiple signalized intersections demonstrate that the resulting
+expressions achieve competitive estimation performance while
+maintaining physical consistency, thereby supporting trustworthy
+delay estimation. Source code and datasets are available at
+https://github.com/ForrestXie9/CoSyDelay.
+Index Terms—Traffic delay estimation, symbolic regression,
+algorithm design, domain knowledge, large language model
+I. Introduction
+In urban road networks, signalized intersections are critical
+nodes that strongly influence traffic efficiency and congestion
+patterns [1], [2]. Traffic delay, commonly defined as the addi-
+tional travel time experienced by vehicles relative to free-flow
+conditions [3], is a key indicator of intersection performance.
+It has direct economic implications, including increased fuel
+consumption and travel time costs, while remaining intuitive
+to both technical and non-technical stakeholders [4], [5]. As
+direct measurement of delay at signalized intersections is
+difficult, trustworthy delay estimation methods are essential
+[6]. In particular, such methods should provide accurate esti-
+mates while maintaining explicit, physically consistent model
+structures for traffic engineering use.
+Existing methods for traffic delay estimation are broadly
+categorized as analytical or data-driven. Analytical models,
+This work was supported by the Hong Kong Research Grants Council -
+General Research Fund (Grant No. 15224423) and the Innovation and Tech-
+nology Commission - Mainland-Hong Kong Joint Funding Scheme (Grant
+No. MHP/038/23). (Corresponding author: Edward Chung.)
+L. Xie, X. Zou, Y. Zhang, B. Song, Z. Xing, and E. Chung are with
+The Hong Kong Polytechnic University, Hong Kong, China (email: lin-
+dong.xie@connect.polyu.hk; edward.cs.chung@polyu.edu.hk).
+including Webster’s model [7], Akçelik’s model [3], and the
+Highway Capacity Manual procedure [8], estimate delay by
+substituting traffic demand, signal timing, and intersection
+geometry into manually derived delay equations. Their explicit
+structures and modest computational requirements have led
+to their widespread use for routine assessment of signalized-
+intersection performance [5]. However, simplifying assump-
+tions and fixed functional forms may reduce their accuracy
+under complex and time-varying traffic conditions [9], [10].
+Data-driven methods learn delay relationships from observa-
+tions using machine learning or deep learning [11], [12]. They
+can capture complex nonlinear interactions and achieve high
+estimation accuracy [13]. Such models often encode these
+relationships implicitly, making their estimation mechanisms
+difficult to inspect and offering no guarantee of compliance
+with traffic-delay principles [14], [15].
+Symbolic regression (SR) learns explicit mathematical ex-
+pressions from data, making the learned relationships di-
+rectly inspectable [14], [16]. To guide SR toward expressions
+consistent with known relationships, knowledge-guided SR
+incorporates prior knowledge into candidate generation or
+evaluation through grammar restrictions [17], dimensional
+constraints [18], shape constraints [19], or formal verifi-
+cation [20]. Two gaps remain when applying knowledge-
+guided SR to signalized-intersection delay estimation. First,
+a unified intersection-level delay expression must combine
+traffic and signal variables across multiple turning movements
+and phases. This creates a high-dimensional search space in
+which existing symbolic-search methods struggle to identify
+accurate expressions [14], [21]. Second, existing knowledge-
+guided SR methods generally do not represent traffic-delay-
+specific principles in their search and evaluation procedures.
+An expression can therefore fit observed delays while violating
+required delay behavior [22].
+To address these gaps, we propose CoSyDelay, a cogni-
+tive symbolic regression framework that automates the itera-
+tive process of proposing, calibrating, checking, and revising
+traffic-delay formulas. CoSyDelay addresses the first gap by
+decomposing an intersection into turning-movement-level SR
+subproblems, avoiding a single search over all movement and
+phase variables. For each subproblem, it transforms the raw
+inputs into the flow ratio, green ratio, and cycle length. These
+variables are established traffic-theory inputs for delay esti-
+mation [3], [7], [8], [23]. Subsequently, CoSyDelay employs
+LLM-guided SR to propose plausible candidate expression
+structures from these variables [24]–[26]. The movement-
+specific coefficients of each structure are then jointly cali-
+brated from approach-level delay labels. CoSyDelay addresses
+arXiv:2611.19946v1  [cs.ET]  15 Nov 2026
+
+
+IEEE
+2
+the second gap by introducing a customized external eval-
+uator. It evaluates each candidate in two respects: estima-
+tion accuracy and compliance with traffic-delay principles
+(e.g., non-negativity, monotonicity, and boundary behavior).
+The two evaluation scores are combined in the composite
+fitness function to select candidates for the next iteration,
+while estimation-accuracy results and principle-level diagnos-
+tics jointly guide LLM revisions. After the iterative search
+terminates, the resulting movement-level delay estimates are
+aggregated using traffic-volume weights to estimate approach-
+and intersection-level delays [8], [27].
+The main contributions of this work are as follows:
+• We propose CoSyDelay, a novel SR–based framework
+that learns physically consistent empirical delay expres-
+sions at the turning-movement level and enables multi-
+granularity delay estimation at the movement, approach,
+and intersection levels.
+• We reduce symbolic search difficulty through turning-
+movement-level decomposition, domain-informed SR in-
+puts, and LLM-guided symbolic search. We further de-
+sign a customized fitness function that jointly considers
+estimation accuracy and traffic-delay principles.
+• We conduct extensive experiments on diverse signalized
+intersections. The results show that CoSyDelay achieves
+competitive performance against conventional methods
+while producing physically consistent empirical delay
+expressions.
+The remainder of this paper is organized as follows. Section
+II provides the necessary preliminaries. Section III reviews
+the relevant literature. Section IV introduces the proposed
+algorithm. Section V presents the numerical experiments and
+empirical evaluation results. Finally, Section VI concludes the
+paper and outlines potential directions for future research.
+II. Preliminaries
+A. Traffic Delay Estimation Problem
+Signal Phase
+A
+B
+C
+D
+E
+F
+G
+H
+Fig. 1. Illustration of a four-approach intersection (South, West, North, and
+East) with eight traffic signal phasing settings (Phase A to Phase H). In this
+example, Phase A is activated to serve the corresponding traffic movements.
+We begin with some basic definitions used in the paper.
+Definition 1 (Traffic turning movement). A turning movement
+is a directional vehicle flow from an entry approach to an exit
+approach at an intersection. Turning movements are commonly
+classified as through, left-turn, and right-turn according to
+the relative orientation of the entry and exit approaches. As
+shown in Fig. 1, the illustrative intersection contains 12 distinct
+turning movements.
+Definition 2 (Signal phase). A signal phase is a time inter-
+val during which a predefined set of non-conflicting turning
+movements is granted the right-of-way. Each phase consists of
+green, yellow, and all-red intervals, which together determine
+the service time allocated to the associated movements. The
+intersection in Fig. 1 has eight phases, each serving its
+assigned movements simultaneously.
+Definition 3 (Signal cycle). A signal cycle is a complete,
+periodically repeated sequence of signal phases; its duration
+is the cycle length.
+Definition 4 (Saturation flow rate and flow ratio). The sat-
+uration flow rate is the maximum discharge rate that can
+be achieved by a lane group or turning movement under
+continuous green and ideal operating conditions. The flow ratio
+is the ratio of traffic volume to the corresponding saturation
+flow rate, reflecting the demand-to-capacity relationship of a
+given movement.
+Definition 5 (Traffic delay). Traffic delay is measured in
+this study as the time loss accumulated within the approach
+detection area relative to a reference travel speed. In this paper,
+we focus on movement-level delay estimation, which can be
+written as
+{x1, . . . , xn}
+f(·)
+7−→
+n
+ˆd1, . . . , ˆdn
+o
+,
+(1)
+where xi = (qi, geff
+i , Ci)⊤∈R3 denotes the feature vector of
+the i-th turning movement, containing traffic volume, effective
+green time, and cycle length. ˆdi denotes the estimated delay
+of movement i. The function f(·) maps the movement features
+xi to the corresponding estimate ˆdi.
+B. Symbolic Regression
+SR seeks a mathematical expression that best captures the
+relationship between input and output data [28]. Given a
+dataset DB = {(xi, zi)}N
+i=1, where xi ∈Rdx is the input
+feature vector and zi ∈R is the target value, the goal is to
+identify an optimal symbolic model f ∗∈F from a predefined
+candidate space F, as described in [14]:
+f ∗= arg min
+f∈F R(f),
+(2)
+where f ∗is the optimal symbolic function. The candidate
+space F consists of variables, free constants, basic arithmetic
+operators, and mathematical functions. The empirical loss
+R(f) =
+1
+N
+PN
+i=1 ℓ(f(xi), zi) measures the average discrep-
+ancy between the predicted and observed outputs over the
+dataset DB.
+III. Literature Review
+A. Traffic Delay Estimation Methods
+1) Analytical Model for Delay Estimation: Analytical mod-
+els for traffic delay estimation predict vehicle delays at inter-
+sections using mathematical formulations grounded in traffic
+theory. For instance, Webster’s delay model [7] estimates
+
+
+IEEE
+3
+average control delay by relating the signal cycle length,
+effective green time, and traffic arrival rate, assuming uniform
+vehicle arrivals and computing delay as the time vehicles
+spend waiting at red lights. Building on this, Miller’s model
+[29] incorporated the effects of non-uniform and fluctuating
+arrivals, with the aim of improving applicability under re-
+alistic traffic conditions. Akçelik’s model [3] extends signal-
+delay estimation to oversaturated and time-dependent queueing
+conditions, improving its applicability under high demand.
+Similarly, the Highway Capacity Manual (HCM) control delay
+model [8] decomposes total delay into uniform delay due to
+regular signal stops, random delay arising from stochastic vari-
+ations in vehicle arrivals, and overflow delay caused by queues
+exceeding the green time. Each component is calculated using
+traffic volume, saturation flow, and signal timing, enabling a
+detailed representation of intersection performance. Although
+these methods are grounded in traffic theory and offer strong
+interpretability, their simplified model structures often struggle
+to provide accurate predictions when faced with complex and
+dynamically changing traffic conditions [30].
+2) Data-Driven Models for Delay Estimation: Data-driven
+methods are widely used in traffic forecasting, where historical
+observations across road networks are used to predict future
+flow, speed, or demand. Recent graph-based approaches model
+complex spatiotemporal dependencies through space-specific
+and multi-view graph learning [31]–[33], temporal-identity
+encoding and multiscale interaction [34]–[36], and decoupled
+dynamic graph learning [37], [38]. Related data-driven studies
+also use multi-representation road-network features for tra-
+jectory recovery [39] and station-aware graph attention for
+cellular traffic prediction [40]. These studies demonstrate the
+flexibility of graph-based representation learning, but they do
+not derive explicit traffic-delay equations. Data-driven tech-
+niques have also been applied to signalized-intersection delay
+estimation. Murat [11] and Preethi et al. [41] develop artificial
+neural network (ANN) models using traffic demand, signal
+timing, geometric characteristics, and operating conditions.
+Bagdatli and Dokuz [42] and Ranpura et al. [30] investigate
+machine-learning methods for signalized-intersection delay
+estimation. Korkmaz et al. [43], [44] adopt a semi-empirical
+approach, using heuristic algorithms to calibrate predefined
+linear, exponential, and quadratic delay functions based on the
+green ratio and degree of saturation.
+Existing data-driven approaches exhibit a trade-off between
+modeling flexibility and structural transparency. Graph-based
+forecasting and machine-learning delay models can learn com-
+plex relationships but encode them implicitly. Semi-empirical
+delay models yield explicit equations but confine learning
+to predefined functional forms. Consequently, methods that
+discover explicit delay-equation structures directly from data
+remain limited.
+B. Knowledge-Guided Model Discovery
+1) Symbolic Regression and Knowledge-Guided Search:
+SR discovers explicit mathematical expressions directly from
+data, making the learned relationships inspectable [45]. Tra-
+ditional SR searches expression structures through genetic
+programming, while deep SR uses learned generative models
+[46]. In both cases, the search space grows rapidly with the
+available variables and operators [14], [21]. Accuracy and
+expression complexity alone do not ensure consistency with
+known domain relationships. Knowledge-guided SR addresses
+this problem through grammar rules [17], dimensional con-
+straints [18], shape constraints [19], or formal verification
+[20]. Related structured-learning studies encode knowledge in
+model representations through ontology-enhanced subgraphs,
+temporal graph–text alignment, and relation-guided multi-
+modal fusion [47]–[49]. These approaches place knowledge
+either in the representation or directly in candidate generation
+and evaluation.
+2) LLM-Guided Model Discovery:
+Recent studies use
+LLMs to propose and revise symbolic expressions [24]–
+[26]. LLMs also support broader search and optimization:
+FunSearch combines LLM generation with external evaluation
+to evolve programs [50], while CoE-SAEA uses LLMs to
+evolve configuration strategies for surrogate-assisted optimiza-
+tion [51]. These studies demonstrate that LLMs can serve
+as iterative search operators; their use alone is therefore not
+the contribution of CoSyDelay. Knowledge-guided SR con-
+strains candidate behavior, while LLM-guided search proposes
+and revises expression structures. CoSyDelay integrates both
+within a traffic-delay-specific formulation that combines shared
+structure discovery, movement-specific coefficient calibration,
+and diagnostic feedback from estimation accuracy and traffic-
+delay principles.
+3) Applications of Symbolic Regression in Traffic Systems:
+Applications of SR in traffic systems span prediction, behavior
+modeling, and control. For traffic prediction, Li et al. [52] use
+genetic programming (GP) with Pareto optimization to derive
+highway-speed expressions, while Patelli et al. [53] introduce
+lag operators to model temporal dependence in urban traffic
+flow. For behavior modeling, Li et al. [54] use neural-network-
+based SR to discover explicit car-following relationships. For
+signal control, Liu et al. [55] formulate phase switching as an
+SR problem and evolve interpretable control rules.
+Table I highlights the limitations of existing approaches. An-
+alytical and semi-empirical models provide explicit equations
+but rely on predefined structures, whereas data-driven models
+learn flexible relationships but encode them implicitly. Traffic
+SR can discover explicit expressions from data, but existing
+applications do not jointly enforce traffic-delay principles and
+support multi-granularity delay estimation. Knowledge-guided
+SR incorporates domain constraints into symbolic search,
+but its existing constraints are not designed specifically for
+traffic delay. CoSyDelay combines explicit structure discovery,
+traffic-delay knowledge, and diagnostic feedback in one work-
+flow. It searches for a shared expression structure and jointly
+calibrates its movement-specific coefficients against approach-
+delay labels, reducing the complexity of model discovery while
+retaining movement-specific behavior. Each candidate is eval-
+uated for estimation accuracy and compliance with seven delay
+principles, and the accuracy results and diagnosed violations
+guide its subsequent revision. The resulting movement-level
+estimates are aggregated using traffic-volume weights to obtain
+approach- and intersection-level delays.
+
+
+IEEE
+4
+TABLE I
+Comparison of related modeling approaches
+Approach
+Model form
+Modeling method
+Structure discovery
+Model evaluation
+Model output
+Analytical delay models
+[3], [7], [8]
+Predefined explicit
+equation
+Traffic-theory-based
+modeling
+Predefined structure
+Estimation accuracy
+Lane-group, approach, and
+intersection delay
+Graph-based traffic
+forecasting [31]–[38]
+Implicit model
+Graph-based
+spatiotemporal learning
+Predefined architecture
+with learned parameters
+Prediction accuracy
+Node- and link-level traffic
+states
+Machine-learning delay
+models [11], [30], [41],
+[42]
+Implicit model
+Supervised data-driven
+learning
+Predefined model class
+with learned parameters
+Estimation accuracy
+Vehicle- or
+intersection-level delay
+Semi-empirical delay
+models [43], [44]
+Predefined explicit
+equation
+Semi-empirical
+modeling
+Fixed equation with
+calibrated coefficients
+Estimation accuracy
+Intersection delay
+Traffic SR [52]–[55]
+Explicit equation
+Data-driven symbolic
+regression
+Operator-based search
+from data
+Prediction accuracy and
+expression complexity
+Task-specific traffic
+relationship
+Knowledge-guided SR
+[17]–[20]
+Explicit equation
+Knowledge-guided
+symbolic regression
+Constraint-guided search
+from data
+Prediction accuracy and
+general constraints
+Task-specific equation
+CoSyDelay
+Explicit delay
+equation
+Traffic-delay-specific
+symbolic regression
+LLM-guided iterative
+search
+Estimation accuracy and
+traffic-delay principles
+Movement-, approach-,
+and intersection-level
+delay
+0. Feature transform
+Delay-informed feature 
+transformation
+1.1. Skeleton initialization
+Yes
+LLM-based
+expression skeleton
+initialization
+Inputs
+1.2. Expression calibration
+Coefficient calibration
+of generated skeletons
+2. Expression evaluation
+Expression fitness 
+evaluation
+Termination
+?
+Outputs
+3. Expression population 
+update
+Expressions ranking and
+screening.
+4. Expression regeneration
+LLM-based evolution 
+of surviving expression
+skeleton
+Delay dataset; 
+Prompts; Delay 
+principles
+Best delay 
+estimation expression
+No
+Fig. 2.
+CoSyDelay workflow. Candidate expression structures are generated, calibrated, and evaluated; estimation accuracy and principle violations guide
+subsequent revisions.
+IV. Method
+Figure 2 illustrates the workflow, which iteratively generates,
+calibrates, evaluates, and revises candidate expressions. The
+workflow can be summarized as follows:
+Input.
+The
+algorithm
+takes
+as
+input
+I
+=
+ DB, {δA,t}, p, K, Θ
+
+,
+where
+DB
+=
+{DB1, . . . , DBn}
+contains the movement-level inputs, with DBi = {xT urn
+i,t
+}Ni
+t=1
+and xT urn
+i,t
+= (qi,t, geff
+i,t, Ci,t)⊤∈R3. Here, qi,t, geff
+i,t, and Ci,t
+denote movement volume, effective green time, and cycle
+length. The dataset also provides approach-level delay labels
+δA,t, where A denotes an approach and MA its turning
+movements. These labels supervise coefficient calibration
+and candidate evaluation; movement-level delay labels are
+not required. p = (pinit, preg) denotes the LLM prompts
+used for initialization and regeneration, K represents the
+domain knowledge of traffic delay principles, which is applied
+for physical verification, and Θ = (s0, G, P) specifies the
+hyperparameter set, including the per-lane saturation flow
+rate s0, the number of generations G, and the population size
+P. The generation counter is initialized as g = 1. We use
+s0 = 1800 veh/h/lane and define the movement saturation
+flow as si = s0Li, where Li is the number of lanes serving
+movement i. Thus, the flow ratio compares the total movement
+volume with the corresponding movement-level saturation
+flow.
+Step
+1
+(Feature
+Transformation). To facilitate SR,
+we
+define
+the
+transformed
+feature
+vector
+of
+the
+t-th
+sample
+for
+the
+i-th
+turning
+movement
+as
+xT urn′
+i,t
+=
+(yi,t, λi,t, Ci,t)⊤= ( qi,t
+si ,
+geff
+i,t
+Ci,t , Ci,t)⊤, where yi,t = qi,t/si
+is the flow ratio and λi,t
+=
+geff
+i,t/Ci,t is the green ra-
+tio. Let Xi = [xT urn
+i,1
+, . . . , xT urn
+i,Ni ]⊤∈RNi×3 and X′
+i =
+[xT urn′
+i,1
+, . . . , xT urn′
+i,Ni
+]⊤∈RNi×3. The resulting transformed
+dataset is DB′
+i = {xT urn′
+i,t
+}Ni
+t=1. The flow and green ratios
+express demand relative to saturation flow and green allocation
+relative to cycle length. These traffic-theory variables help
+the search construct meaningful delay expressions without
+changing the number of input variables.
+Step 2 (Initialization of Symbolic Expressions). At gen-
+eration g = 1, the LLM is prompted, using the initialization
+prompt in Fig. 3, to generate an initial population of P
+symbolic delay expressions, denoted by P(1) = {ϕ(1)
+j }P
+j=1.
+Each expression consists of traffic-related variables and sym-
+bolic coefficients a1, a2, . . . , ak, without assigning fixed nu-
+merical values to these coefficients. Each movement has its
+own coefficient vector ai,j. For each candidate structure,
+these vectors are calibrated against the training approach-
+delay labels by minimizing the discrepancy between approach-
+level delay labels and the volume-weighted aggregation of
+movement estimates. Thus, the parameters are movement-
+specific, but calibration is supervised at the approach level. The
+resulting movement-specific function is f (1)
+i,j
+= ϕ(1)
+j (·; ai,j).
+The instantiated candidate-function set induced by P(1) is thus
+F(1) = {f (1)
+i,j | i = 1, . . . , n; j = 1, . . . , P}.
+Step 3 (Evaluation). For each symbolic expression ϕ(g)
+j ,
+the calibrated movement estimates are first aggregated into
+
+
+IEEE
+5
+TABLE II
+Inputs and outputs of the main CoSyDelay components
+Component
+Inputs and dimensions
+Outputs and dimensions
+Feature Transformation
+Raw movement observations Xi ∈RNi×3 for n
+movements, and movement saturation flows si
+Transformed observations X′
+i ∈RNi×3, containing flow
+ratio, green ratio, and cycle length
+Expression Initialization
+Initialization prompt, transformed variables, and r
+delay principles
+Initial population with P candidate expression structures
+Expression Calibration
+A population of P candidate expression structures,
+transformed inputs and traffic volumes for n
+movements, and approach-delay labels
+n × P calibrated movement-specific functions
+Expression Evaluation
+n × P calibrated functions, transformed inputs and
+traffic volumes, approach-delay labels, and r delay
+principles
+P accuracy scores, n × P physical indicators, P overall
+fitness values, and P × r principle-feedback values
+Expression Population Update
+Parent and offspring populations (P candidate
+expression structures each) and their 2P overall
+fitness values
+Updated population containing the globally best P
+structures and one current best expression
+Expression Regeneration
+Updated population (P structures), P accuracy
+results, P × r principle feedback, and regeneration
+prompt
+Offspring population with P regenerated structures
+Multi-Granularity Delay Aggregation Final n movement functions, corresponding
+transformed inputs, and traffic volumes
+n movement estimates and their traffic-volume-weighted
+approach and intersection estimates
+Note: n is the number of turning movements, P is the population size, Ni is the number of samples for movement i, and r is the number of
+traffic-delay principles.
+Prompt for initialization
+You are
+a traffic
+delay modeling expert tasked with
+generating a symbolic expression for the average delay at the
+turning-movement level of the {Intersection_id}.
+The following are the available features for use in the
+symbolic expression: {Feature_descriptions_text}
+Using your traffic domain knowledge and a chain of thought
+process, construct an innovative symbolic mathematical
+expression for the average delay by following the steps below:
+Step 1: Generate the expression. The expression must satisfy:
+{Traffic_physical_constraints} & {Mathematical_constraints}
+Step 2: Output Format
+Model output must follow exactly this structure (no extra 
+text):
+### Expression
+y = <expression with coefficients a1, a2, ...>
+### Explanation
+<Clear, term-by-term explanation>
+Prompt for regeneration
+You are a traffic delay modeling expert tasked with generating a 
+symbolic expression for the average delay at the turning-
+movement level of the {Intersection_id}.
+The following are the available features for use in the symbolic 
+expression: {Feature_descriptions_text}
+The following is a parent expression I provided to you:
+Parent expression: y = {Base_expr}
+Based on traffic domain knowledge, the validation result for this 
+expression is {Validation_label}. Detailed research evaluation 
+for this Parent validation is as follows:{Validation_text}
+Step 1: Generate the expression. The expression must satisfy: 
+{Traffic_physical_constraints} & {Mathematical_constraints}
+Step 2: Output Format
+Model output must follow exactly this structure (no extra text): 
+### Expression
+y = <expression with coefficients a1, a2, ...>
+### Explanation
+<Clear, term-by-term explanation>
+Fig. 3. Initialization (left) and regeneration (right) prompts in CoSyDelay. Colors distinguish the role, input context, task instructions, and evaluation feedback.
+approach-delay estimates:
+f (g)
+A,j(xApproach′
+A,t
+) =
+P
+i∈MA qi,tf (g)
+i,j (xT urn′
+i,t
+)
+P
+i∈MA qi,t
+.
+Only samples with positive approach volume are included.
+Candidate Fitness combines approach-level estimation accu-
+racy and physical consistency:
+Fitnessoverall(ϕ(g)
+j ) = Scoreacc(ϕ(g)
+j ) + Scorephys(ϕ(g)
+j ). (3)
+Here, f (g)
+A,j is the approach-delay function obtained by ag-
+gregating movement-level delay estimates using traffic-volume
+weights. Its input xApproach′
+A,t
+includes the transformed features
+and corresponding traffic volumes of all turning movements
+in approach A. Let Avalid denote the set of approaches with
+positive total volume and nonzero delay-label variance, and let
+m = |Avalid|. The accuracy score is
+Scoreacc(ϕ(g)
+j ) = max
+(
+0,
+1
+m
+X
+A∈Avalid
+
+1 −
+P
+t
+
+δA,t −f (g)
+A,j(xApproach′
+A,t
+)
+2
+P
+t(δA,t −¯δA)2
+
+
+)
+.
+(4)
+Here, ¯δA is the mean delay label at approach A, and the
+
+
+IEEE
+6
+sums use its valid evaluation samples. The approach-level
+coefficients of determination (R2) are first averaged; the ac-
+curacy score equals this mean if it is nonnegative and is set
+to zero otherwise. During search, coefficient calibration and
+population updates use training data; validation Fitness selects
+the final expression.
+The movement-level physical indicator sphys,(g)
+i,j
+evaluates
+the candidate function f (g)
+i,j
+against the delay principles in
+Table III. Let y = qi/si, where si is the corresponding
+movement saturation flow, denote the movement flow ratio
+and λ = geff/C the corresponding green ratio. Principle 1
+checks for the required variables. Principles 2 and 3 examine
+monotonicity by differentiating the expression with respect to
+y and λ, respectively. Principle 4 tests unit consistency through
+first-order homogeneity in C. Principles 5 and 7 use symbolic
+one-sided limits to examine low-flow and zero-green behavior,
+while Principle 6 evaluates the validity of the resulting delay
+values. The numerical checks in Principles 2, 3, and 6 are
+conducted over D = [0.001, 2.0] × [0.02, 0.95] × [30, 240] for
+(y, λ, C), with C measured in seconds. This domain contains
+the observed training ranges and extends beyond them to pro-
+vide conservative stress-test conditions. It is sampled using a
+fixed space-filling Latin hypercube design [56], supplemented
+by combinations of the variable bounds. Let v(g)
+i,j,l = 1 if
+function f (g)
+i,j passes principle l, and zero otherwise. Formally,
+sphys,(g)
+i,j
+=
+(
+1,
+if all principles pass,
+0,
+otherwise.
+(5)
+A movement-level indicator of one means that the function
+passes all specified principle checks. For feedback-guided
+regeneration, the principle-level verification results are sum-
+marized by V(g) ∈{0, 1}P ×r, where V (g)
+j,l
+= Qn
+i=1 v(g)
+i,j,l.
+Thus, V (g)
+j,l
+= 1 only when every movement-specific instance
+of ϕ(g)
+j
+satisfies principle l, and the LLM receives the specific
+principles violated by each symbolic structure rather than only
+its aggregate physical-consistency score. The candidate-level
+physical score requires every calibrated movement function to
+pass:
+Scorephys(ϕ(g)
+j ) =
+(
+1,
+if all movements pass,
+0,
+otherwise.
+(6)
+The resulting overall Fitness lies in [0, 2] and is used to rank
+candidate expression structures.
+Step 4 (Population Update and Termination Check).
+For g = 1, the initialized population is directly taken as the
+current population after evaluation, namely P(1). For g > 1,
+the offspring population Poff,(g) is first evaluated in the same
+manner as in Step 3. The parent and offspring populations are
+pooled, and the P structures with the highest Fitnessoverall
+values are retained as P(g). This is global parent–offspring
+survivor selection (the standard (µ + λ) scheme), using P
+parents and P offspring. The best symbolic expression in
+the current population is subsequently identified as ˜ϕ(g) =
+arg maxϕ∈P(g) Fitnessoverall(ϕ). If g = G, the evolution-
+ary process terminates. Otherwise, the algorithm proceeds to
+Step 5 to generate the offspring population for generation g+1.
+Step 5 (Regeneration). If the termination condition is not
+met, each parent symbolic expression ϕ(g)
+j
+∈P(g) is used to
+generate one corresponding offspring expression for generation
+g + 1. Specifically, CoSyDelay inserts ϕ(g)
+j
+together with its
+training-set estimation-accuracy results and principle-level ver-
+ification feedback from Table III into the regeneration prompt
+shown in Fig. 3, and the LLM returns a regenerated symbolic
+variant ϕoff,(g+1)
+j
+. Repeating this process for all j = 1, . . . , P
+yields Poff,(g+1) = {ϕoff,(g+1)
+j
+}P
+j=1. The movement-specific
+coefficient vectors are then jointly calibrated against the train-
+ing approach-delay labels. Finally, the counter is updated as
+g ←g + 1, and the instantiated offspring functions are passed
+to Step 3 for evaluation.
+Output.
+After
+evolution
+terminates,
+the
+shared
+expression
+structure
+with
+the
+highest
+validation
+Fitness
+is
+selected
+from
+the
+final
+population.
+Let
+j∗= arg maxj∈{1,...,P } Fitnessval(ϕ(G)
+j
+) denote its index,
+where validation Fitness uses the same definition as Eq. 3
+and is evaluated using the training-fitted coefficients without
+refitting on validation data. Only after selection, with the
+structure fixed, are movement-specific coefficients refitted
+on the combined training and validation sets. The algorithm
+outputs the corresponding movement-specific delay functions
+{f ∗
+i }n
+i=1, where f ∗
+i (·) = ϕ(G)
+j∗(·; a∗
+i ) and a∗
+i denotes the refitted
+coefficient vector for movement i. Thus, the output functions
+share one expression structure but contain movement-specific
+coefficients jointly calibrated against approach-delay labels.
+Only these movement-level functions are learned by SR;
+approach- and intersection-level delays are subsequently
+computed from their estimates.
+Following the standard aggregation of lane-group and move-
+ment control delays in the Highway Capacity Manual and
+Federal Highway Administration (FHWA) traffic signal timing
+guidance [8], [27], we compute approach- and intersection-
+level mean delays using traffic-volume-weighted averages. Let
+ˆdi = f ∗
+i (xT urn′
+i
+) denote the estimated mean delay per vehicle
+for movement i during a common analysis period, and let qi
+denote its traffic volume. For an approach A with constituent
+movement set MA and total volume QA = P
+i∈MA qi > 0,
+the approach-level mean delay is
+ˆdA =
+P
+i∈MA qi ˆdi
+QA
+=
+P
+i∈MA qif ∗
+i (xT urn′
+i
+)
+P
+i∈MA qi
+.
+(7)
+Similarly, for an intersection with approach set A and positive
+total volume, the intersection-level mean delay is
+ˆdint =
+P
+A∈A QA ˆdA
+P
+A∈A QA
+=
+P
+A∈A
+P
+i∈MA qi ˆdi
+P
+A∈A
+P
+i∈MA qi
+.
+(8)
+These equations do not constitute independently learned
+higher-level models; they follow directly from the definition of
+mean per-vehicle delay. Their use assumes that all movement
+estimates employ the same delay definition and analysis period,
+that the movement sets are mutually exclusive and collectively
+cover the vehicles being aggregated, and that the traffic-volume
+weights refer to that same period. Aggregation is performed
+only when the corresponding total volume is positive. When
+the total traffic volume is zero, no vehicles are available for
+
+
+IEEE
+7
+TABLE III
+Traffic-delay principles and automated checks
+Principle
+Requirement
+Automated check
+1. Required Traffic
+Variables
+f must include the movement flow ratio y, green ratio λ,
+and cycle time C.
+Confirm that y, λ, and C are present in the expression.
+2. Monotonicity w.r.t.
+Flow Ratio
+Delay must be non-decreasing in y: ∂f/∂y ≥0.
+Compute ∂f/∂y and confirm that every sampled value is
+real, finite, and non-negative.
+3. Monotonicity w.r.t.
+Green Ratio
+Delay must be non-increasing in λ: ∂f/∂λ ≤0.
+Compute ∂f/∂λ and confirm that every sampled value is
+real, finite, and non-positive.
+4. Unit Consistency
+With dimensionless y, λ, and coefficients,
+f(y, λ, kC) = kf(y, λ, C) for k > 0.
+Verify symbolically that f(y, λ, kC) −kf(y, λ, C) ≡0.
+5. Low-Flow Condition
+For λ, C > 0, limy→0+ f(y, λ, C) must be finite and
+non-negative, but need not be zero.
+Compute the symbolic limit and confirm that it exists and
+lies in [0, ∞).
+6. Non-Negativity
+Delay must remain real, finite, and non-negative over the
+verification domain.
+Evaluate f and confirm that every sampled value is real,
+finite, and non-negative.
+7. Zero Green Limit
+For y, C > 0, limλ→0+ f(y, λ, C) = +∞.
+Compute the symbolic limit and confirm that it equals +∞
+for y, C > 0.
+TABLE IV
+Intersection configurations and phase control. S, E, N, and W denote the south, east, north, and west approaches; L, T, and R denote left,
+through, and right movements. Each phase lists its served approach–movement pairs.
+Intersection
+Intergreen (s)
+Movements by approach
+Phase allocation
+1–2
+24
+S/E/N/W: L, T, R
+A: S/N →R; B: S/N →L, T;
+C: E/W →R; D: E/W →L, T
+3
+18
+S: L, T; E: L, T; N: L, T, R; W: L, T
+A: S/N →L, T; W →L; B: N →L, T, R; W →L;
+C: E/W →L, T
+4
+18
+S: L, T; N: T, R; W: L, R
+A: S →L, T; N →T; B: S →L; N →T, R; W →L;
+C: S →L; W →L, R
+5
+18
+S: L, T; E: L, T, R; N: T; W: L, R
+A: E/W →L, R; B: E →L, T, R; W →L;
+C: S →L, T; N →T; W →L
+6
+12
+S: T, R; E: L; N: L, T
+A: S →T; N →L, T;
+B: S →T, R; E →L
+aggregation; the mean delay therefore cannot be computed and
+is reported as not applicable (N/A).
+Like classical delay models such as Webster, Akçelik, and
+HCM [3], [7], [8], CoSyDelay uses traffic demand and signal
+timing as the basis for delay estimation. It learns an explicit
+expression from data rather than imposing a predefined delay
+formula, with movement-specific coefficients jointly calibrated
+against approach-delay labels. However, traffic-volume weight-
+ing only aggregates movement estimates; it does not model
+their interactions. Short turning lanes and queue spillback can
+obstruct adjacent movements [27], and the current inputs do
+not explicitly represent lane storage, shared-lane blocking, or
+queue interactions. Incorporating geometric and queue-state
+variables is therefore a direction for future work.
+Intersection 1
+East
+West
+N
+Intersection 2
+North
+South
+N
+North
+East
+South
+West
+Fig. 4. Geometrical layout of Intersection 1 (left) and Intersection 2 (right).
+V. Numerical Experiments
+A. Experimental Setup
+Experiments use six signalized intersections. Intersections 1
+and 2 are simulated standard four-leg intersections (Fig. 4),
+with short right-turn lanes at Intersection 2. For Intersec-
+tions 3–6, located along Bowen Bridge Road in Queensland,
+Australia (Fig. 5), field-collected traffic volumes and signal
+timings are used in simulation to obtain the delay labels.
+Delay labels measure time loss within the approach detection
+area relative to a reference speed determined by road speed
+limits and vehicle speed settings. Simulations start from an
+empty network and last 4,500 s: 900 s of warm-up and
+3,600 s of measurement (900–4,500 s). Only in-window time
+loss is counted, including contributions from vehicles entering
+during warm-up or remaining at 4,500 s. Vehicles and queues
+are retained after warm-up. Simulations are not extended to
+clear queues; post-window delay and waiting before network
+insertion are excluded. The available delay labels are approach-
+level averages. Movement-specific coefficients are therefore
+jointly calibrated using approach-level delay labels, and es-
+timation accuracy is evaluated at the approach level. Table IV
+summarizes their movement configurations and signal phases.
+The dataset contains 10,274 samples: 5,909 training samples
+for coefficient fitting and evolutionary search, 1,512 validation
+samples for final expression selection, and 2,853 test samples
+for final evaluation. All methods use the same fixed splits.
+
+
+IEEE
+8
+N
+Intersection 3
+Herston 
+Road
+Bowern
+Bridge
+Intersection 4
+O’Connell 
+Terrace
+Intersection 5
+Campbell 
+Street
+Intersection 6
+N
+N
+N
+Bowern
+Bridge
+Bowern
+Bridge
+Bowern
+Bridge
+Fig. 5. Geometrical layout of Intersections 3 to 6, from left to right corresponding to Intersections 3, 4, 5, and 6.
+Hyperparameters of the data-driven baselines are selected us-
+ing only the validation split. Estimation accuracy is measured
+using R2, root mean squared error (RMSE), and mean absolute
+error (MAE). When physical consistency is also considered,
+Fitness is calculated using Eq. 3. Each stochastic method is
+evaluated over 20 independent runs using the same data splits
+and method-specific settings, and its results are reported as
+mean ± standard deviation. Deterministic analytical methods
+are reported once for each setting. Average Rank summarizes
+performance over the evaluation cases in each table or exper-
+imental block; lower values are better. Statistical significance
+is evaluated using two-sided one-sample Wilcoxon signed-
+rank tests on the paired performance differences, with Holm-
+adjusted p-values at α = 0.05. The symbols +, =, and −
+indicate that CoSyDelay is significantly better, not signifi-
+cantly different, or significantly worse than the comparison
+method, respectively. CoSyDelay uses a population size of
+P = 20, G = 10 generations, and a per-lane saturation
+flow of s0 = 1800 veh/h/lane. The default LLM is GPT-4.1-
+mini with temperature 0.0, top-p = 1.0, a 1024-token output
+limit, and a 30-s timeout. At initialization and regeneration,
+the LLM returns one candidate per call as Expression and
+Explanation text (Fig. 3). Candidates are rejected if the ex-
+pression cannot be extracted, parsed, or evaluated, contains
+unsupported syntax, variables, or operators, or duplicates an
+existing candidate. Failed calls are retried, while the rejection
+reason for an invalid or duplicate candidate is returned to the
+LLM for revision. If no valid, unique expression is obtained
+after five attempts, candidate generation is restarted with a new
+initialization. Experiments were conducted on an Intel Core i7-
+10700K central processing unit (CPU) and an NVIDIA RTX
+4080 Super graphics processing unit (GPU).
+B. Estimation Accuracy Comparison with Baseline Methods
+We compare CoSyDelay with two groups of baselines. The
+first group contains the standard and data-calibrated forms of
+three analytical delay models: Webster [7], HCM [8], and
+Akçelik [3]. The second group contains data-driven meth-
+ods: linear regression, random forest (RF), Extreme Gradient
+Boosting (XGBoost) [57], AdaBoost, support vector regres-
+sion (SVR), k-nearest neighbors (KNN), graph convolutional
+network (GCN), GRANDE [58], ModernNCA [59], Dirichlet
+graph auto-encoder (DGAE) [60], and Graph Neural Network
+for Urban Interpolation (GNNUI) [61]. All methods are eval-
+uated using R2, RMSE, and MAE.
+Table V shows that CoSyDelay achieves the best results
+at all six intersections and on all three metrics, with an
+average rank of 1.00. The Wilcoxon signed-rank tests on the
+paired differences further show that it significantly outperforms
+every standard and data-calibrated analytical model in all 18
+intersection–metric comparisons.
+Table VI shows that CoSyDelay remains competitive with
+flexible data-driven methods. It has the second-best average
+rank (3.33) among the 12 methods, achieves the best results on
+all three metrics at I1 and I5, and obtains the highest R2 at I4.
+The paired tests show that CoSyDelay is significantly better
+than XGBoost in 10 of the 18 intersection–metric compar-
+isons, statistically indistinguishable in four, and significantly
+worse in four. It also significantly outperforms AdaBoost in
+all 18 comparisons and linear regression, KNN, and GCN in
+16, 16, and 15 comparisons, respectively. CoSyDelay therefore
+maintains competitive estimation accuracy while providing an
+explicit delay equation evaluated against traffic-delay princi-
+ples.
+Fig. 6 provides three complementary views of performance
+at I3–I5. First, the best-so-far Fitness increases throughout the
+search and begins to stabilize in the later generations; I4 shows
+the largest run-to-run variation. Fitness ranges from 0 to 2
+and combines estimation accuracy with physical consistency.
+The final mean Fitness above 1.8 indicates strong combined
+performance in estimation accuracy and physical consistency.
+Second, the CoSyDelay points in the Taylor diagrams have cor-
+relations above 0.95 and normalized standard deviations close
+to 1, indicating close agreement with the observations and
+performance comparable to the strongest data-driven baselines.
+Third, its test-RMSE distributions are concentrated among the
+lowest values at all three intersections and remain substantially
+below those of the analytical models.
+To gain deeper insight into the behavior of CoSyDelay,
+Fig. 7 shows the generation-wise trajectories of the learned
+models at Intersection 1. The best-so-far Fitness increases
+rapidly during the early generations and then stabilizes, indi-
+cating that the search progressively improves candidate expres-
+sion structures and their calibrated coefficients. The selected
+expression for Intersection 1 is written as follows:
+ˆd = a1 · C · ya2 ·
+ 1
+λ −1
+a3
+· exp
+
+a4 · y
+λ
+
+(9)
+where C > 0 is cycle time, y is the flow ratio, and λ is the
+green ratio. The resulting empirical model is parameterized
+
+
+IEEE
+9
+TABLE V
+Test performance of analytical delay models and CoSyDelay at I1–I6. Metrics are averaged across valid approaches. Standard analytical
+formulas are deterministic; calibrated variants and CoSyDelay are reported as mean ± standard deviation over 20 runs. Average Rank
+averages ranks across intersections and metrics. Superscripts summarize Holm-adjusted two-sided one-sample Wilcoxon signed-rank tests on
+the paired performance differences (α = 0.05): +, =, and −denote CoSyDelay performing significantly better, not significantly differently,
+and significantly worse, respectively. The final row counts these outcomes; best values are bold.
+Site
+Metric
+Webster
+Webster-opt
+HCM
+HCM-opt
+Akçelik
+Akçelik-opt
+CoSyDelay
+I1
+R2
+-0.367+
+−0.834 ± 1.730+
+-0.368+
+0.529 ± 0.277+
+-0.368+
+−0.834 ± 1.730+
+0.803 ± 0.002
+RMSE
+12.294+
+11.381 ± 4.968+
+12.297+
+6.435 ± 1.524+
+12.297+
+11.381 ± 4.968+
+4.527 ± 0.027
+MAE
+10.522+
+9.021 ± 4.584+
+10.527+
+4.701 ± 1.242+
+10.527+
+9.021 ± 4.584+
+3.288 ± 0.019
+I2
+R2
+-0.516+
+−0.051 ± 0.544+
+-0.516+
+0.510 ± 0.175+
+-0.516+
+−0.051 ± 0.544+
+0.756 ± 0.003
+RMSE
+15.220+
+11.627 ± 2.170+
+15.220+
+8.223 ± 1.251+
+15.220+
+11.627 ± 2.170+
+5.794 ± 0.045
+MAE
+12.526+
+8.987 ± 2.099+
+12.526+
+5.905 ± 1.102+
+12.526+
+8.987 ± 2.099+
+4.160 ± 0.053
+I3
+R2
+0.191+
+−0.664 ± 1.098+
+0.222+
+0.322 ± 0.558+
+0.222+
+−0.664 ± 1.098+
+0.866 ± 0.024
+RMSE
+10.815+
+12.893 ± 4.413+
+10.539+
+8.410 ± 2.606+
+10.539+
+12.893 ± 4.413+
+4.416 ± 0.374
+MAE
+8.227+
+10.443 ± 4.299+
+8.131+
+6.531 ± 2.337+
+8.131+
+10.443 ± 4.299+
+3.102 ± 0.279
+I4
+R2
+-7.654+
+−9.147 ± 4.840+
+0.448+
+−2.245 ± 1.674+
+0.448+
+−9.147 ± 4.840+
+0.861 ± 0.023
+RMSE
+6.926+
+10.197 ± 3.518+
+3.742+
+5.921 ± 2.905+
+3.742+
+10.197 ± 3.518+
+2.070 ± 0.172
+MAE
+3.725+
+8.873 ± 3.614+
+2.862+
+4.606 ± 2.969+
+2.862+
+8.873 ± 3.614+
+1.289 ± 0.112
+I5
+R2
+-1.003+
+−1.512 ± 1.348+
+-0.167+
+0.598 ± 0.043+
+-0.167+
+−1.512 ± 1.348+
+0.872 ± 0.008
+RMSE
+15.309+
+14.589 ± 3.772+
+12.001+
+7.185 ± 0.360+
+12.001+
+14.589 ± 3.772+
+3.902 ± 0.143
+MAE
+9.299+
+11.602 ± 4.508+
+9.107+
+5.428 ± 0.337+
+9.107+
+11.602 ± 4.508+
+2.651 ± 0.144
+I6
+R2
+-3.048+
+−4.234 ± 1.728+
+0.087+
+0.163 ± 0.373+
+0.087+
+−4.234 ± 1.728+
+0.839 ± 0.037
+RMSE
+7.868+
+8.315 ± 1.525+
+4.717+
+4.089 ± 1.083+
+4.717+
+8.315 ± 1.525+
+2.605 ± 0.221
+MAE
+4.668+
+7.052 ± 1.580+
+3.906+
+2.954 ± 0.890+
+3.906+
+7.052 ± 1.580+
+1.660 ± 0.180
+Average Rank
+5.111
+5.611
+4.139
+2.389
+4.139
+5.611
+1.000
++/ = /−
+18/0/0
+18/0/0
+18/0/0
+18/0/0
+18/0/0
+18/0/0
+–
+TABLE VI
+Test performance of data-driven models and CoSyDelay at I1–I6. Metrics are averaged across valid approaches. Values are mean ± standard
+deviation over 20 runs; deterministic models are reported once. Average Rank averages ranks across intersections and metrics. Superscripts
+summarize Holm-adjusted two-sided one-sample Wilcoxon signed-rank tests on the paired performance differences (α = 0.05): +, =, and −
+denote CoSyDelay performing significantly better, not significantly differently, and significantly worse, respectively. The final row counts
+these outcomes; best values are bold.
+Site Metric
+Linear
+RF
+XGBoost
+AdaBoost
+SVR
+KNN
+GCN
+DGAE
+GNNUI
+GRANDE
+ModernNCA
+CoSyDelay
+I1
+R2
+0.784+
+0.777 ± 0.001+
+0.759 ± 0.002+ 0.716 ± 0.003+ 0.760+ 0.715+ 0.697 ± 0.004+ 0.747 ± 0.007+
+0.778 ± 0.006+
+0.763 ± 0.006+
+0.785 ± 0.005+
+0.803 ± 0.002
+RMSE
+4.671+
+4.825 ± 0.014+
+4.968 ± 0.034+ 5.485 ± 0.034+ 5.021+ 5.522+ 5.666 ± 0.035+ 5.188 ± 0.073+
+4.802 ± 0.072+
+5.000 ± 0.076+
+4.703 ± 0.066+
+4.527 ± 0.027
+MAE
+3.363+
+3.401 ± 0.011+
+3.529 ± 0.028+ 4.161 ± 0.032+ 3.387+ 3.872+ 3.989 ± 0.048+ 3.673 ± 0.053+
+3.395 ± 0.047+
+3.553 ± 0.057+
+3.316 ± 0.039+
+3.288 ± 0.019
+I2
+R2
+0.732+
+0.745 ± 0.002+
+0.735 ± 0.004+ 0.638 ± 0.007+ 0.728+ 0.694+ 0.646 ± 0.012+ 0.747 ± 0.007+
+0.763 ± 0.011−
+0.752 ± 0.008= 0.764 ± 0.017−
+0.756 ± 0.003
+RMSE
+6.176+
+6.002 ± 0.023+
+6.056 ± 0.050+ 7.313 ± 0.079+ 6.223+ 6.583+ 7.143 ± 0.135+ 5.901 ± 0.097+ 5.628 ± 0.153−5.881 ± 0.105+
+5.695 ± 0.245=
+5.794 ± 0.045
+MAE
+4.485+
+4.053 ± 0.013−
+4.148 ± 0.031= 5.890 ± 0.094+ 3.953−4.376+ 4.877 ± 0.060+ 4.200 ± 0.057=
+3.895 ± 0.105−
+4.166 ± 0.093= 3.873 ± 0.130−
+4.160 ± 0.053
+I3
+R2
+0.828+ 0.878 ± 0.001= 0.878 ± 0.001= 0.741 ± 0.004+ 0.854+ 0.773+ 0.693 ± 0.010+ 0.648 ± 0.015+
+0.831 ± 0.005+
+0.853 ± 0.007+
+0.864 ± 0.004=
+0.866 ± 0.024
+RMSE
+4.990+ 4.223 ± 0.019= 4.226 ± 0.026= 6.132 ± 0.047+ 4.611+ 5.733+ 6.645 ± 0.108+ 7.156 ± 0.159+
+4.965 ± 0.079+
+4.620 ± 0.107+
+4.442 ± 0.067=
+4.416 ± 0.374
+MAE
+3.628+
+2.801 ± 0.013−
+2.807 ± 0.004−5.127 ± 0.050+ 2.800−3.763+ 4.864 ± 0.115+ 5.081 ± 0.147+
+3.402 ± 0.059+
+3.292 ± 0.090+
+2.847 ± 0.047−
+3.102 ± 0.279
+I4
+R2
+0.757+
+0.858 ± 0.001=
+0.848 ± 0.006+ 0.719 ± 0.006+ 0.832+ 0.774+ 0.720 ± 0.009+ 0.834 ± 0.006+
+0.847 ± 0.006+
+0.799 ± 0.015+
+0.831 ± 0.008+
+0.861 ± 0.023
+RMSE
+2.635+ 2.046 ± 0.009= 2.159 ± 0.020+ 2.948 ± 0.024+ 2.336+ 2.640+ 3.007 ± 0.041+ 2.315 ± 0.048+
+2.145 ± 0.047+
+2.206 ± 0.045+
+2.279 ± 0.069+
+2.070 ± 0.172
+MAE
+1.719+ 1.275 ± 0.007= 1.304 ± 0.011= 2.262 ± 0.027+ 1.277= 1.683+ 2.026 ± 0.034+ 1.561 ± 0.037+
+1.408 ± 0.030+
+1.458 ± 0.043+
+1.495 ± 0.038+
+1.289 ± 0.112
+I5
+R2
+0.688+
+0.838 ± 0.001+
+0.827 ± 0.003+ 0.631 ± 0.007+ 0.770+ 0.653+ 0.624 ± 0.007+ 0.698 ± 0.005+
+0.795 ± 0.006+
+0.796 ± 0.011+
+0.806 ± 0.010+
+0.872 ± 0.008
+RMSE
+6.053+
+4.420 ± 0.018+
+4.553 ± 0.050+ 6.785 ± 0.068+ 5.160+ 6.260+ 6.820 ± 0.065+ 6.166 ± 0.061+
+5.000 ± 0.081+
+4.902 ± 0.127+
+4.698 ± 0.108+
+3.902 ± 0.143
+MAE
+4.493+
+2.829 ± 0.010+
+2.908 ± 0.039+ 5.693 ± 0.069+ 3.095+ 3.979+ 5.043 ± 0.083+ 4.408 ± 0.058+
+3.331 ± 0.070+
+3.475 ± 0.126+
+2.962 ± 0.062+
+2.651 ± 0.144
+I6
+R2
+0.747+ 0.875 ± 0.002−0.855 ± 0.002−0.712 ± 0.012+ 0.819= 0.760+ 0.817 ± 0.006= 0.838 ± 0.007−
+0.848 ± 0.006−
+0.801 ± 0.013+
+0.831 ± 0.008=
+0.839 ± 0.037
+RMSE
+2.542= 2.032 ± 0.017−2.204 ± 0.019−2.723 ± 0.033+ 2.450−2.480−2.423 ± 0.037−2.401 ± 0.051−
+2.328 ± 0.047−
+2.338 ± 0.044−
+2.327 ± 0.045−
+2.605 ± 0.221
+MAE
+1.682= 1.210 ± 0.009−1.306 ± 0.007−2.141 ± 0.039+ 1.409−1.545−1.624 ± 0.028= 1.495 ± 0.040−
+1.471 ± 0.029−
+1.519 ± 0.042−
+1.418 ± 0.025−
+1.660 ± 0.180
+Average Rank
+8.111
+2.750
+4.028
+11.389
+5.778
+9.500
+10.722
+7.944
+4.500
+6.167
+3.778
+3.333
++/ = /−
+16/2/0
+8/5/5
+10/4/4
+18/0/0
+12/2/4
+16/0/2
+15/2/1
+14/1/3
+12/0/6
+14/2/2
+9/4/5
+–
+with movement-specific coefficients a1, a2, a3, a4 > 0, jointly
+calibrated against approach-level delay labels and reported in
+Table VII. Equation 9 is the selected expression structure for
+Intersection 1; each final movement-level expression is ob-
+tained by substituting the corresponding calibrated coefficients.
+The expression is mathematically valid for y ≥0, 0 < λ ≤1,
+and C > 0. The condition λ > 0 avoids division by zero,
+while λ ≤1 follows from the definition of the green ratio.
+We interpret the expression’s factors, examine its mathemat-
+ical behavior, and assess its movement-specific coefficients.
+• Physical Interpretation of the Discovered Expression:
+The factor a1C sets the delay scale in seconds, while
+the remaining factors are dimensionless. The demand
+term ya2 describes the response to traffic flow, with a2
+controlling its power-law growth. The factor (1/λ −1)a3
+describes the effect of the effective non-green-to-green
+time ratio: less effective green time increases this factor.
+Finally, exp(a4y/λ) represents nonlinear growth with the
+degree of saturation, X = y/λ. These are interpretable
+response factors in an empirical formula, not indepen-
+dently identified delay components or rediscovered phys-
+ical principles.
+• Monotonicity and Boundary Behavior: The evolved
+expression is monotonic in traffic state variables and
+satisfies delay boundary conditions:
+– Monotonicity: In the interior domain y > 0 and 0 <
+λ < 1, the estimated delay ˆd increases strictly with
+the flow ratio (∂ˆd/∂y > 0) and decreases strictly as
+
+
+IEEE
+10
+0
+3
+6
+9
+Generation
+1.7
+1.8
+1.9
+Best-so-far Fitness
+Intersection I3
+0
+3
+6
+9
+Generation
+Intersection I4
+0
+3
+6
+9
+Generation
+Intersection I5
+0.0
+0.5
+1.0
+σpred/σobs
+0.0
+0.5
+1.0
+σpred/σobs
+0.6
+0.8
+0.95
+0.0
+0.5
+1.0
+σpred/σobs
+0.6
+0.8
+0.95
+0.0
+0.5
+1.0
+σpred/σobs
+0.6
+0.8
+0.95
+5
+10
+15
+20
+Test RMSE (s)
+CoSyDelay
+RF
+ModernNCA
+GNNUI
+Webster
+Webster-opt
+HCM-opt
+Akcelik-opt
+5
+10
+15
+Test RMSE (s)
+5
+10
+15
+20
+25
+Test RMSE (s)
+(a)
+(b)
+(c)
+Fig. 6. Visual analysis at I3–I5: (a) generation-wise best-so-far training Fitness, reported as the mean with capped ± sample-standard-deviation error bars
+over 20 independent runs; (b) test-set Taylor diagrams, with observations shown in black; and (c) test-RMSE violin plots, with diamonds marking the means.
+Method colors are shared by (b) and (c).
+the green ratio increases (∂ˆd/∂λ < 0).
+– Compliance with Physical Boundaries: The formu-
+lation satisfies fundamental boundary conditions at
+extreme operational limits:
+1) Low-Flow Condition (y
+→
+0+): As traffic
+demand vanishes, the term ya2 approaches zero
+(given a2 > 0), resulting in ˆd →0. This is a
+finite, non-negative low-flow limit. Zero is a valid
+special case; other per-vehicle delay expressions
+may approach a positive finite limit because an
+isolated vehicle can still arrive during a red
+interval.
+2) Free-Flow Condition (λ →1): As the green
+ratio approaches unity (continuous green), the ge-
+ometric impedance term (1/λ−1) becomes zero,
+leading to ˆd →0. This correctly models free-
+flow movement where signalized interruption is
+absent.
+3) Zero Green Limit (λ →0+ with y > 0): Under
+sustained positive demand, both the red-to-green
+term and the exponential saturation term diverge
+as the green ratio approaches zero, yielding ˆd →
++∞. This represents the loss of service when no
+green time is allocated.
+• Movement-Specific Coefficients: The coefficients al-
+low the shared structure to represent different turning-
+movement responses: a1 controls the delay scale, while
+a2, a3, and a4 adjust sensitivity to demand, green allo-
+cation, and saturation, respectively. We tested coefficient
+sharing between opposing movements at Intersection 1.
+Table VIII shows that all metric changes remain below
+0.8%, indicating limited sensitivity to sharing in this
+tested configuration. This result does not imply general
+coefficient interchangeability across different geometries
+
+
+IEEE
+11
+Number of generation
+0                     2                       4                        6                     8                      10       
+Fitness value
+1                            2
+𝑎1 ∗𝐶𝑦𝑐𝑙𝑒_𝑇𝑖𝑚𝑒∗(𝐹𝑙𝑜𝑤_𝑅𝑎𝑡𝑖𝑜𝑎2) ∗(
+1
+𝐺𝑟𝑒𝑒𝑛_𝑅𝑎𝑡𝑖𝑜−1)𝑎3exp(𝑎4 ∗𝐹𝑙𝑜𝑤_𝑅𝑎𝑡𝑖𝑜
+𝐺𝑟𝑒𝑒𝑛_𝑅𝑎𝑡𝑖𝑜)
+Fitness:
+0.75
+Fitness:
+1.43
+Fitness:
+1.43
+Fitness:
+1.54
+Fitness:
+1.80
+Fig. 7.
+Evolution of the delay-expression structure at Intersection 1.
+Movement-specific coefficients are jointly calibrated against approach-level
+delay labels using L-BFGS-B, subject to a1, a2, a3, a4 > 0. The population
+size is 20 and the search runs for 10 generations.
+TABLE VII
+Estimated movement-specific parameters for turning movements at
+Intersection 1
+Approach
+Movement
+a1
+a2
+a3
+a4
+South
+Left
+0.5700
+0.2472
+0.5925
+0.3908
+Through
+0.2967
+0.4631
+0.5595
+0.0834
+Right
+0.2823
+0.4406
+0.5095
+0.4139
+East
+Left
+1.0348
+0.1901
+0.0040
+0.4159
+Through
+0.1671
+0.0010
+0.3745
+0.5062
+Right
+0.7911
+0.1872
+0.0010
+0.1121
+North
+Left
+0.3927
+0.0119
+0.3723
+0.5713
+Through
+0.2645
+0.4595
+0.5822
+0.1339
+Right
+0.4312
+0.4513
+0.3701
+0.2235
+West
+Left
+0.8289
+0.1311
+0.0010
+1.1199
+Through
+0.1670
+0.0010
+0.3306
+0.5974
+Right
+0.8570
+0.1887
+0.0010
+0.0300
+TABLE VIII
+Performance changes under coefficient-sharing strategies at
+Intersection 1
+Strategy
+∆R2
+∆RMSE
+∆MAE
+S→N / E→W
+↓0.24%
+↑0.43%
+↓0.72%
+N→S / W→E
+↓0.17%
+↓0.28%
+↑0.44%
+or signal plans; movement-specific coefficients are there-
+fore jointly calibrated against approach-level delay labels.
+C. Generalization Analysis
+We evaluate CoSyDelay’s generalization ability under over-
+saturated demand and across intersections, and further assess
+its utility for offline signal-timing optimization at new simu-
+lated intersections.
+1) Delay-Estimation Generalization: Delay-estimation gen-
+eralization is evaluated in two settings. First, each inter-
+section’s learned expression and coefficients are fixed and
+evaluated on 3,644 additional simulated samples under over-
+saturated conditions (degree of saturation X = y/λ ≥1.00).
+These samples are not used for model development. As shown
+in Table IX, CoSyDelay ranks first, with mean R2 = 0.841,
+RMSE = 3.754 s, and MAE = 2.630 s, showing that it
+maintains strong estimation performance under the tested over-
+saturated regime. Second, cross-intersection structure transfer
+is evaluated over all 30 ordered source–target pairs among I1–
+I6. For each pair, the expression structure discovered at the
+source intersection is transferred unchanged, its coefficients
+are recalibrated using the target-intersection training data,
+and the resulting model is evaluated on the target test set.
+CoSyDelay again ranks first, attaining mean R2 = 0.856,
+RMSE = 4.477 s, and MAE = 2.937 s. These results show
+that the discovered expression structures remain effective after
+target-specific coefficient calibration.
+2) Downstream Signal-Timing Optimization: We further
+test whether the fixed CoSyDelay model learned at I1 can
+support offline signal-timing decisions at new intersections.
+Its expression and coefficients are applied unchanged to three
+newly constructed intersection scenarios in Simulation of
+Urban MObility (SUMO) [62]: Beijing Gaojiaoyuan, Chengdu
+Guanghua, and Tianjin Zhijingdao. Each scenario is tested
+under five traffic regimes. For each intersection–regime combi-
+nation, each delay model selects the candidate timing plan with
+the lowest estimated delay, and the selected plan is simulated
+using 20 random seeds. CoSyDelay is compared with the stan-
+dard and optimized variants of Webster, HCM, and Akçelik;
+none of the models is calibrated on the three new scenarios.
+Table X shows that CoSyDelay produces the lowest delay
+at all three intersections. Its overall mean delay is 93.753 s,
+compared with 119.507 s for the standard analytical models
+and 172.195 s for their optimized variants, corresponding to
+reductions of 21.5% and 45.6%, respectively. These results
+demonstrate that CoSyDelay can support effective offline
+timing-plan selection in the tested scenarios.
+D. Component Ablation Analysis
+1) Input
+Feature
+Transformation:
+We
+compare
+raw
+movement-level inputs with the proposed feature transforma-
+tion under the same search and calibration procedure. CoSy-
+Delay converts traffic volume and green time into the flow
+ratio and green ratio, respectively, while retaining cycle length.
+The transformed inputs describe demand relative to capacity
+and the effective green allocation, providing variables that are
+directly meaningful for delay estimation. Table XI shows that
+this transformation improves Fitness at all six intersections.
+2) Modeling
+Granularity:
+We
+compare
+intersection-,
+approach-, and turning-movement-level formulations. CoSy-
+Delay learns expressions at the turning-movement level and
+aggregates their estimates to the approach and intersection
+levels. Table XI shows that this formulation achieves the
+highest Fitness at every intersection, with an average rank of
+1.00 versus 2.17 and 2.83 for the intersection- and approach-
+level formulations, respectively.
+3) Physical-Consistency Scoring:
+We isolate the effect
+of physical-consistency scoring by keeping the prompt,
+candidate-generation procedure, coefficient calibration, and
+search budget unchanged. The default binary score assigns
+Scorephys = 1 only when all seven traffic-delay principles are
+satisfied and 0 otherwise. The principlewise alternative aver-
+ages the seven individual pass indicators and therefore gives
+partial credit when only some principles are satisfied. Both
+schemes assign a score of 1 to fully compliant expressions;
+the principlewise scheme only distinguishes among partially
+
+
+IEEE
+12
+TABLE IX
+Delay-estimation generalization under oversaturated demand and cross-intersection structure transfer. Entries are mean ± standard
+deviation across six intersection-level results for oversaturated traffic (3,644 samples in total) and across 30 ordered source–target
+structure transfers. Average Rank combines the R2, RMSE, and MAE ranks within each experiment (lower is better). Best results are in bold.
+Model
+Oversaturated traffic
+Cross-intersection structure transfer
+R2
+RMSE (s)
+MAE (s)
+Average Rank
+R2
+RMSE (s)
+MAE (s)
+Average Rank
+Webster
+−57.232 ± 102.708
+15.021 ± 5.201
+9.009 ± 2.540
+6.00
+−0.003 ± 0.340
+11.881 ± 3.401
+8.161 ± 3.104
+6.44
+Webster-optimized
+−0.008 ± 0.924
+6.411 ± 1.442
+4.663 ± 1.171
+3.94
+0.606 ± 0.228
+7.241 ± 2.477
+4.538 ± 0.845
+4.17
+HCM
+−0.025 ± 0.324
+9.685 ± 4.140
+7.821 ± 3.447
+5.11
+0.259 ± 0.380
+10.184 ± 4.101
+7.843 ± 3.443
+5.25
+HCM-optimized
+0.265 ± 0.851
+5.411 ± 1.322
+3.937 ± 1.038
+2.89
+0.790 ± 0.078
+5.477 ± 1.817
+3.565 ± 1.538
+2.10
+Akçelik
+−0.025 ± 0.324
+9.685 ± 4.140
+7.821 ± 3.447
+5.11
+0.259 ± 0.380
+10.184 ± 4.101
+7.843 ± 3.443
+5.25
+Akçelik-optimized
+−0.008 ± 0.924
+6.411 ± 1.442
+4.663 ± 1.171
+3.94
+0.630 ± 0.231
+7.047 ± 2.589
+4.293 ± 0.841
+3.56
+CoSyDelay
+0.841 ± 0.052
+3.754 ± 1.301
+2.630 ± 1.036
+1.00
+0.856 ± 0.038
+4.477 ± 1.122
+2.937 ± 0.916
+1.23
+TABLE X
+Signal-timing optimization at three new simulated intersections.
+Values are mean ± standard deviation of average total delay per
+vehicle (s); lower is better.
+Model
+Beijing
+Chengdu
+Tianjin
+Webster
+120.271 ± 48.377
+124.741 ± 50.762
+113.508 ± 48.902
+HCM
+120.271 ± 48.377
+124.741 ± 50.762
+113.508 ± 48.902
+Akçelik
+120.271 ± 48.377
+124.741 ± 50.762
+113.508 ± 48.902
+Webster-optimized
+172.262 ± 61.485
+182.415 ± 77.177
+161.908 ± 75.922
+HCM-optimized
+172.262 ± 61.485
+182.415 ± 77.177
+161.908 ± 75.922
+Akçelik-optimized
+172.262 ± 61.485
+182.415 ± 77.177
+161.908 ± 75.922
+CoSyDelay
+92.943 ± 43.852
+93.737 ± 41.348
+94.578 ± 50.433
+compliant expressions. No statistically significant improvement
+in test Fitness is observed with principlewise scoring. We
+therefore retain the simpler binary score, which gives physical
+credit only when all required principles pass.
+4) Comparison with Symbolic-Search Methods: In CoSy-
+Delay, the LLM proposes and revises expression structures,
+while movement-specific calibration and traffic-principle eval-
+uation complete the search process. We compare CoSyDelay
+with Operon [63], PySR [64], the Gene-pool Optimal Mix-
+ing Evolutionary Algorithm for genetic programming (GP-
+GOMEA) [65] under the same 600-s wall-clock budget. This
+total wall-clock budget includes API waiting time, failed
+calls and retries, and coefficient-calibration time. CoSyDelay
+ranks first in test Fitness at all six intersections (average rank
+1.00). Its selected expressions satisfy the prescribed traffic-
+delay principles (Scorephys = 1), whereas all competing
+methods violate at least one prescribed traffic-delay principle
+(Scorephys = 0).
+In addition, we report estimation accuracy and physical
+compliance separately for CoSyDelay and the three competing
+SR methods in Table XII. Operon and PySR achieve higher
+accuracy than CoSyDelay, but none of their runs produces
+an expression satisfying all seven principles simultaneously,
+whereas CoSyDelay satisfies all seven in every run. These
+TABLE XI
+Component ablation and symbolic-search comparison at I1–I6. Values are test Fitness, reported as mean ± standard deviation over 20 runs.
+Average Rank is calculated within each block (lower is better); +/ = /−summarizes Holm-adjusted Wilcoxon signed-rank tests on the paired
+differences relative to CoSyDelay. Symbolic-search methods use a common 600-s budget. Best values are bold.
+Method
+I1
+I2
+I3
+I4
+I5
+I6
+Average Rank
++/ = /−
+Input feature representation
+Raw inputs
+1.717 ± 0.001
+1.656 ± 0.001
+1.571 ± 0.002
+1.530 ± 0.008
+1.619 ± 0.003
+1.733 ± 0.003
+2.000
+6/0/0
+Transformed features (CoSyDelay)
+1.803 ± 0.002
+1.756 ± 0.003
+1.866 ± 0.024
+1.861 ± 0.023
+1.872 ± 0.008
+1.839 ± 0.037
+1.000
+–
+Modeling granularity
+Intersection model
+0.923 ± 0.001
+0.853 ± 0.004
+1.664 ± 0.003
+1.134 ± 0.549
+1.349 ± 0.546
+0.537 ± 0.450
+2.167
+6/0/0
+Approach model
+0.715 ± 0.001
+0.653 ± 0.001
+0.558 ± 0.001
+0.311 ± 0.003
+0.460 ± 0.002
+0.551 ± 0.004
+2.833
+6/0/0
+Turning-movement model (CoSyDelay)
+1.803 ± 0.002
+1.756 ± 0.003
+1.866 ± 0.024
+1.861 ± 0.023
+1.872 ± 0.008
+1.839 ± 0.037
+1.000
+–
+Physical-consistency scoring
+Principlewise score
+1.792 ± 0.003
+1.757 ± 0.003
+1.865 ± 0.024
+1.860 ± 0.041
+1.867 ± 0.011
+1.826 ± 0.018
+1.833
+0/6/0
+Binary score (CoSyDelay)
+1.803 ± 0.002
+1.756 ± 0.003
+1.866 ± 0.024
+1.861 ± 0.023
+1.872 ± 0.008
+1.839 ± 0.037
+1.167
+–
+Symbolic-search methods (600-s budget)
+Operon
+0.829 ± 0.013
+0.834 ± 0.003
+0.916 ± 0.014
+0.866 ± 0.014
+0.902 ± 0.005
+0.886 ± 0.020
+2.167
+6/0/0
+PySR
+0.827 ± 0.006
+0.745 ± 0.255
+0.914 ± 0.010
+0.863 ± 0.018
+0.898 ± 0.006
+0.894 ± 0.004
+3.000
+6/0/0
+GP-GOMEA
+0.767 ± 0.027
+0.756 ± 0.031
+0.779 ± 0.038
+0.810 ± 0.042
+0.856 ± 0.026
+0.872 ± 0.043
+3.833
+6/0/0
+CoSyDelay
+1.792 ± 0.002
+1.752 ± 0.006
+1.869 ± 0.033
+1.858 ± 0.037
+1.844 ± 0.064
+1.832 ± 0.005
+1.000
+–
+Controlled structure search (600-s budget)
+GA
+1.787 ± 0.004
+1.750 ± 0.006
+1.792 ± 0.052
+1.786 ± 0.047
+1.798 ± 0.019
+1.761 ± 0.088
+2.000
+6/0/0
+Random search
+1.731 ± 0.004
+1.709 ± 0.019
+1.492 ± 0.521
+1.391 ± 0.213
+1.637 ± 0.037
+0.854 ± 0.476
+3.333
+6/0/0
+MCTS
+1.744 ± 0.024
+1.707 ± 0.016
+1.348 ± 0.357
+1.273 ± 0.390
+1.463 ± 0.393
+1.506 ± 0.221
+3.667
+6/0/0
+CoSyDelay
+1.792 ± 0.002
+1.752 ± 0.006
+1.869 ± 0.033
+1.858 ± 0.037
+1.844 ± 0.064
+1.832 ± 0.005
+1.000
+–
+
+
+IEEE
+13
+TABLE XII
+Accuracy and physical compliance under a 600-s budget (20 runs per
+intersection). Accuracy metrics are six-intersection macro-averages
+(mean ± SD). “Yes” indicates that all runs pass all seven principles;
+“No” indicates that no run passes all seven simultaneously. Best
+values are bold.
+Method
+R2 ↑
+RMSE (s)↓
+MAE (s)↓
+Physical
+compliance
+Operon
+0.8721 ± 0.0049
+3.186 ± 0.071
+2.179 ± 0.018
+No
+PySR
+0.8567 ± 0.0448
+3.321 ± 0.295
+2.224 ± 0.035
+No
+GP-GOMEA
+0.8067 ± 0.0126
+4.075 ± 0.154
+2.854 ± 0.106
+No
+CoSyDelay
+0.8245 ± 0.0084
+3.940 ± 0.115
+2.723 ± 0.099
+Yes
+results highlight a trade-off: satisfying physical requirements
+may entail some loss of estimation accuracy, while CoSyDelay
+aims to balance the two objectives.
+To isolate the contribution of LLM-based structure search,
+we additionally compare CoSyDelay with a genetic algo-
+rithm (GA), random search, and Monte Carlo tree search
+(MCTS) within the same pipeline. Only the structure-search
+method changes; input features, movement decomposition,
+coefficient calibration, and physical evaluation are held fixed.
+Each method uses the same 600-s wall-clock budget and is
+evaluated over 20 runs at each of the six intersections. Table XI
+reports test Fitness in the controlled-search block. CoSyDelay
+achieves the highest R2 and lowest RMSE and MAE at every
+intersection, with six-intersection macro-averages of 0.8245,
+3.940 s, and 2.723 s, respectively. These results support
+the contribution of LLM-based structure search to estimation
+accuracy within the fixed pipeline.
+E. Effectiveness and Sensitivity of LLM-Guided Search
+We assess the LLM-guided search by varying four factors:
+the LLM backend, the principle-informed prompt and eval-
+uator, generation temperature, and the generation–population
+setting. Each setting is evaluated over 20 independent runs at
+every intersection. Table XIII reports test Fitness.
+First, we test five LLM backends under identical settings. The
+results are backend-sensitive: GPT-4.1-mini and Gemini-2.5-
+Flash obtain the two best average ranks of 1.667 and 2.000,
+respectively.
+Second, we test the effects of the principle-informed prompt
+and external evaluator. The principles specify only general
+requirements for a reasonable delay formula; they do not pro-
+vide its mathematical form or coefficient values. We compare
+four configurations: neither component, prompt only, evaluator
+only, and both components. Table XIII shows that using both
+produces the highest Fitness at all six intersections. Evaluator
+only also clearly outperforms prompt only, demonstrating the
+additional value of explicit verification beyond stating the
+principles in the prompt.
+Third, we test temperatures of 0.0, 0.3, and 0.7 with
+the principle instruction enabled or disabled. The instruction
+improves Fitness at every temperature. With the instruction
+enabled, no statistically significant differences are detected
+among the three temperatures.
+Finally, we test nine generation–population combinations.
+The (20, 20) and (20, 10) settings have the best average ranks,
+but neither significantly outperforms the default (10, 20). We
+retain (10, 20) for comparable Fitness with half the generations
+of (20, 20). Under this default, a run averages 226.4 ± 8.9
+attempted LLM API calls, 757±30.2 s of cumulative API la-
+TABLE XIII
+Ablation and sensitivity analysis of LLM-guided search across six intersections. Values are test Fitness, reported as mean ± standard
+deviation over 20 runs. Average Rank is calculated within each block (lower is better); +/ = /−counts the intersections where CoSyDelay is
+significantly better, not significantly different, or significantly worse than each alternative. Best values are in bold.
+Setting
+I1
+I2
+I3
+I4
+I5
+I6
+Average Rank
++/ = /−
+LLM backend
+Qwen-Plus
+1.790 ± 0.001
+1.741 ± 0.005
+1.841 ± 0.013
+1.658 ± 0.084
+1.862 ± 0.011
+1.763 ± 0.021
+4.417
+2/4/0
+Gemini-2.5-Flash
+1.790 ± 0.000
+1.759 ± 0.001
+1.885 ± 0.004
+1.880 ± 0.012
+1.869 ± 0.006
+1.827 ± 0.001
+2.000
+0/6/0
+GPT-OSS-20B
+1.793 ± 0.000
+1.755 ± 0.004
+1.885 ± 0.014
+1.839 ± 0.013
+1.796 ± 0.004
+1.813 ± 0.018
+3.167
+1/5/0
+Grok-Code-Fast-1
+1.779 ± 0.012
+1.744 ± 0.008
+1.847 ± 0.000
+1.840 ± 0.007
+1.796 ± 0.017
+1.830 ± 0.003
+3.750
+2/4/0
+GPT-4.1-mini (CoSyDelay)
+1.803 ± 0.002
+1.756 ± 0.003
+1.866 ± 0.024
+1.861 ± 0.023
+1.872 ± 0.008
+1.839 ± 0.037
+1.667
+–
+Principle-informed prompt and evaluator
+Neither
+0.817 ± 0.004
+0.769 ± 0.008
+0.816 ± 0.018
+0.842 ± 0.022
+0.769 ± 0.030
+0.836 ± 0.006
+3.667
+6/0/0
+Prompt only
+0.815 ± 0.001
+0.772 ± 0.007
+0.879 ± 0.009
+0.862 ± 0.012
+0.862 ± 0.002
+0.796 ± 0.017
+3.333
+6/0/0
+Evaluator only
+1.448 ± 0.068
+1.380 ± 0.039
+1.415 ± 0.036
+1.439 ± 0.033
+1.357 ± 0.103
+1.452 ± 0.045
+2.000
+6/0/0
+Both ON (CoSyDelay)
+1.803 ± 0.002
+1.756 ± 0.003
+1.866 ± 0.024
+1.861 ± 0.023
+1.872 ± 0.008
+1.839 ± 0.037
+1.000
+–
+Principle instruction and temperature
+OFF, T = 0.0
+0.789 ± 0.013
+0.741 ± 0.017
+0.839 ± 0.008
+0.782 ± 0.050
+0.814 ± 0.061
+1.057 ± 0.413
+5.167
+6/0/0
+OFF, T = 0.3
+0.802 ± 0.006
+0.754 ± 0.023
+0.795 ± 0.033
+0.813 ± 0.017
+0.812 ± 0.040
+0.818 ± 0.008
+5.167
+6/0/0
+OFF, T = 0.7
+0.807 ± 0.007
+0.748 ± 0.030
+0.822 ± 0.030
+0.792 ± 0.014
+0.821 ± 0.037
+0.842 ± 0.032
+4.667
+6/0/0
+ON, T = 0.0 (CoSyDelay)
+1.803 ± 0.002
+1.756 ± 0.003
+1.866 ± 0.024
+1.861 ± 0.023
+1.872 ± 0.008
+1.839 ± 0.037
+1.333
+–
+ON, T = 0.3
+1.800 ± 0.004
+1.762 ± 0.004
+1.765 ± 0.026
+1.653 ± 0.055
+1.749 ± 0.005
+1.301 ± 0.422
+2.333
+0/6/0
+ON, T = 0.7
+1.798 ± 0.007
+1.758 ± 0.011
+1.792 ± 0.043
+1.648 ± 0.041
+1.755 ± 0.022
+1.388 ± 0.336
+2.333
+0/6/0
+Generation–population setting (G, P )
+(5, 5)
+1.791 ± 0.003
+1.746 ± 0.009
+1.878 ± 0.002
+1.805 ± 0.023
+1.870 ± 0.000
+1.756 ± 0.026
+7.167
+2/4/0
+(5, 10)
+1.791 ± 0.001
+1.756 ± 0.004
+1.815 ± 0.065
+1.866 ± 0.025
+1.865 ± 0.009
+1.836 ± 0.000
+6.417
+1/5/0
+(5, 20)
+1.788 ± 0.000
+1.757 ± 0.002
+1.879 ± 0.001
+1.851 ± 0.011
+1.857 ± 0.017
+1.833 ± 0.001
+6.833
+0/6/0
+(10, 5)
+1.793 ± 0.000
+1.757 ± 0.002
+1.854 ± 0.026
+1.853 ± 0.006
+1.870 ± 0.000
+1.784 ± 0.052
+6.083
+1/5/0
+(10, 10)
+1.790 ± 0.002
+1.758 ± 0.001
+1.863 ± 0.017
+1.890 ± 0.000
+1.872 ± 0.002
+1.834 ± 0.004
+4.750
+0/6/0
+(10, 20) (CoSyDelay)
+1.803 ± 0.002
+1.756 ± 0.003
+1.866 ± 0.024
+1.861 ± 0.023
+1.872 ± 0.008
+1.839 ± 0.037
+4.417
+–
+(20, 5)
+1.789 ± 0.001
+1.757 ± 0.002
+1.880 ± 0.000
+1.890 ± 0.000
+1.862 ± 0.009
+1.839 ± 0.000
+4.833
+0/6/0
+(20, 10)
+1.795 ± 0.003
+1.756 ± 0.003
+1.896 ± 0.001
+1.892 ± 0.002
+1.876 ± 0.002
+1.839 ± 0.000
+2.833
+0/6/0
+(20, 20)
+1.797 ± 0.002
+1.761 ± 0.002
+1.883 ± 0.013
+1.890 ± 0.000
+1.877 ± 0.000
+1.847 ± 0.007
+1.667
+0/6/0
+
+
+IEEE
+14
+tency, and 456±30 s of coefficient calibration (20 independent
+runs).
+VI. Conclusion
+Traffic delay estimation remains a fundamental yet chal-
+lenging problem in intelligent transportation systems. This
+paper presented CoSyDelay, a cognitive symbolic regression
+framework for trustworthy delay modeling at signalized inter-
+sections. CoSyDelay evolves generalized symbolic expressions
+at the turning-movement level and calibrates them into physi-
+cally consistent empirical models, which are then aggregated
+to support delay estimation at the approach and intersection
+levels. The framework combines domain-informed variable
+design, LLM-guided symbolic search, and a composite fitness
+function that evaluates both estimation accuracy and physi-
+cal consistency. Experiments on six signalized intersections
+demonstrate that CoSyDelay achieves competitive delay esti-
+mation accuracy relative to analytical and data-driven baselines
+while producing physically consistent expressions. The abla-
+tion studies further support the use of turning-movement-level
+modeling, domain-informed features, and LLM-guided search.
+Future work will improve symbolic-search efficiency and
+extend CoSyDelay to larger-scale, real-time signal optimiza-
+tion. In addition, geometric and queue information will be
+incorporated to better capture interactions between turning
+movements.
+References
+[1] W. Yue, C. Li, Y. Chen, P. Duan, and G. Mao, “What is the root cause
+of congestion in urban traffic networks: Road infrastructure or signal
+control?” IEEE Transactions on Intelligent Transportation Systems,
+vol. 23, no. 7, pp. 8662–8679, 2022.
+[2] W. Hong, G. Tao, H. Wang, and C. Wang, “Traffic signal control with
+adaptive online-learning scheme using multiple-model neural networks,”
+IEEE Transactions on Neural Networks and Learning systems, vol. 34,
+no. 10, pp. 7838–7850, 2022.
+[3] R. Akçelik, “Traffic signals: capacity and timing analysis,” Australian
+Road Research Board, Vermont South, Victoria, Australia, Tech. Rep.
+ARR 123, 1981.
+[4] V. F. Hurdle, “Signalized intersection delay models–a primer for the
+uninitiated,” Transportation Research Record, no. 971, pp. 96–105, 1984.
+[5] C. Cheng, Y. Du, L. Sun, and Y. Ji, “Review on theoretical delay esti-
+mation model for signalized intersections,” Transport Reviews, vol. 36,
+no. 4, pp. 479–499, 2016.
+[6] Y. Su, Z. Wei, S. Cheng, D. Yao, Y. Zhang, and L. Li, “Delay estimates
+of mixed traffic flow at signalized intersections in china,” Tsinghua
+Science and Technology, vol. 14, no. 2, pp. 157–160, 2009.
+[7] F. V. Webster, “Traffic signal settings,” Road Research Laboratory,
+London, UK, Road Research Technical Paper 39, 1958.
+[8] Transportation Research Board, Highway Capacity Manual 2010.
+Washington, DC, USA: Transportation Research Board of the National
+Academies, 2010.
+[9] F. Dion, H. Rakha, and Y.-S. Kang, “Comparison of delay estimates at
+under-saturated and over-saturated pre-timed signalized intersections,”
+Transportation Research Part B: Methodological, vol. 38, no. 2, pp.
+99–122, 2004.
+[10] S. Teply, “Accuracy of delay surveys at signalized intersections,” Trans-
+portation Research Record, no. 1225, 1989.
+[11] Y. S. Murat, “Comparison of fuzzy logic and artificial neural networks
+approaches in vehicle delay modeling,” Transportation Research Part C:
+Emerging Technologies, vol. 14, no. 5, pp. 316–334, 2006.
+[12] A. B. Subramaniyan, C. Wang, Y. Shao, W. Li, H. Wang, G. Zhang,
+and T. Ma, “Hybrid recurrent neural network modeling for traffic delay
+prediction at signalized intersections along an urban arterial,” IEEE
+Transactions on Intelligent Transportation Systems, vol. 24, no. 1, pp.
+1384–1394, 2023.
+[13] H. Almukhalfi, A. Noor, and T. H. Noor, “Traffic management ap-
+proaches using machine learning and deep learning techniques: A
+survey,” Engineering Applications of Artificial Intelligence, vol. 133, p.
+108147, 2024.
+[14] N. Makke and S. Chawla, “Interpretable scientific discovery with sym-
+bolic regression: a review,” Artificial Intelligence Review, vol. 57, no. 1,
+p. 2, 2024.
+[15] G. Ciatto, F. Sabbatini, A. Agiollo, M. Magnini, and A. Omicini, “Sym-
+bolic knowledge extraction and injection with sub-symbolic predictors:
+A systematic literature review,” ACM Computing Surveys, vol. 56, no. 6,
+pp. 1–35, 2024.
+[16] M. Zhang, S. Kim, P. Y. Lu, and M. Soljačić, “Deep learning and
+symbolic regression for discovering parametric equations,” IEEE Trans-
+actions on Neural Networks and Learning Systems, vol. 35, no. 11, pp.
+16 775–16 787, 2024.
+[17] L. Crochepierre, L. Boudjeloud-Assala, and V. Barbesant, “A reinforce-
+ment learning approach to domain-knowledge inclusion using grammar
+guided symbolic regression,” arXiv preprint arXiv:2202.04367, 2022.
+[18] W. Tenachi, R. Ibata, and F. I. Diakogiannis, “Deep symbolic regression
+for physics guided by units constraints: Toward the automated discovery
+of physical laws,” The Astrophysical Journal, vol. 959, no. 2, p. 99,
+2023.
+[19] G. Kronberger, F. O. de França, B. Burlacu, C. Haider, and M. Kom-
+menda, “Shape-constrained symbolic regression—improving extrapola-
+tion with prior knowledge,” Evolutionary Computation, vol. 30, no. 1,
+pp. 75–98, 2022.
+[20] I. Błądek and K. Krawiec, “Counterexample-driven genetic program-
+ming for symbolic regression with formal constraints,” IEEE Transac-
+tions on Evolutionary Computation, vol. 27, no. 5, pp. 1327–1339, 2023.
+[21] M. Virgolin and S. P. Pissis, “Symbolic regression is np-hard,” arXiv
+preprint arXiv:2207.01018, 2022.
+[22] D. J. Bartlett, H. Desmond, and P. G. Ferreira, “Exhaustive symbolic
+regression,” IEEE Transactions on Evolutionary Computation, vol. 28,
+no. 4, pp. 950–964, 2024.
+[23] B. E. Chandler, M. Myers, J. E. Atkinson, T. Bryer, R. Retting,
+J. Smithline, J. Trim, P. Wojtkiewicz, G. B. Thomas, S. P. Venglar et al.,
+“Signalized intersections informational guide, second edition,” Federal
+Highway Administration, Washington, DC, USA, Tech. Rep. FHWA-SA-
+13-027, 2013.
+[24] M. Merler, K. Haitsiukevich, N. Dainese, and P. Marttinen, “In-context
+symbolic regression: Leveraging large language models for function dis-
+covery,” in Proceedings of the 62nd Annual Meeting of the Association
+for Computational Linguistics (Volume 4: Student Research Workshop).
+Association for Computational Linguistics, 2024, pp. 427–444.
+[25] P. Shojaee, K. Meidani, S. Gupta, A. Barati Farimani, and C. K. Reddy,
+“LLM-SR: Scientific equation discovery via programming with large
+language models,” in International Conference on Learning Represen-
+tations, 2025.
+[26] H. Zhang, Q. Chen, B. Xue, W. Banzhaf, and M. Zhang, “LLM-Meta-
+SR: In-context learning for evolving selection operators in symbolic
+regression,” IEEE Transactions on Evolutionary Computation, 2026.
+[27] P. Koonce, L. Rodegerdts, K. Lee, S. Quayle, S. Beaird, C. Braud,
+J. Bonneson, P. Tarnoff, and T. Urbanik, “Traffic signal timing manual,”
+Federal Highway Administration, Washington, DC, USA, Tech. Rep.
+FHWA-HOP-08-024, 2008.
+[28] M. Wu, W. Li, L. Yu, L. Sun, J. Liu, and W. Li, “Discovering
+mathematical expressions through deepsymnet: A classification-based
+symbolic regression framework,” IEEE transactions on neural networks
+and learning systems, vol. 36, no. 1, pp. 1356–1370, 2025.
+[29] A. J. Miller, “Settings for fixed-cycle traffic signals,” Journal of the
+Operational Research Society, vol. 14, no. 4, pp. 373–386, 1963.
+[30] P. Ranpura, V. Shukla, and R. Gujar, “Estimation of vehicle control
+delay using artificial intelligence techniques for heterogeneous traffic
+conditions,” Expert Systems with Applications, vol. 246, p. 123206, 2024.
+[31] S. Yang, Q. Wu, Y. Wang, and T. Lin, “SSGCRTN: A space-specific
+graph convolutional recurrent transformer network for traffic prediction,”
+Applied Intelligence, vol. 54, no. 22, pp. 11 978–11 994, 2024.
+[32] S. Yang, Q. Wu, Y. Wang, and Z. Zhou, “MSTDFGRN: A multi-view
+spatio-temporal dynamic fusion graph recurrent network for traffic flow
+prediction,” Computers & Electrical Engineering, vol. 123, p. 110046,
+2025.
+[33] S. Yang, Q. Wu, Z. Li, and K. Wang, “PSTCGCN: Principal spatio-
+temporal causal graph convolutional network for traffic flow prediction,”
+Neural Computing and Applications, vol. 37, no. 20, pp. 14 751–14 764,
+2025.
+
+
+IEEE
+15
+[34] S. Yang, Q. Wu, M. Li, and Y. Sun, “Temporal identity interaction
+dynamic graph convolutional network for traffic forecasting,” IEEE
+Internet of Things Journal, vol. 12, no. 11, pp. 15 057–15 072, 2025.
+[35] S. Yang and Q. Wu, “SDSINet: A spatiotemporal dual-scale interaction
+network for traffic prediction,” Applied Soft Computing, vol. 173, p.
+112892, 2025.
+[36] S. Yang and Q. Wu, “MTEGCRN: Multi-scale temporal enhanced graph
+convolutional recurrent network for traffic prediction,” Neurocomputing,
+vol. 653, p. 131064, 2025.
+[37] S. Yang, Z. Huang, Q. Wu, and Z. Zhuo, “General decoupled graph
+convolutional recurrent network for traffic prediction,” IEEE Sensors
+Journal, vol. 25, no. 18, pp. 35 460–35 478, 2025.
+[38] S. Yang, Q. Wu, and M. Li, “Decoupled multi-spatio-temporal fusion
+graph convolutional recurrent network for traffic prediction,” Engineer-
+ing Applications of Artificial Intelligence, vol. 163, p. 112956, 2026.
+[39] Z. Zhou, Q. Wu, S. Yang, and J. Luo, “MReDTrajRec: A multi-
+representation data-driven model for trajectory recovery under road
+network constraints,” Transportmetrica B: Transport Dynamics, vol. 13,
+no. 1, p. 2596312, 2025.
+[40] S. Yang, Q. Wu, Z. Huang, and Z. Zhuo, “SGA-Seq: Station-aware
+graph attention sequence network for cellular traffic prediction,” IEEE
+Transactions on Network and Service Management, vol. 23, pp. 2652–
+2665, 2026.
+[41] P. Preethi, A. Varghese, and R. Ashalatha, “Modelling delay at signalized
+intersections under heterogeneous traffic conditions,” Transportation
+research procedia, vol. 17, pp. 529–538, 2016.
+[42] M. E. C. Bagdatli and A. S. Dokuz, “Vehicle delay estimation at signal-
+ized intersections using machine learning algorithms,” Transportation
+research record, vol. 2675, no. 9, pp. 110–126, 2021.
+[43] E. Korkmaz and A. P. Akgüngör, “Delay estimation models for sig-
+nalized intersections using differential evolution algorithm,” Journal of
+Engineering Research, vol. 5, no. 3, 2017.
+[44] E. Korkmaz and A. P. Akgüngör, “Comparison of artificial bee colony
+and flower pollination algorithms in vehicle delay models at signalized
+intersections,” Neural Computing and Applications, vol. 32, no. 8, pp.
+3581–3597, 2020.
+[45] J. Dong and J. Zhong, “Recent advances in symbolic regression,” ACM
+Computing Surveys, vol. 57, no. 11, pp. 1–37, 2025.
+[46] B. K. Petersen, M. Landajuela, T. N. Mundhenk, C. P. Santiago,
+S. K. Kim, and J. T. Kim, “Deep symbolic regression: Recovering
+mathematical expressions from data via risk-seeking policy gradients,”
+arXiv preprint arXiv:1912.04871, 2019.
+[47] J. Wang, W. Li, X. Zhang, Q. Hu, A. M. Luvembe, R. Liu, F. Liu, and
+Q. Jin, “Ontology-enhanced subgraph reasoning with prompt learning
+for inductive knowledge graph completion,” Expert Systems with Appli-
+cations, vol. 320, p. 131944, 2026.
+[48] Z. Wan, B. Wang, K. Fang, and B. Wu, “TGCA-LLM: Time-aware
+graph–text contrastive alignment for enhancing LLMs in temporal
+knowledge graph completion,” Proceedings of the AAAI Conference on
+Artificial Intelligence, vol. 40, no. 18, pp. 15 806–15 814, 2026.
+[49] D. Wang, J. Du, Z. Xue, M. Liang, G. Ye, Y. Shao, and H. Li, “HFR-
+MKGC: Hierarchical fusion reasoning with MLLMs for multi-modal
+knowledge graph completion,” Proceedings of the AAAI Conference on
+Artificial Intelligence, vol. 40, no. 18, pp. 15 815–15 823, 2026.
+[50] B. Romera-Paredes, M. Barekatain, A. Novikov, M. Balog, M. P. Kumar,
+E. Dupont, F. J. Ruiz, J. S. Ellenberg, P. Wang, O. Fawzi et al.,
+“Mathematical discoveries from program search with large language
+models,” Nature, vol. 625, no. 7995, pp. 468–475, 2024.
+[51] L. Xie, Y. Zhang, Z. Tang, E. Chung, G. Li, and Z. Wang, “Co-
+evolution of large language models and configuration strategies to
+enhance surrogate-assisted evolutionary algorithm,” in Proceedings of
+the 31st ACM SIGKDD Conference on Knowledge Discovery and Data
+Mining V. 2, 2025, pp. 3321–3332.
+[52] L. Li, T. Fratrović, J. Zhang, and B. Ran, “Traffic speed prediction for
+highway operations based on a symbolic regression algorithm,” Promet-
+Traffic&Transportation, vol. 29, no. 4, pp. 433–441, 2017.
+[53] A. Patelli, V. Lush, A. Ekart, and E. Ilie-Zudor, “Traffic modelling and
+prediction via symbolic regression on road sensor data,” arXiv preprint
+arXiv:2002.06095, 2020.
+[54] T. Li, D. Ngoduy, S. Lee, Z. Pu, and F. Viti, “Discovering the optimal
+relationship hypothesis of car-following behaviors with neural network-
+based symbolic regression,” Transportation Research Part C: Emerging
+Technologies, vol. 170, p. 104920, 2025.
+[55] W.-L. Liu, J. Zhong, P. Liang, J. Guo, H. Zhao, and J. Zhang, “Towards
+explainable traffic signal control for urban networks through genetic pro-
+gramming,” Swarm and Evolutionary Computation, vol. 88, p. 101588,
+2024.
+[56] M. D. McKay, R. J. Beckman, and W. J. Conover, “A comparison of
+three methods for selecting values of input variables in the analysis of
+output from a computer code,” Technometrics, vol. 21, no. 2, pp. 239–
+245, 1979.
+[57] T. Chen and C. Guestrin, “Xgboost: A scalable tree boosting system,”
+in Proceedings of the 22nd acm sigkdd international conference on
+knowledge discovery and data mining, 2016, pp. 785–794.
+[58] S. Marton, S. Lüdtke, C. Bartelt, and H. Stuckenschmidt, “GRANDE:
+Gradient-based decision tree ensembles for tabular data,” in Interna-
+tional Conference on Learning Representations, 2024.
+[59] H.-J. Ye, H.-H. Yin, D.-C. Zhan, and W.-L. Chao, “Revisiting nearest
+neighbor for tabular data: A deep tabular baseline two decades later,” in
+International Conference on Learning Representations, 2025.
+[60] Q. Zhou, Y. Zhang, M. A. Makridis, A. Kouvelas, Y. Wang, and S. Hu,
+“Network-wide freeway traffic estimation using sparse sensor data: A
+dirichlet graph auto-encoder approach,” IEEE Transactions on Intelligent
+Transportation Systems, vol. 26, no. 12, pp. 22 161–22 177, 2025.
+[61] S. K. Kaiser, F. Rodrigues, C. L. Azevedo, and L. H. Kaack, “Spatio-
+temporal graph neural network for urban spaces: Interpolating citywide
+traffic volume,” arXiv preprint arXiv:2505.06292, 2025.
+[62] M. Behrisch, L. Bieker, J. Erdmann, and D. Krajzewicz, “SUMO—
+simulation of urban mobility: An overview,” in Proceedings of the Third
+International Conference on Advances in System Simulation. Barcelona,
+Spain: ThinkMind, 2011, pp. 63–68.
+[63] B. Burlacu, G. Kronberger, and M. Kommenda, “Operon C++: An
+efficient genetic programming framework for symbolic regression,”
+in Proceedings of the 2020 Genetic and Evolutionary Computation
+Conference Companion.
+Association for Computing Machinery, 2020,
+pp. 1562–1570.
+[64] M. Cranmer, “Interpretable machine learning for science with PySR and
+SymbolicRegression.jl,” arXiv preprint arXiv:2305.01582, 2023.
+[65] M. Virgolin, T. Alderliesten, C. Witteveen, and P. A. N. Bosman,
+“Improving model-based genetic programming for symbolic regression
+of small expressions,” Evolutionary Computation, vol. 29, no. 2, pp.
+211–237, 2021.

@@ -1,0 +1,1280 @@
+CCD: Context-Calibrated Open-Entity
+Out-of-Distribution Detection in In-Context Tabular
+Foundation Models
+Zhangkai Wu
+The University of Sydney
+zhangkai.wu@sydney.edu.au
+Xu Zhang
+Macquarie University
+xu.zhang12@hdr.mq.edu.au
+Zhihao Hao
+Beijing Technology and Business University
+hao.zhihao@connect.um.edu.mo
+Zhihong Cui
+University of Oslo
+zhihongc@ifi.uio.no
+Yongmin Yoo
+Macquarie University
+yongmin.yoo@mq.edu.au
+Xianxun Zhu
+Macquarie University
+xianxun.zhu@mq.edu.au
+Kaize Shi
+University of Southern Queensland
+Kaize.Shi@unisq.edu.au
+Abstract
+In-context tabular foundation models (TFMs), such as TabPFN, predict from a
+labelled context without updating their parameters and are increasingly used for
+out-of-distribution (OOD) detection in Web applications, whose test rows come
+from entities absent from that context. Such applications need open-entity OOD
+detection: a new entity must not be mistaken for an unknown class, and an unknown
+class must still be caught. Existing detectors fail in this setting, and an entity-split
+gap hides the failure: random splits also place the test entities in the context.
+The failure arises because every TFM score reflects how unfamiliar a row is to
+the context. This produces an entity-over-class bias: known-class rows of new
+entities look more OOD than familiar ones, sometimes more than unknown classes.
+Specifically, the two OOD scores most widely used with in-context TFMs face an
+entity–class trade-off: the TFM’s predictive confidence misses unknown classes,
+whereas the distance of a test row to the context flags new entities. To address
+this problem, we hold a group of entities out of the context and score them with
+the remaining context, which turns them into new entities of known classes and
+tells us how such rows should score. To measure detection on new entities, we
+build NEO-Tab (New-Entity OOD detection on Tables), 14 grouped and temporal
+tables on which all test rows come from new entities. We then propose Context-
+Calibrated Detection (CCD), which uses these group-out swaps on in-distribution
+data to calibrate three distances and the confidence against new-entity references.
+CCD weights them by their sensitivity and sharpness, keeps the model frozen and
+uses no OOD data. On NEO-Tab, CCD outperforms 16 existing detectors on every
+metric we report, and its lead holds on three TFM backbones.
+Preprint.
+arXiv:2611.01489v1  [cs.IR]  1 Nov 2026
+
+
+context
+seller 1
+seller 2
+seller 3
+truth
+TFM score
+seller 1
+clothing
+ID
+low
+new seller clothing
+ID
+high
+false alarm
+?
+seller 2
+new category OOD
+high
+classic OOD
+?
+new seller new category OOD
+high
+open-entity
+(our CCD)
+entities in context
+new entity
+? unknown class
+Figure 1: Open-entity OOD detection in a marketplace, with sellers as entities and product categories
+as classes. A high score of a TFM-based detector indicates OOD. In classic OOD detection (faded
+row), it can only signal an unknown class because the entity is in the context. In open-entity OOD
+detection (highlighted row), known-class (ID) and unknown-class (OOD) listings both receive a
+high score because test rows come from new entities. The detector must separate them, yet existing
+detectors raise a false alarm on the ID listing.
+(a) entity-split gap
+(a) entity-split gap
+(a) entity-split gap
+(a) entity-split gap
+(b) entity-over-class bias
+(b) entity-over-class bias
+(b) entity-over-class bias
+(b) entity-over-class bias
+(c) entity-class trade-off
+(c) entity-class trade-off
+(c) entity-class trade-off
+(c) entity-class trade-off
+random split
+context
+test
+?
+same entities
+entity split
+context
+test
+?
+new entities
+kNN AUROC
+85.5
+74.6
+Maha AUROC
+89.8
+73.9
+all 8 detectors: -5.2 to -15.8
+xL
+TFM
+context
+familiar
+new entity
+?
+unknown class
+confidence
+0.98
+0.51
+?
+0.76
+new entity looks more OOD
+than the unknown class
+features
+xL
+frozen TFM
+class output
+confidence
+feature
+distance
+unsure
+confident
+near
+far
+AUROC
+17.7
+86.7
+81.3 -> 74.0
+entities in context
+new entity
+known classes
+?
+unknown class
+data row
+flagged
+xL frozen TFM
+Figure 2: Why open-entity OOD detection is hard for in-context TFMs. Symbols as in Fig. 1. (a)
+Entity-split gap: entity splits cost all eight detectors 5.2–15.8 AUROC points relative to random splits.
+(b) Entity-over-class bias: on gesture phase, new-entity ID rows look more OOD than unknown-class
+rows under confidence. TabPFN v2 confidence there is 0.51 on new-entity rows, below the 0.76 on
+unknown-class rows and the 0.98 on familiar rows. (c) Entity–class trade-off: feature distance detects
+the unknown class (AUROC 86.7 against 17.7 for confidence) but also flags new entities.
+1
+Introduction
+Out-of-distribution (OOD) detection [41] with in-context tabular foundation models (TFMs), which
+predict from a labelled context without updating their parameters [16, 23, 24], is increasingly deployed
+in Web services. These services predict for entities, such as merchants in fraud detection [31] or users
+on recommendation platforms [29, 37], so their test rows come from entities absent from the context.
+The detector must therefore reject rows of unknown classes while accepting the known-class rows of
+new entities, a problem we call open-entity OOD detection. Fig. 1 illustrates it on a marketplace that
+classifies listings, where a listing from a new seller in a known product category must be accepted,
+whereas a listing in a category absent from the context must be rejected.
+Open-entity OOD detection first faces an entity-split gap, illustrated in Fig. 2a, because random
+splits conceal how existing detectors fail on new entities. Tabular OOD detection draws on two
+kinds of evidence, confidence and distance, each resting on a premise that a new entity breaks.
+Confidence-based scores such as the maximum softmax probability (MSP) [14] and its variants
+[13, 20] assume that in-distribution (ID) rows are predicted confidently. Distance-based scores such
+as the Mahalanobis distance [17] and k-nearest neighbours (kNN) [33] assume that ID rows lie near
+the training data. Both premises fail on a known-class row of a new entity, because it is neither
+predicted confidently nor close to the context. Random splits [3] hide this failure because they place
+the entities of the ID test rows in the context as well, where both premises hold. As a result, replacing
+2
+
+
+only the ID test rows of familiar entities with those of new entities lowers the area under the ROC
+curve (AUROC) of all eight detectors by 5–16 points on six tasks and changes their ranking.
+Open-entity OOD detection also shows an entity-over-class bias: confidence-based and distance-
+based detectors rank known-class rows of new entities as more OOD than those of familiar entities.
+With one fixed context, this ranking holds for 13 of the 14 detectors. Fig. 2b shows a case in which
+these rows look more OOD than even unknown-class rows. On gesture phase, TabPFN with the same
+context has a median confidence of 0.98 on known-class rows of familiar entities. On known-class
+rows of new entities it drops to 0.51, below even the 0.76 it gives the unknown class. A likely cause
+lies in in-context prediction, because every score of an in-context TFM is determined by the context.
+In a simple model of in-context prediction, the confidence measures how close a test row is to the
+context and reverts to the prior far from it whatever the class, as Prop. 2 states. Distance-based scores
+likewise measure unfamiliarity to the context by construction. To an in-context TFM, a new entity
+and an unknown class can therefore look equally unfamiliar. Yet a known-class row of a new entity
+should be accepted because the entity changes without changing the class, a covariate shift. An
+unknown-class row should be rejected because its class is absent from the context, a semantic shift.
+The two kinds of evidence also fail in different places, which creates an entity–class trade-off:
+distances react to both kinds of novelty and see the unknown class that confidence misses but are
+themselves sensitive to new entities, as Fig. 2c shows. Confidence fails because a label-oriented
+output need not retain the features in which an unknown class differs. With TabPFN, MSP stays below
+24 AUROC on four tables, while a feature-space kNN reaches 84–87 on three of them. Distances fail
+because they carry no class information and therefore flag a new entity far from the context as an
+outlier. These complementary failures motivate combining the two kinds of evidence after calibrating
+each against a reference for how known-class rows of new entities score.
+The property that makes new entities look unfamiliar also lets us create new entities from the context,
+and our solution builds on it. To an in-context TFM, a new entity is simply an entity absent from
+the context, and which entities are absent is under our control. Holding a group of entities out of the
+context and scoring them with the remaining context turns them into new entities of known classes,
+and under exchangeability their scores are samples from the new-entity distribution, as Prop. 1 states.
+Against the entity-split gap, we build NEO-Tab (New-Entity OOD detection on Tables), 14 grouped
+and temporal tables that include the six qualifying BeyondArena tasks [25]. On NEO-Tab, ID and
+OOD test rows both come only from new entities. Against the entity-over-class bias and the entity–
+class trade-off, we propose Context-Calibrated Detection (CCD), whose group-out context swaps
+give, from ID data alone, the reference distribution of every score on new entities and its sensitivity
+to them. The same swaps give the fraction of held-out rows on which the confidence stays sharp.
+CCD corrects the entity-over-class bias by calibrating the confidence and three distances against
+their reference distributions, with one distance in a label subspace. CCD addresses the entity–class
+trade-off by weighting each distance by its sensitivity and the confidence by its sharpness before
+summing them into one score, as Fig. 3 shows.
+CCD is the strongest of the 17 detectors on NEO-Tab on all three metrics, gains 7.4 AUROC points
+over a kNN tuned to be least sensitive to new entities (p = 0.0012), and keeps this lead on three
+backbones. The three testable predictions of the theory hold on the development trials.
+We summarise our contributions as follows.
+• We give the first formulation of open-entity OOD detection for in-context tabular models and trace
+its entity-split gap, entity-over-class bias and entity–class trade-off to in-context prediction.
+• We build NEO-Tab, 14 grouped and temporal tables on which all ID and OOD test rows come
+from unseen entities, and release its splits and scripts.
+• We propose CCD, whose group-out swaps give a new-entity reference from ID data alone, against
+which four scores are calibrated and weighted before fusion.
+• We find CCD to be the strongest of 17 detectors on 14 tables, 7.4 AUROC points above a kNN
+tuned to be least sensitive to new entities, with a lead that holds on three TFM backbones. The
+three testable predictions of our theory hold on the development trials.
+3
+
+
+2
+Related Work
+Tabular foundation models under shift. In-context TFMs such as TabPFN-2.5 [8] and TabICL [26]
+now lead tabular benchmarks, and Web applications already use them for graph anomaly detection
+[21] and evolving data streams [22]. Work on these models under shift asks how accurate prediction
+stays on new entities or later periods, not whether a row belongs to a known class. StablePFN [9],
+Drift-Resilient TabPFN [12] and a mixture of in-context experts for recurring concept drift [39] make
+prediction robust to these shifts, and grouped benchmarks such as TableShift [7] and BeyondArena
+[25] measure how much accuracy they cost. None of these works compares how much more an
+in-context model loses on new entities than a trained model does, which is the comparison of our
+entity-over-class analysis in Sec. 5.3: three TFM backbones lose 8.5–9.2 points of MSP AUROC on
+new entities, whereas CatBoost and TabM lose 5.1 and 2.1.
+OOD detection and its evaluation. Existing OOD benchmarks share entities between training
+and test, so they never ask a detector to accept a new entity while rejecting an unknown class.
+OpenOOD [40, 43] evaluates confidence-based and distance-based detectors against a fixed training
+set, and methods based on outlier exposure [15], outlier synthesis [5] or weakly augmented variational
+autoencoders [38] additionally train the network, which a frozen in-context model does not allow.
+Full-spectrum detection [42] accepts covariate shift and rejects semantic shift, but it defines both
+shifts relative to a fixed training set, not to a context that a frozen model reads at inference. Tabular
+evaluations either use random splits [3, 10] or treat a new patient group as OOD [1, 34]. NEO-Tab in
+Sec. 3.2 measures the setting that these evaluations leave out.
+Calibration with held-out data. Mondrian conformal prediction [36] and leave-group-out cross-
+validation [28] also hold groups out, to calibrate prediction sets per group or to estimate performance
+on unseen groups, but both refit the model or need a held-out calibration set. Our context swaps
+instead calibrate OOD scores for new entities and need nothing beyond forward passes of a frozen
+model.
+3
+Open-Entity OOD Detection
+3.1
+Problem Definition
+Rows (x, y, g) carry an entity g such as a user or a region. A time block also counts as an entity, and
+we call the entity of a row its group. Given a context C, let Pfam and Pnew be the laws of ID rows
+whose entity does or does not occur in C, and Qfam, Qnew those of OOD rows. For a score s (high
+means OOD), AUROC(s; P, Q) = Pr(s(Z) > s(X)) with Z ∼Q, X ∼P independent; we assume
+continuous scores, write GP for the CDF of s(X), X ∼P, and KS(P, P ′) = supt |GP (t)−GP ′(t)|.
+Definition 1 (Open-entity OOD detection). An in-context detector scores each test row given a
+labelled context C. In open-entity OOD detection, ID rows follow Pnew and rows of an unknown
+class follow Qnew; the detector must accept the former, a covariate shift, and reject the latter, a
+semantic shift. Its target is Anew,new = AUROC(s; Pnew, Qnew).
+How differently a detector treats new and familiar ID entities is measured by the sensitivity S(s) =
+Pr(s(X′) > s(X)) + 1
+2 Pr(s(X′) = s(X)) with X′ ∼Pnew, X ∼Pfam: S = 1
+2 means that new
+entities are not systematically ranked as more or less OOD, and we report S in percent and |S −50|.
+Lemma 1 (Evaluations as mixtures). If the ID test rows follow Pπ = (1 −π)Pfam + πPnew and
+the OOD test rows follow Qτ = (1 −τ)Qfam + τQnew, then AUROC(s; Pπ, Qτ) is the bilinear
+interpolation of the four AUROCs Aab = AUROC(s; Pa, Qb), a, b ∈{fam, new}, with weights
+(1 −π, π) and (1 −τ, τ).
+Open-entity OOD detection is the corner π = τ = 1.
+3.2
+Why Random-Split Evaluation Misses the Problem
+Random-split evaluation of tabular OOD detection [3] measures another point of this square, for
+three reasons. P1: familiar ID rows (π ≈0): a detector that ranks new entities as more OOD
+is overestimated; a bound limits the gap by the Kolmogorov–Smirnov distance between familiar
+and new entities and shows that it requires S̸ = 50. P2: familiar OOD rows (τ < 1): on the six
+4
+
+
+Figure 3: The CCD framework: (1) group-out swaps give a new-entity reference, (2) distances and
+confidence are calibrated against it and weighted, and (3) the confidence is added with sharpness a.
+BeyondArena tasks 62–92% of the OOD rows come from entities of the training split, so the ID–OOD
+contrast mixes the class shift with the entity shift. P3: batch-normalised scores: a good detector
+looks tolerant however far new entities move, because ranking scores within the test batch keeps only
+the OOD share of the shift.
+Our protocol and the 14 tables of Sec. 5.1 form the NEO-Tab benchmark. The protocol measures
+Anew,new directly: ID test rows come from the official test split (new entities or future), OOD rows
+only from entities absent from the training split or from after its end, and no score is normalised
+within the batch. Each trial is paired with a random-split trial of the same size on the same OOD
+rows, and the two therefore differ only in the ID rows.
+4
+Context-Calibrated Detection
+NEO-Tab addresses the entity-split gap in evaluation, and a detector evaluated on it needs a reference
+for how known-class rows of new entities score. The context can supply one because to an in-context
+TFM a new entity is simply one absent from the context. Holding a group of entities out of the context
+and scoring its rows with the remaining context therefore yields known-class rows of new entities
+from ID data alone. Module (1) of Fig. 3, Steps 1–2 of Sec. 4.1, turns these rows into a reference
+distribution for every score.
+The entity-over-class bias requires the confidence and each distance alike to be calibrated against
+this new-entity reference, not against familiar rows. Calibration against familiar rows fails because
+far from the context the confidence reverts to the prior whatever the class, as Prop. 2 states, and a
+distance treats distance from the context as outlyingness by construction. The same swaps measure
+how systematically a distance ranks new entities above or below familiar ones, and this directional
+sensitivity sets its weight among the distances in module (2), Steps 3–4.
+The entity–class trade-off rules out dropping either kind of evidence, because confidence and distances
+fail in different places. A label-oriented output can discard the features in which an unknown class
+differs, whereas distances also respond to new entities. The distance branch therefore keeps weight
+one, and the confidence is added with a weight equal to how sharp it stays on held-out entities in
+module (3), Steps 5–6. Sec. 4.2 states what each module guarantees.
+4.1
+The CCD Score
+CCD uses the labelled context itself to approximate how known-class rows behave when their entity
+is absent, and calibrates complementary detection evidence against this reference. It combines a
+label branch, the confidence, with a distribution branch of distances. We instantiate both for a frozen
+in-context learner fΘ(· ; C) with context C = {(xi, yi, gi)}n
+i=1, where gi is the group (or time block)
+of row i, and calibrate each branch on the reference of Sec. 3.2, ID rows of new groups, as Fig. 3
+shows.
+Step 1: group-out and random-out context swaps. Partition C by group into folds F1, . . . , Fm
+(m ≤5; temporal tasks use five time blocks). For a row score t(· ; C) and i ∈Fl, the group-out value
+5
+
+
+is ˜ti = t(xi; C \ Fl); the random-out value ¯ti uses five random folds instead. Both cost forward
+passes only, because C \ Fl is a new context for a TFM. The group-out values are a sample of the
+score under Pnew and the random-out values a sample under Pfam by Prop. 1, and both use ID rows
+alone. Step 2: new-entity reference distributions. The swaps estimate the new-group null of
+every score, ˆFt(ω) =
+ P
+i 1[˜ti ≤ω] + 1
+2
+
+/(n + 1) for ω ∈R (the empirical CDF, smoothed to
+keep normal scores finite), with normal score ut(x) = Φ−1( ˆFt(t(x))). Comparing group-out with
+random-out values gives the covariate-shift sensitivity of Sec. 3.1, ˆSt = c
+Pr(˜ti > ¯tj), without access
+to any test row.
+Step 3: distribution branch. This branch uses three distances to the context, each standardised
+on C. The feature-space distance d1 is the mean distance to the k = 10 nearest context rows, and
+d2 is the same distance in the label subspace. This subspace spans the at most K −1 discriminant
+directions W = Σ−1
+W [my −¯m]y of the context classes, with a shrinkage estimate of the within-class
+covariance ΣW . The embedding distance d3 is the Mahalanobis distance in the TFM embedding.
+Step 4: calibration and shift-dependent weighting. In normal scores under their new-group nulls,
+the three distances are combined with tolerance weights that favour the distances least sensitive to
+new groups,
+v(x) = 1
+ˆσ
+3
+X
+b=1
+τb udb(x),
+τb ∝1 −2
+ ˆSdb −1
+2
+,
+(1)
+where ˆσ, the standard deviation of P
+b τb˜udb over the group-out values with ˜udb = Φ−1((rank( ˜dbi)−
+1
+2)/n), scales v to unit variance under the new-group null. The weights τb down-weight a distance
+that ranks new groups systematically higher or lower than familiar ones. A distance that is equally
+sensitive in both directions keeps its weight, because such shifts widen its null without moving the
+reference.
+Step 5: label branch and sharpness. c(x) = maxy pΘ(y | x; C) with normal score uc(x) =
+Φ−1( ˆF−c(−c(x))). Its weight is the sharpness of the confidence on new groups,
+a = 1
+n
+n
+X
+i=1
+1[˜ci > θ],
+θ = 0.9,
+(2)
+the share of context rows that the TFM still predicts confidently when their own group is removed.
+Step 6: CCD score. The two branches are combined additively,
+s(x) = v(x) + a uc(x)
+1 + a
+,
+(3)
+where a high s indicates OOD. In other words, the distance keeps weight one and the confidence is
+added with weight a ∈[0, 1]. The score s is a fixed function of x given C: no quantity is normalised
+within the test batch, following P3 of Sec. 3.2. In summary, the swaps define the new-entity reference,
+measure the sensitivity ˆS that sets the weights, and estimate the sharpness a. Alg. 1 summarises the
+procedure.
+4.2
+Theoretical Guarantees
+The results below state, for each module, what the context swaps estimate and when the fused score
+cannot lose to its distance branch. Proofs are omitted from this preprint.
+The reference is unbiased. Under exchangeable groups, the group-out values follow the law of every
+score on new entities and the random-out values its law on familiar ones, so the reference of module
+(1) needs neither OOD data nor test rows.
+Assumption 1 (Exchangeable groups). Context groups and test groups are i.i.d. draws from PG,
+rows are i.i.d. within a group given g, and fΘ(· ; C) and every db are invariant to permutations of the
+context rows.
+Proposition 1 (Context swaps sample the new-group distribution). Under Asm. 1, for i ∈Fl the
+group-out values (˜ci, ˜d1i, ˜d2i, ˜d3i) have the law of (c(X′), d1(X′), d2(X′), d3(X′)) for X′ ∼Pnew,
+computed with a context of the groups outside Fl; under independent uniform fold assignment, the
+random-out values follow Pfam for every row whose group keeps a row in the reduced context.
+6
+
+
+Algorithm 1 CCD: Context-Calibrated Detection
+Require: frozen in-context TFM fΘ; context C = {(xi, yi, gi)}n
+i=1; folds F1, . . . , Fm by group; θ = 0.9,
+k = 10
+Ensure: OOD score s(x) for every test row x (high means OOD)
+1: procedure CALIBRATE(C)
+▷once per context, forward passes only
+2:
+W ←Σ−1
+W [my −¯m]y on C
+▷label subspace of d2
+3:
+for l = 1, . . . , m do
+▷group-out swaps, Step 1
+4:
+for i ∈Fl and t ∈{−c, d1, d2, d3} do
+5:
+˜ti ←t(xi; C \ Fl)
+▷sample under Pnew, Prop. 1
+6:
+end for
+7:
+end for
+8:
+¯ti ←t(xi; C \ Rl), Rl ∋i random
+▷random-out, under Pfam
+9:
+ˆFt(ω) ←
+ P
+i 1[˜ti ≤ω] + 1
+2
+
+/(n + 1)
+▷new-entity null, Step 2
+10:
+ˆSdb ←c
+Pr( ˜dbi > ¯dbj) for b = 1, 2, 3
+▷sensitivity
+11:
+τb ∝max
+ 0, 1 −2| ˆSdb −1
+2|
+
+, P
+b τb = 1
+▷tolerance weights, Eq. (1)
+12:
+ˆσ ←sdi
+ P
+b τb Φ−1((rank( ˜dbi) −1
+2)/n)
+
+13:
+a ←1
+n
+P
+i 1[˜ci > θ]
+▷sharpness, Eq. (2)
+14: end procedure
+15: procedure SCORE(x)
+▷fixed function of x given C
+16:
+c ←maxy pΘ(y | x; C); d1, d2, d3 ←distances of x to C
+▷Step 3
+17:
+udb ←Φ−1( ˆFdb(db)), uc ←Φ−1( ˆF−c(−c))
+▷calibration, Step 4
+18:
+v ←ˆσ−1 P3
+b=1 τb udb
+▷distribution branch, Eq. (1)
+19:
+return s(x) = (v + a uc)/(1 + a)
+▷additive fusion, Eq. (3)
+20: end procedure
+Table 1: Detection on the 14 benchmark tables (TabPFN v2, held-out trials 35–39). Rank: average
+rank among 17 detectors; Worst: lowest per-table AUROC; Random: random-split protocol; 40–44:
+resampling check; Best: tables won; last two columns: CCD minus the detector in AUROC with
+tables won, and Holm-corrected Wilcoxon p. The top three values per column are shaded.
+AUROC ↑
+AUPR ↑
+FPR95 ↓
+AUROC ↑
+Best ↑CCD −detector (AUROC)
+Detector
+mean rank mean rank mean rank Worst Random 40–44 tables
+∆(won)
+Holm p
+TFM
+output
+MSP [14]
+56.6 10.9 32.6 11.9 68.1 10.1 13.1
+67.6
+55.9
+2
++25.2 (11/14)
+0.037
+MaxLogit [13]
+57.6 10.3 33.7 10.6 68.6
+9.7
+12.9
+67.5
+55.8
+0
++24.2 (11/14)
+0.037
+Energy [20]
+58.0
+9.6
+34.5 10.3 68.4
+9.0
+12.6
+67.7
+56.2
+1
++23.8 (11/14)
+0.037
+Model-free
+kNN† [33]
+74.4
+8.4
+43.5
+8.2
+64.8 10.3 47.8
+75.2
+75.1
+0
++7.4 (12/14)
+0.012
+kNN [33]
+74.2
+7.5
+43.2
+8.0
+59.1
+7.4
+48.5
+78.6
+74.9
+1
++7.6 (11/14)
+0.032
+Maha (x) [17]
+71.2
+9.5
+40.7
+9.9
+63.9
+8.9
+46.5
+73.8
+71.5
+1
++10.6 (12/14)
+0.037
+Maha (emb.) [17]
+73.6
+7.0
+44.8
+6.1
+59.9
+7.6
+50.6
+85.6
+71.8
+0
++8.2 (10/14)
+0.059
+Emb-kNN [33]
+67.5
+8.4
+43.5
+7.7
+64.2
+8.9
+18.7
+83.8
+66.7
+0
++14.2 (12/14)
+0.037
+IForest [19]
+70.5 10.1 39.7 10.3 65.4
+9.9
+41.4
+71.3
+71.0
+1
++11.3 (11/14)
+0.021
+LOF [2]
+66.5 10.2 38.4 10.0 70.2 10.9 31.3
+74.0
+67.6
+0
++15.3 (12/14)
+0.008
+OC-SVM [30]
+69.6 10.9 41.1 10.3 65.7 10.4 45.5
+69.4
+70.4
+0
++12.2 (13/14)
+0.005
+ECOD [18]
+63.1 12.4 33.1 12.4 72.1 11.9 40.2
+62.5
+63.6
+0
++18.7 (14/14)
+0.002
+Pre-
+trained
+FoMo-0D [32]
+67.6
+9.7
+43.1
+9.4
+72.4 10.7 25.4
+71.0
+67.0
+1
++14.1 (13/14)
+0.009
+OutFormer [4]
+68.2 10.5 40.4
+9.7
+72.3 11.3 46.4
+74.8
+68.5
+0
++13.5 (13/14)
+0.004
+TabPFN-unsup [16] 74.9
+6.1
+48.1
+6.4
+54.9
+5.3
+34.1
+–
+76.0
+3
++6.9 (10/14)
+0.173
+Ours
+CCD-AW
+75.1
+7.8
+44.0
+7.6
+58.3
+6.9
+48.4
+80.0
+75.8
+0
++6.7 (12/14)
+0.008
+CCD
+81.8
+3.6
+52.4
+4.2
+50.3
+3.9
+48.8
+86.5
+81.1
+4
+–
+–
+Hence ˆFt, a and ˆSt estimate the new-group null, Pnew(c > θ) and the sensitivity S(t) of Sec. 3.1
+from the context alone, with blocked time folds treated as groups; ˆSt is the Mann–Whitney statistic
+of the group-out against the random-out values of t.
+Why new entities look unfamiliar. A simple model explains how the entity-over-class bias can
+arise. A prior-data fitted network (PFN) approximates the posterior predictive of its prior [24], and
+in-context TFMs share its interface of predicting from a labelled context. As an idealisation of this
+view, we analyse a kernel-weighted in-context predictor. Consider a Dirichlet prior π over K classes
+7
+
+
+with strength α > 0, updated by kernel-weighted context labels,
+p(y | x; C) = απy + Pn
+i=1 β(∥x −xi∥) 1[yi = y]
+α + Pn
+i=1 β(∥x −xi∥)
+,
+(4)
+with a non-increasing kernel β : [0, ∞) →(0, 1], β(δ) →0 as δ →∞. Let c0 = maxy πy,
+c(x) = maxy p(y | x; C) and δ(x) = mini∥x −xi∥.
+Proposition 2 (Confidence as familiarity). Under Eq. (4), αc0/(α + n) ≤c(x) ≤ψ(δ(x)) with
+ψ(δ) = c0 + (1 −c0) nβ(δ)/(α + nβ(δ)), which is non-increasing and tends to c0. With a uniform
+prior, if a new ID entity and an OOD class both lie at distance at least δ0 from the context, their mean
+confidences differ by at most ψ(δ0) −1/K, whatever the class of the rows.
+Under this model the bias is a property of in-context prediction and not of classifiers in general,
+because trained ReLU networks instead grow more confident far from the data [11].
+What each branch can see. The label subspace removes group inflation, which is the extra feature-
+space distance that label-irrelevant entity-level columns add when a row’s group is absent. Yet the
+same projection is blind to classes that differ only there. Likewise, the confidence detects an unknown
+class only insofar as it stays sharp on new entities. These two limits are the entity–class trade-off
+within the branches. Both limits share one cause: a representation trained for the label need not keep
+anything else, and unknown classes can then collapse onto known features [35]. Every confidence-
+based score is therefore limited to what the label representation retains. When the label-irrelevant
+columns have block-diagonal within-class covariance, the label-subspace distance d2 is invariant
+to shifts of label-irrelevant columns, which inflate the feature-space distance d1 in proportion to
+the number of entity-level columns. Yet d2 has AUROC 1
+2 against a class that differs only in those
+columns, and Eq. (1) therefore keeps both distances. The AUROC of the confidence against an
+unknown class lies between aθqθ and 1 −(1 −aθ)(1 −qθ), where aθ = Pnew(c(X′) > θ) is the
+share of new-entity ID rows still predicted above θ and qθ the share of OOD rows below it. Because
+an unknown class far from the context receives a confidence near the prior by Prop. 2, the confidence
+detects it only to the extent that ID rows of new groups stay sharp, and the entity-over-class bias
+lowers aθ. The weight a of Eq. (2) estimates aθ at θ = 0.9 by context swaps.
+Fusion keeps the distance. Adding the confidence with the sharpness weight can lower the AUROC
+of the distance branch only by the amount bounded in Thm. 1(ii), and never discards the distance. In
+population form, let U = uc(x) be the normal score of −c and V = v(x) that of Eq. (1); under Pnew
+both have mean 0 and variance 1, and we assume joint normality.
+Assumption 2 (Equal-covariance Gaussian model of the two branches). (U, V ) ∼N(0, R) under
+Pnew and (U, V ) ∼N(µ, R) under Q, with µ = (µU, µV ), R =
+  1 r
+r 1
+
+and |r| < 1.
+The branch AUROCs are Ac = Φ(µU/
+√
+2) and Ad = Φ(µV /
+√
+2), and Eq. (3) is sw = wU + (1 −
+w)V with w = a/(1 + a) ∈[0, 1
+2].
+Theorem 1 (Additive fusion with a sharpness weight). Let Asm. 2 hold with µV ≥0 and w =
+a/(1 + a), a ∈(0, 1]. Then:
+(i) (When the confidence helps.) AUROC(sw) ≥Ad if and only if µU ≥κ(w, r) µV , where
+κ(w, r) =
+p
+1 −2w(1 −w)(1 −r) −(1 −w)
+w
+increases in w from κ(0+, r) = r to κ( 1
+2, r) =
+p
+2(1 + r) −1 < 1.
+(ii) (Bounded loss.) If µU ≤µV and wµU + (1 −w)µV ≥0, then AUROC(sw) ≥Ad −
+a
+1 + a · µV −µU
+2√π
+.
+(iii) (The distance is never discarded.) For µU ≥0, AUROC(sw) ≥Φ
+ µV /(2
+√
+2)
+
+for every
+a ∈[0, 1], whereas the convex form (1 −a)V + aU has AUROC Ac at a = 1, however
+large µV .
+A small weight asks little of the confidence: as w →0, (i) only requires the part of the confidence
+not explained by the distance to shift towards OOD, while a sharp confidence (a = 1) must reach
+8
+
+
+50
+60
+70
+80
+90
+AUROC, familiar-entity ID rows (%)
+50
+55
+60
+65
+70
+75
+80
+85
+90
+95
+AUROC, new-entity ID rows (%)
+lower with
+new entities
+4 confidence scores
+kNN †
+ECOD
+Maha (emb.)
+Emb-kNN
+CCD
+Figure 4: Fixed-context check (TabPFN v2, held-
+out trials 35–39, 14 tables): AUROC against the
+same OOD rows with familiar-entity and with
+new-entity ID rows, one context per trial; 13 of
+14 detectors fall below the diagonal.
+15
+20
+25
+30
+35
+40
+KS distance, familiar vs new ID scores (%)
+5.0
+7.5
+10.0
+12.5
+15.0
+17.5
+20.0
+22.5
+25.0
+|Sfix −50|
+4 confidence scores
+kNN †
+IForest
+ECOD
+Maha (emb.), Emb-kNN
+CCD
+confidence scores
+feature-space
+embedding
+CCD
+Figure 5: Two measures of how far ID scores
+move from familiar to new entities agree (Spear-
+man 0.94 over the 14 detectors).
+p
+2(1 + r) −1 of the distance shift. When the confidence is blind (µU < 0), the loss is at most
+proportional to a/(1 + a) (ii), and adding the confidence instead of mixing it in keeps at least half of
+the weight on the distance (iii).
+5
+Experiments
+We organise the experiments around four research questions:
+• RQ1: how much does random-split evaluation overestimate detectors?
+• RQ2: how do the entity-over-class bias and the entity–class trade-off affect existing detectors
+and backbones?
+• RQ3: how does CCD compare with existing detectors on new entities?
+• RQ4: which components of CCD contribute?
+5.1
+Experimental Setup
+Datasets. We use all six multiclass BeyondArena tasks with a grouped or temporal split whose
+smallest class has at least 30 rows, four with grouped and two with temporal splits. We add ten tables
+whose rows are grouped by an entity such as a subject or a course, with reserved test groups. All
+sixteen tables follow five selection rules. R1 requires a multiclass target (≥3 classes), and R2 a
+group structure, either an official grouped or temporal split or, in an IID table, a column that names
+a real entity and is not the label. R3 keeps a table within the stated limits of TabPFN v2 (≤500
+features, ≤10 known classes), the restriction TabArena applies to TabPFN v2 [6], and R4 requires
+an OOD class, the smallest class with at least 30 rows. R5 excludes tables outside BeyondArena
+that appear in the pretraining collections of TabDPT and Real-TabPFN-2.5. Applying R1–R4 to the
+metadata of all 142 BeyondArena tasks [25] gives 25 multiclass tasks, of which 8 have an official
+grouped or temporal split and 2 of the 17 IID ones have an entity column, the plate in sdss17 and
+the course in students. After R3 removes micro_mass (1,082 features), all remaining nine pass R4,
+and the six whose smallest class itself has at least 30 rows form the six-task study. The remaining
+asp, whose smallest class has 21 rows and whose OOD class is therefore the smallest with at least
+30, joins sdss17 and students as an entity table. Other public tables. Seven public tables outside
+BeyondArena pass R1–R5 on their metadata and are added, and N-BaIoT also passes but is left out
+for its size of about seven million rows. The OOD class is the smallest class with at least 30 rows
+and never enters the context, and all ID and OOD test rows come from new groups. The backbone is
+TabPFN v2, and the metrics are AUROC, AUPR and FPR95. The 14 tables that enter the held-out
+evaluation after the size rule (at least 10 new-group ID and OOD test rows per trial) form NEO-Tab
+9
+
+
+−10
+−5
+0
+Δ MSP AUROC,
+official − random
+TabPFN v2
+TabICLv2
+TabDPT
+TabPFN-kNN
+CatBoost
+TabM
+−8.5
+−8.6
+−9.2
+−2.8
+−5.1
+−2.1
+0
+10
+20
+MSP sensitivity
+|S −50|
+14.0
+17.1
+17.3
+13.3
+10.3
+9.4
+in-context learner
+trained model
+Figure 6: Entity-over-class bias per backbone under the controlled protocol: change of the MSP
+AUROC from the random to the official ID split, and covariate-shift sensitivity |S −50| of the MSP.
+Table 2: CCD on three in-context backbones, pooled trials 35–44 over 14 tables. First row: mean
+AUROC (%) of CCD; other rows: CCD minus the detector in mean AUROC, all positive. ∗, ∗∗:
+Holm-corrected Wilcoxon p < 0.05, p < 0.01 within the backbone.
+Detector
+TabPFN v2
+TabICLv2
+TabDPT
+CCD AUROC
+81.4
+80.8
+80.5
+MSP
++25.1∗
++25.1∗
++25.0
+Entropy
++25.0∗
++25.4∗
++25.5
+kNN†
++6.7∗
++6.0∗
++5.8∗
+kNN
++6.9∗
++6.3∗
++6.1
+Maha (x)
++10.1∗
++9.4∗
++9.2
+Maha (emb.)
++8.7
++12.0
++8.8
+Emb-kNN
++14.3
++14.0
++11.5
+IForest
++10.7∗
++10.0∗
++9.8
+LOF
++14.3∗∗
++13.7∗
++13.5∗
+OC-SVM
++11.4∗∗
++10.7∗∗
++10.5∗
+ECOD
++18.1∗∗
++17.5∗∗
++17.2∗∗
+FoMo-0D
++14.2∗
++13.5∗
++13.3∗
+OutFormer
++13.1∗∗
++12.4∗∗
++12.2∗∗
+TabPFN-unsup
++6.0
++5.3
++5.1
+CCD-AW
++6.0∗∗
++5.9∗
++5.7∗
+with the protocol of Sec. 3.2, and we release row identifiers alongside the splits and scripts for all
+sixteen tables.
+Baselines. We compare against 16 detectors: TFM output scores, model-free feature-space and
+embedding detectors, and pretrained outlier detectors, listed in Tab. 1. kNN† tunes k on ID data with
+the same signal as CCD.
+Protocol. CCD is designed on development trials 0–4 and evaluated on held-out trials 35–39, which
+are drawn from reserved test groups disjoint from the development groups. The primary test compares
+CCD with kNN† by a two-sided Wilcoxon signed-rank test over tables. Trials 40–44 redraw rows
+and seeds from the same tables and reserved groups as a resampling check.
+5.2
+RQ1: Random-Split versus Open-Entity Evaluation
+Random-split evaluation overestimates detectors and reorders them. On the six BeyondArena tasks
+of Sec. 5.1, drawing ID test rows from familiar groups (P1) raises the AUROC of all eight detectors
+on TabPFN by 5.2 (IForest) to 15.8 points (embedding Mahalanobis) and changes their ranking. The
+other two pitfalls of Sec. 3.2 distort other aspects of the evaluation. Drawing OOD rows from familiar
+groups (P2) exaggerates the confidence defect, since the ID–OOD confidence gap of TabPFN shrinks
+by 4.0 points with OOD rows from all groups but by 1.7 with OOD rows from new groups. Ranking
+10
+
+
+500 rows
+CCD 80.2
+1,000 rows
+CCD 81.3
+3,000 rows
+CCD 81.8
+0
+5
+10
+15
+20
+CCD − kNN † (AUROC points)
++8.3
+consumer
+sdss17
++8.3
+sdss17
+consumer
++7.4
+gesture
+sdss17
+Figure 7: CCD minus kNN† in AUROC per table
+at three context sizes (TabPFN v2, held-out trials
+35–39); bars show the mean with a 95% bootstrap
+interval.
+wisdm
+battery
+sdss17
+students
+cardio
+har70
+dementia
+mice
+covertype
+mocap
+oulad
+gesture
+ghanas
+consumer
+25
+50
+75
+100
+MSP (59.0)
+Maha (emb.) (62.6)
+kNN † (64.1)
+CCD (68.9)
+Figure 8: Second-smallest class as OOD
+(TabPFN v2, held-out trials 35–39): mean
+AUROC per table; the dashed circle is
+chance, and the legend gives the mean over
+tables.
+scores within the test batch (P3) hides the sensitivity to new groups and lowers |S −50| of all eight
+detectors to 0.5–3.9 points (kNN: 14.1 to 2.1).
+5.3
+RQ2: Diagnosis of Existing Detectors
+New entities look unknown. With one context and one calibration per trial, 13 of 14 detectors score
+ID rows of new groups as more OOD than held-out ID rows of familiar groups, and their AUROC
+against the same OOD rows falls by up to 20.3 points, as Fig. 4 shows. Under the controlled protocol,
+which redraws only the OOD test rows from new groups, the ID confidence of TabPFN v2 [16],
+TabICLv2 [27] and TabDPT [23] falls by 5.6, 4.9 and 5.1 points on new groups, and their MSP
+AUROC by 8.5, 8.6 and 9.2 points, against 5.1 for CatBoost and 2.1 for TabM, as Fig. 6 shows. The
+MSP AUROC drop is largest on mice (37.7 points) and covertype (10.2).
+Mechanism. On cardiotocography, the TFM confidence on correctly classified ID rows falls with
+distance to the context more steeply than for trees or RealMLP (−0.21 for TabPFN versus at most
+−0.09). This decline is also steeper for the TFM on ghanas and mice. These declines are consistent
+with the confidence encoding familiarity to the context, which a new entity lacks. The trade-off
+involves a different failure, high confidence on unknown-class rows. On consumer, covertype and
+dementia the relation reverses, and rows far from the context receive higher confidence. The output
+scores therefore fall below chance (TabPFN MSP AUROC 13–23), while a feature-space kNN reaches
+83–86 on consumer and dementia. Label-free detectors share the entity-over-class bias but not this
+failure: they treat a new entity as an outlier. With the detector fixed, kNN and LOF lose 7.3 and 10.0
+points of AUROC from familiar to new ID rows and the two embedding scores 15.7 and 20.3. The
+two families thus fail in different places, which CCD exploits by combining them.
+5.4
+RQ3: Comparison with Existing Detectors
+CCD is the strongest detector overall. Among the 17 detectors in Tab. 1, it has the highest mean
+AUROC (81.8) and AUPR (52.4), the lowest FPR95 (50.3) and the best average rank in all three
+metrics. It gains +7.4 points of AUROC over kNN† (12/14 tables, p = 0.0012), and the gain is
+significant after Holm correction against 14 of the 16 baselines, as the last column of Tab. 1 shows. It
+again has the highest mean AUROC in the resampling check (81.1) and with TabICLv2 and TabDPT
+as backbones (81.2 and 81.0, with gains of +6.8 and +6.6 over kNN†, p = 0.0017 and 0.0023), as
+Tab. 2 lists. Its gain over kNN† also persists with at most 500 or 1,000 context rows by +8.3 points,
+as Fig. 7 shows. The gain also persists when every class with at least 30 rows is held out once as
+OOD. Across the resulting 69 table–class pairs, CCD gains +5.8 points over kNN† (p = 0.0010,
+11
+
+
+Table 3: Ablation on the held-out trials: mean AUROC (%) and difference to the full method over the
+14 tables.
+Variant
+AUROC
+∆
+CCD (full)
+81.8
+–
+uniform distance weights
+81.1
+-0.7
+w/o label-subspace distance
+79.4
+-2.4
+w/o feature-space kNN
+81.7
+-0.0
+w/o embedding distance
+80.4
+-1.4
+w/o label branch
+78.4
+-3.3
+agreement weight (convex fusion)
+79.4
+-2.4
+θ = 0.8
+81.1
+-0.7
+θ = 0.95
+81.7
+-0.1
+and +5.4 when the classes of each table are averaged first, p = 0.0042). With the second-smallest
+class as OOD, CCD again has the highest mean AUROC among the 11 evaluated detectors at 68.9
+against 64.1 for kNN†, as Fig. 8 shows.
+Robustness across tables. CCD holds up where the confidence fails: on the four tables where the
+confidence is blind (consumer, covertype, dementia and gesture) the output scores fall to 13–24
+(MSP) while CCD reaches 77.4–87.4.
+5.5
+RQ4: Design Analysis
+Ablation. The ablation in Tab. 3 shows that both branches and the fusion rule contribute to CCD.
+Removing the label branch lowers the mean AUROC by 3.3 points, the label-subspace distance by
+2.4 and the embedding distance by 1.4. Convex fusion of the confidence as in CCD-AW costs 2.4
+points in line with Thm. 1(iii), and the constant θ is not critical. The contribution of each branch does
+not depend on the TFM that produces the confidence and the embedding, because on the other two
+backbones removing the label-subspace distance costs 2.4–3.1 points and removing the label branch
+2.5–3.3 points.
+Testable predictions. Three predictions of Sec. 4.2 hold on the development trials. The swap
+estimates match their targets, as Prop. 1 predicts: the Spearman correlation over tables between ˆS
+and S is 0.86–0.92. The lower bound on the confidence AUROC of Sec. 4.2 holds in all 77 table–trial
+cells of the development trials, and the sharpness a correlates 0.78 with the AUROC of MSP. The
+label-subspace distance is less sensitive than the feature-space kNN (|S −50| 12.9 versus 15.3), as
+the invariance of d2 in Sec. 4.2 predicts.
+6
+Conclusion
+Open-entity OOD detection asks a detector to accept the rows of new entities whose class is known
+and to reject the rows of an unknown class. For an in-context TFM both can look equally unfamiliar,
+because every score it produces is a function of the context. This paper turns that observation into an
+evaluation and a method. NEO-Tab measures detection on new entities directly, and on it random-split
+evaluation overestimates every detector tested and misranks them. Nearly all detectors also score the
+known-class rows of new entities as more OOD than those of familiar entities. CCD holds groups
+out of the context to obtain, from ID data alone, how known-class rows of new entities score. It
+calibrates and weights three distances and the confidence against that reference before fusing them,
+as the entity–class trade-off requires. CCD has the highest mean AUROC among 17 detectors on 14
+grouped tables and gains 7.4 AUROC points over kNN†, a lead that holds on three backbones. Its
+three testable predictions hold on the development trials. For a Web service whose rows come from
+new users or merchants, this means an OOD detector that is evaluated under the entity shift it will
+meet in deployment and runs on a frozen TFM without requiring outliers or retraining.
+References
+[1] Mohammad Azizmalayeri, Ameen Abu-Hanna, and Giovanni Cinà. 2025. Unmasking The
+Chameleons: A Benchmark For Out-of-Distribution Detection In Medical Tabular Data. Int. J.
+12
+
+
+Medical Informatics 195 (2025), 105762. https://doi.org/10.1016/j.ijmedinf.2024.
+105762
+[2] Markus M. Breunig, Hans-Peter Kriegel, Raymond T. Ng, and Jörg Sander. 2000. LOF:
+Identifying Density-Based Local Outliers. In Proc. ACM SIGMOD. 93–104.
+[3] Zi-Jian Cheng, Zi-Yi Jia, Zhi Zhou, Yu-Feng Li, and Lan-Zhe Guo. 2025. Realistic Evaluation
+of TabPFN v2 in Open Environments. arXiv:2505.16226 [cs.LG]
+[4] Xueying Ding, Haomin Wen, Simon Klüttermann, and Leman Akoglu. 2026. From Zero To
+Hero: Advancing Zero-Shot Foundation Models For Tabular Outlier Detection. In Proc. ICML.
+[5] Xuefeng Du, Zhaoning Wang, Mu Cai, and Yixuan Li. 2022. VOS: Learning What You Don’t
+Know by Virtual Outlier Synthesis. In Proc. ICLR.
+[6] Nick Erickson, Lennart Purucker, Andrej Tschalzev, David Holzmüller, Prateek Mutalik Desai,
+David Salinas, and Frank Hutter. 2025. TabArena: A Living Benchmark For Machine Learning
+On Tabular Data. In Proc. NeurIPS Datasets and Benchmarks Track.
+[7] Josh Gardner, Zoran Popovic, and Ludwig Schmidt. 2023. Benchmarking Distribution Shift In
+Tabular Data With TableShift. In Proc. NeurIPS Datasets and Benchmarks Track. 53385–53432.
+[8] Léo Grinsztajn, Klemens Flöge, Oscar Key, Felix Birkel, Philipp Jund, Brendan Roof, Benjamin
+Jäger, Dominik Safaric, Simone Alessi, Adrian Hayler, Mihir Manium, Rosen Yu, Felix Jablon-
+ski, Shi Bin Hoo, Anurag Garg, Jake Robertson, Magnus Bühler, Vladyslav Moroshan, Lennart
+Purucker, Clara Cornu, Lilly Charlotte Wehrhahn, Alessandro Bonetto, Bernhard Schölkopf,
+Sauraj Gambhir, Noah Hollmann, and Frank Hutter. 2025. TabPFN-2.5: Advancing The State
+Of The Art In Tabular Foundation Models. CoRR abs/2511.08667 (2025).
+[9] Zhengkang Guan, Yikang Chen, Haoyuan Qian, Kairong Han, Peng Cui, Fei Wu, and Kun
+Kuang. 2026. StablePFN: Stable Prediction With Causal-Aware Tabular Foundation Model. In
+Proc. ACM SIGKDD. 1381–1392.
+[10] Songqiao Han, Xiyang Hu, Hailiang Huang, Minqi Jiang, and Yue Zhao. 2022. ADBench:
+Anomaly Detection Benchmark. In Proc. NeurIPS Datasets and Benchmarks Track.
+[11] Matthias Hein, Maksym Andriushchenko, and Julian Bitterwolf. 2019. Why ReLU Networks
+Yield High-Confidence Predictions Far Away from the Training Data and How to Mitigate the
+Problem. In Proc. IEEE/CVF CVPR. 41–50.
+[12] Kai Helli, David Schnurr, Noah Hollmann, Samuel Müller, and Frank Hutter. 2024. Drift-
+Resilient TabPFN: In-Context Learning Temporal Distribution Shifts On Tabular Data. In Proc.
+NeurIPS. 98742–98781.
+[13] Dan Hendrycks, Steven Basart, Mantas Mazeika, Andy Zou, Joseph Kwon, Mohammadreza
+Mostajabi, Jacob Steinhardt, and Dawn Song. 2022. Scaling Out-of-Distribution Detection for
+Real-World Settings. In Proc. ICML. 8759–8773.
+[14] Dan Hendrycks and Kevin Gimpel. 2017. A Baseline for Detecting Misclassified and Out-of-
+Distribution Examples in Neural Networks. In Proc. ICLR.
+[15] Dan Hendrycks, Mantas Mazeika, and Thomas Dietterich. 2019. Deep Anomaly Detection with
+Outlier Exposure. In Proc. ICLR.
+[16] Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin
+Hoo, Robin Tibor Schirrmeister, and Frank Hutter. 2025. Accurate Predictions On Small Data
+With A Tabular Foundation Model. Nature 637, 8045 (2025), 319–326. https://doi.org/
+10.1038/s41586-024-08328-6
+[17] Kimin Lee, Kibok Lee, Honglak Lee, and Jinwoo Shin. 2018. A Simple Unified Framework for
+Detecting Out-of-Distribution Samples and Adversarial Attacks. In Proc. NeurIPS. 7167–7177.
+[18] Zheng Li, Yue Zhao, Xiyang Hu, Nicola Botta, Cezar Ionescu, and George H. Chen. 2023.
+ECOD: Unsupervised Outlier Detection Using Empirical Cumulative Distribution Functions.
+IEEE Trans. Knowl. Data Eng. 35, 12 (2023), 12181–12193.
+13
+
+
+[19] Fei Tony Liu, Kai Ming Ting, and Zhi-Hua Zhou. 2008. Isolation Forest. In Proc. IEEE ICDM.
+413–422.
+[20] Weitang Liu, Xiaoyun Wang, John D. Owens, and Yixuan Li. 2020. Energy-Based Out-of-
+Distribution Detection. In Proc. NeurIPS.
+[21] Yunhui Liu, Tieke He, Yongchao Liu, Can Yi, Hong Jin, and Chuntao Hong. 2026. Tabular
+Foundation Models Are Strong Graph Anomaly Detectors. In Companion Proc. ACM Web
+Conference (WWW). 8785–8788.
+[22] Afonso Lourenço, João Gama, Eric P. Xing, and Goreti Marreiros. 2026. In-Context Learning Of
+Evolving Data Streams With Tabular Foundational Models. In Proc. ACM SIGKDD. 973–982.
+[23] Junwei Ma, Valentin Thomas, Rasa Hosseinzadeh, Alex Labach, Jesse C. Cresswell, Keyvan
+Golestan, Guangwei Yu, Anthony L. Caterini, and Maksims Volkovs. 2025. TabDPT: Scaling
+Tabular Foundation Models On Real Data. In Proc. NeurIPS. 172692–172722.
+[24] Samuel Müller, Noah Hollmann, Sebastian Pineda-Arango, Josif Grabocka, and Frank Hutter.
+2022. Transformers Can Do Bayesian Inference. In Proc. ICLR.
+[25] Lennart Purucker, Andrej Tschalzev, Nick Erickson, David Holzmüller, Alan Arazi, Alexander
+Pfefferle, Mustafa Tajjar, Gioia Blayer, Gaël Varoquaux, and Frank Hutter. 2026. Beyond IID:
+How General Are Tabular Foundation Models, Really?. In Proc. NeurIPS.
+[26] Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. 2025. TabICL: A
+Tabular Foundation Model For In-Context Learning On Large Data. In Proc. ICML. 50817–
+50847.
+[27] Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. 2026. TabICLv2: A
+Better, Faster, Scalable, And Open Tabular Foundation Model. In Proc. ICML.
+[28] David R. Roberts, Volker Bahn, Simone Ciuti, Mark S. Boyce, Jane Elith, Gurutzeta Guillera-
+Arroita, Severin Hauenstein, José J. Lahoz-Monfort, Boris Schröder, Wilfried Thuiller, David I.
+Warton, Brendan A. Wintle, Florian Hartig, and Carsten F. Dormann. 2017. Cross-validation
+Strategies for Data with Temporal, Spatial, Hierarchical, or Phylogenetic Structure. Ecography
+40, 8 (2017), 913–929.
+[29] Mohsen Sayyadiharikandeh, Onur Varol, Kai-Cheng Yang, Alessandro Flammini, and Filippo
+Menczer. 2020. Detection Of Novel Social Bots By Ensembles Of Specialized Classifiers. In
+Proc. ACM CIKM. 2725–2732.
+[30] Bernhard Schölkopf, John C. Platt, John Shawe-Taylor, Alexander J. Smola, and Robert C.
+Williamson. 2001. Estimating the Support of a High-Dimensional Distribution. Neural Comput.
+13, 7 (2001), 1443–1471.
+[31] Mingxuan Shen, Liang Hong, and Qingying Xu. 2026. Data-Centric Dual-Layer Adversarial
+Learning For Fraud Detection Under Label Delay And Concept Drift. In Proc. ACM SIGKDD.
+2446–2457.
+[32] Yuchen Shen, Haomin Wen, and Leman Akoglu. 2025. FoMo-0D: A Foundation Model For
+Zero-Shot Tabular Outlier Detection. Trans. Mach. Learn. Res. (2025).
+[33] Yiyou Sun, Yifei Ming, Xiaojin Zhu, and Yixuan Li. 2022. Out-of-Distribution Detection With
+Deep Nearest Neighbors. In Proc. ICML. 20827–20840.
+[34] Dennis Ulmer, Lotta Meijerink, and Giovanni Cinà. 2020. Trust Issues: Uncertainty Estimation
+Does Not Enable Reliable OOD Detection On Medical Tabular Data. In Proc. ML4H. 341–354.
+[35] Joost van Amersfoort, Lewis Smith, Yee Whye Teh, and Yarin Gal. 2020. Uncertainty Estimation
+Using a Single Deep Deterministic Neural Network. In Proc. ICML. 9690–9700.
+[36] Vladimir Vovk. 2012. Conditional Validity of Inductive Conformal Predictors. In Proc. ACML.
+14
+
+
+[37] Wenjie Wang, Xinyu Lin, Fuli Feng, Xiangnan He, Min Lin, and Tat-Seng Chua. 2022. Causal
+Representation Learning For Out-of-Distribution Recommendation. In Proc. ACM Web Confer-
+ence (WWW). 3562–3571.
+[38] Zhangkai Wu, Qi Zhang, Junxian Zhou, Hui Chen, and Yanfang Liu. 2026. WAVAE: A Weakly
+Augmented Variational Autoencoder for Time Series Anomaly Detection. Information Fusion
+125 (2026), 103462. https://doi.org/10.1016/j.inffus.2025.103462
+[39] Zhangkai Wu, Xu Zhang, Zhihong Cui, Yiqi Wang, and Yi Zhang. 2026. Recall or Relearn? A
+Mixture of In-Context Experts for Recurring Concept Drift. CoRR abs/2610.36585 (2026).
+[40] Jingkang Yang, Pengyun Wang, Dejian Zou, Zitang Zhou, Kunyuan Ding, Wenxuan Peng,
+Haoqi Wang, Guangyao Chen, Bo Li, Yiyou Sun, Xuefeng Du, Kaiyang Zhou, Wayne Zhang,
+Dan Hendrycks, Yixuan Li, and Ziwei Liu. 2022. OpenOOD: Benchmarking Generalized
+Out-of-Distribution Detection. In Proc. NeurIPS Datasets and Benchmarks Track.
+[41] Jingkang Yang, Kaiyang Zhou, Yixuan Li, and Ziwei Liu. 2024. Generalized Out-of-Distribution
+Detection: A Survey. Int. J. Comput. Vis. 132, 12 (2024), 5635–5662. https://doi.org/10.
+1007/S11263-024-02117-4
+[42] Jingkang Yang, Kaiyang Zhou, and Ziwei Liu. 2023. Full-Spectrum Out-of-Distribution
+Detection.
+Int. J. Comput. Vis. 131 (2023), 2607–2622.
+https://doi.org/10.1007/
+S11263-023-01811-Z
+[43] Jingyang Zhang, Jingkang Yang, Pengyun Wang, Haoqi Wang, Yueqian Lin, Haoran Zhang,
+Yiyou Sun, Xuefeng Du, Yixuan Li, Ziwei Liu, Yiran Chen, and Hai Li. 2024. OpenOOD V1.5:
+Enhanced Benchmark For Out-of-Distribution Detection. J. Data-centric Mach. Learn. Res. 2
+(2024), 1–32.
+15

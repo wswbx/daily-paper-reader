@@ -1,0 +1,4843 @@
+TabAbax: A Tabular Foundation Model Technical Report
+Zhixiong Cheng, Xiaoyun Gao, Shiyuan Han, Jingjing Suo*, Zhengli Wang*
+Bairong Inc.AI, Beijing, China
+2026-10-31
+§ https://github.com/tababax-research/TabAbax
+⌣https://huggingface.co/tababax-ai/TabAbax
+Abstract
+Tabular foundation models (TFMs) enable in-context prediction on unseen tabular datasets without
+task-specific training. Mechanistic work has shown that increasing the depth of the ICL Transformer
+yields weak gains, leaving the main headroom for gains in the synthetic pretraining prior and
+column–row encoder upstream of the ICL backbone. We introduce TabAbax, a TFM built on
+TabICLv2 that focuses all modifications on these two upstream components. On the prior side,
+we further improve the quality and complexity of the synthetic pretraining prior. On the encoder
+side, a two-pass column–row stack strengthens cross-feature interactions before row compression,
+using learned Fourier scalar encoding from TabFM and Causilo.
+Evaluations on BeyondArena
+and TabArena show strong regression-centric gains: TabAbax reaches 1,238 Elo on the 142-dataset
+BeyondArena suite (10th of 41 evaluated methods), 1,676 Elo on TabArena’s overall 51-dataset suite
+(11th of 99 methods, +115 over TabICLv2), and 2,024 Elo on TabArena’s regression benchmark
+(7th of 99 methods, +336 over TabICLv2, +21 over TabFM). A prior-only ablation confirms the
+attribution: the improved prior alone yields +228 Elo for regression, demonstrating that prior
+quality is the dominant knob for improving regression performance.
+Figure 1: BeyondArena overall Elo across the full 142-dataset suite (98 classification, 44 regression;
+top-15 leaderboard). TabAbax (dark orange bar) reaches an Elo rating of 1,238, ranking 10th of the
+41 evaluated methods, +68 over the TabICLv2 baseline (1,170). Methods marked ‡ are partially
+imputed.
+∗Corresponding authors: jingjing.suo@brgroup.com, zhengli.wang@brgroup.com
+arXiv:2611.00562v1  [cs.LG]  31 Oct 2026
+
+
+Figure 2: TabArena overall Elo across all 51 datasets (top-15 grouped leaderboard). TabAbax
+(dark orange bar) reaches an Elo rating of 1,676, ranking 11th of all 99 evaluated methods, +115
+over the TabICLv2 official default baseline (1,561) and +50 over TabPFN-3 (1,626). The full 99-
+method table is in Table 9.
+1
+Introduction
+Structured data is a foundational modality for scientific analysis and operational decision-making
+across a wide range of domains, including healthcare, finance, logistics, and manufacturing. Un-
+like language or perceptual data, tabular data organizes heterogeneous variables under explicit
+schemas, preserving numerical scales, missingness patterns, and categorical structure that are es-
+sential for reliable prediction.
+For decades, prediction on tabular data has been dominated by
+dataset-specific pipelines, particularly gradient-boosted trees (Chen and Guestrin, 2016; Ke et al.,
+2017; Prokhorenkova et al., 2018; Grinsztajn et al., 2022), which remain highly competitive across
+diverse tabular problems; deep alternatives have only recently reached parity (Ye et al., 2025).
+Tabular foundation models provide a different route: a single pretrained model learns across a
+large distribution of synthetic or real tabular tasks and directly performs prediction on unseen
+datasets through in-context learning, using labeled examples from the target dataset as context
+rather than retraining model parameters.
+Since TabPFN showed that a transformer (Vaswani
+et al., 2017) pretrained on synthetic tabular tasks performs strong prediction in a single forward
+pass (Hollmann et al., 2023; M¨uller et al., 2022; Garg et al., 2022), subsequent work has scaled the
+paradigm through richer priors and more expressive encoders (Hollmann et al., 2025; Grinsztajn
+et al., 2025; Qu et al., 2025, 2026; TabFM Team, 2026; Nums AI, 2026), real-data pretraining (Ma
+et al., 2025; Hosseinzadeh et al., 2026; Adams et al., 2024), and language-model-based routes that
+serialize tables as text or scale transfer learning to open-table corpora (Hegselmann et al., 2023;
+Gardner et al., 2024); Section 2 reviews these lines in detail.
+Recent progress in tabular foundation models has come increasingly from jointly scaling training
+data, model capacity, and inference strategies. We take a complementary direction: rather than
+scaling, we improve what feeds the ICL stack. A mechanistic study of tabular foundation models
+(Biloˇs et al., 2026) supports this choice: architecturally distinct models converge in accuracy and
+implement simple similarity-based readouts, and many ICL layers carry little load—the remaining
+headroom lies upstream, in the synthetic prior and the column–row encoder, rather than in the ICL
+2
+
+
+transformer itself. The synthetic SCM priors used for pretraining leave clear room for improvement,
+and our prior-side changes concentrate on data quality and complexity, acting across the entire
+generation pipeline: we enforce strict one-hot width matching so that the emitted categories agree
+exactly with the declared cardinalities; we generate class frequencies through multiple distributions,
+e.g., a Dirichlet prior π ∼Dirichlet(α); we draw converter functions and their hyper-parameters
+from richer families; and, for regression, we disable the post-hoc monotone warping of generated
+targets, preserving the native smoothness of the causal generating mechanism (Section 3.3).
+We introduce TabAbax, built on TabICLv2: our additions are deliberately small, and all of them
+act upstream of the ICL stack. On the encoder side, we introduce a two-pass column–row stack
+that deepens cross-feature interaction ahead of row compression, adopting the learned Fourier
+scalar encoding established by TabFM and Causilo (Section 3.1). Across the two benchmark suites
+(Table 1), TabAbax builds on the TabICLv2 baseline with consistent gains. Its strongest and most
+consistent results are observed on regression: TabAbax achieves a 10.1 average per-dataset rank
+across the benchmark’s full 13-dataset regression suite, outperforming TabFM (10.8; TabFM Team,
+2026), Mitra-v2 (11.2), EXAONE-Tabular (14.5; Eo et al., 2026), and TabPFN-3 (18.3; Grinsztajn
+et al., 2026).
+Beyond regression, TabAbax remains competitive across mixed-task evaluations,
+ranking 11th overall (Section 4).
+2
+Related Work
+Synthetic-prior tabular foundation models. Prior-fitted networks established that a trans-
+former pretrained on synthetic datasets approximates Bayesian in-context prediction in a single
+forward pass (M¨uller et al., 2022), with in-context learning theory following for simple function
+classes (Garg et al., 2022). TabPFN brought the paradigm to tabular data, pretraining on syn-
+thetic datasets sampled from hand-designed structural causal models for small classification tables
+(Hollmann et al., 2023); TabPFN v2 broadened the prior family and extended coverage to regression
+at scale with a cell-based alternating row/column attention (Hollmann et al., 2025); and TabICL
+adopted an SCM-based prior pipeline together with the column-then-row design and row com-
+pression for linear-time ICL (Qu et al., 2025, 2026). TabFM combines alternating attention with
+row compression and ICL (TabFM Team, 2026), and Causilo inserts an additional row-attention
+module before compression (Nums AI, 2026). TabAbax differs from all of these by targeting the
+pretraining corpus rather than the attention pattern: we modify the prior at two specific points,
+and our two-pass encoding stays within the TabICLv2 framework so that row compression and
+TabICLv2’s efficient inference machinery are preserved.
+Evolution of encoder designs. The encoder side has evolved through several regimes. TabPFN
+v1 lets individual cells interact across both rows and columns with per-cell attention—expressive,
+but quadratic in the number of cells and tightly bounded in context length—and TabPFN v2 ex-
+tends and scales the same cell-based row–column interaction at substantial compute cost (Hollmann
+et al., 2023, 2025). TabDPT takes the opposite, efficiency-first route: each entire row is compressed
+into a single embedding, and attention runs over row tokens only (Ma et al., 2025).
+TabICL
+introduced the now-common middle ground—three column-attention layers followed by three row-
+attention layers, then row compression into compact embeddings on which the ICL transformer
+operates—trading a bounded amount of pre-compression interaction for linear-time inference (Qu
+et al., 2025, 2026). Two lines extend this pattern by iterating the column-then-row pass twice.
+TabFM (TabFM Team, 2026) keeps the full feature grid throughout two untied column/row stages
+and pools rows only at the end, at roughly double TabICL’s parameters; Causilo (Nums AI, 2026)
+3
+
+
+does so at TabICL’s own budget, with a Set-Transformer-style aggregation in place of CLS pooling.
+Causilo matches TabFM on the leaderboards, suggesting that added parameters pay off better in
+the pre-compression encoder than inside the ICL stack. On the capacity side, Xiaomi-TabLDM
+extends a TabICL-like backbone’s ICL attention to 24 layers, the last eight mixture-of-experts, at
+roughly double the parameter count (Xiaomi, 2026), and TabPFN-3 extends its ICL transformer
+to 24 layers at a similarly doubled budget (Grinsztajn et al., 2026). Kumo goes further still, iter-
+ating column–row interaction repeatedly after compression. TabAbax follows the same recipe at
+TabICLv2’s own parameter budget—an additional column-then-row stage before row compression,
+with a learned Fourier scalar embedding at the front—and keeps the post-compression ICL stack
+unchanged.
+Real-data pretraining and prior design. TabDPT shows that large-scale pretraining on real
+tables can be competitive with synthetic priors (Ma et al., 2025), and Real-TabPFN improves
+TabPFN through continued pretraining on real data (Adams et al., 2024). On the synthetic side,
+prior work has focused on prior expressivity—richer SCM families, flexible structural priors, and
+controllable difficulty (Hollmann et al., 2023; Qu et al., 2025; Xiaomi, 2026)—while TabICLv2
+introduces graph- and dataset-level predictability filtering and studies its effect on pretraining
+convergence (Qu et al., 2026).
+TabAbax instead targets the differential effect of prior quality
+control across task types—which of these aspects affect regression but not classification.
+Scalar encodings. Learned sine–cosine (Fourier) encodings of scalar values—multi-scale, bounded
+feature maps at learned frequencies—were adapted for tabular foundation models by TabFM and
+Causilo (sine–cosine encodings themselves go back to Transformer position embeddings) (TabFM
+Team, 2026; Nums AI, 2026). The encoding design itself follows prior work and is not claimed as
+novel; likewise, the two-tier predictability filters are TabICLv2’s own. Our new contributions are
+the prior-side changes detailed in Section 3.3, together with the two-pass column–row stack.
+3
+Overall Framework
+TabAbax takes a tabular dataset as input and predicts test targets by conditioning on labeled
+training examples as in-context demonstrations, without task-specific training. Its design centers
+on two components: a improved synthetic pretraining prior, and an extended architecture that
+combines Fourier scalar encoding with two-pass column–row encoding.
+3.1
+Architecture
+The architecture of TabAbax is illustrated in Figure 3. Following TabICLv2 (Qu et al., 2026),
+TabAbax chains column-wise embedding, row-wise interaction, and dataset-wise in-context learn-
+ing, preserving the efficiency of TabICL with a runtime complexity of O(n2 + nm2) for tables with
+n rows and m columns.
+The TabICLv2 framework (Qu et al., 2026). Given an input table X ∈Rn×m, the framework
+proceeds as follows.
+• Repeated feature embedding. Each feature is embedded into multiple groups via circular
+shifts. For a table with m columns, the j-th group contains the columns at positions (j, j +
+1, j + 3) mod m (0-based), encoded by a shared linear layer Lin : R3 →Rd:
+E1[i, j] = Lin
+ xi,j, xi,(j+1) mod m, xi,(j+3) mod m
+,
+(1)
+4
+
+
+and the shift pattern (0, 1, 3) ensures that no pair of columns appears together in more than
+one group for tables with at least 7 columns. This breaks feature symmetries and mitigates
+cross-feature confusion when features share similar distributions, at the cost of strict column-
+permutation invariance—mitigated in practice by the random-shuffle ensembles of TabICLv2,
+which TabAbax inherits.
+• Target-aware embedding. Target information is injected early: for training samples, a
+target embedding is added to every token, E2[i, j] = E1[i, j] + EmbedTAE(yi), allowing the
+model to determine feature relevance before compression.
+• Compression then ICL. E2 is processed in three stages: (1) column-wise embedding applies
+a set transformer (Lee et al., 2019) TFcol with inducing-point attention to each feature group;
+(2) row-wise interaction applies a transformer TFrow with learnable [CLS] tokens, whose
+concatenated states collapse each row into a single vector; (3) dataset-wise ICL combines the
+row embeddings with target embeddings in a transformer TFicl, where test samples attend
+to training samples to predict ˆy. Attention in TFicl and in the inducing-point part of TFcol
+uses the query-aware scalable softmax (QASSMax) of TabICLv2 (Qu et al., 2026), which
+rescales queries as a function of log n to mitigate attention fading and improve long-context
+generalization.
+• Quantile regression. Classification and regression models are pretrained separately. The
+regressor predicts the 999 quantiles at levels αi = i/1000, i = 1, . . . , 999, trained with a pinball
+loss summed across quantiles; point predictions average the quantiles, and the sorted quantiles
+reconstruct a full predictive distribution from which prediction intervals and uncertainty
+estimates follow.
+TabAbax departs from this framework in two design components:
+• Fourier scalar encoding. Each observed scalar x is first mapped to sine and cosine features
+at K = 16 learned frequencies, ϕ(x) = [sin(2πf1x), cos(2πf1x), . . . , sin(2πfKx), cos(2πfKx)],
+whose concatenation replaces the raw scalar inside the grouped linear projection of repeated
+feature embedding, following TabFM and Causilo (TabFM Team, 2026; Nums AI, 2026). The
+Fourier basis maps every value to a fixed-size, multi-scale, bounded representation, letting the
+model express high-frequency functions of its inputs from the very first layer; missing values
+use a separate learned embedding instead.
+• Two-pass column–row encoding. The column-then-row attention pair (TFcol →TFrow)
+is applied twice before row compression and the ICL transformer: the first pass builds initial
+feature interactions and row mixtures, and the second pass re-evaluates cross-feature depen-
+dencies on the updated representations. Both passes run at the same hidden width with inde-
+pendent (untied) weights—separate parameter blocks rather than a shared stack—following
+TabFM, which alternates two untied column/row stages and pools rows into fixed-width vec-
+tors only after both (TabFM Team, 2026); the folding happens late, so TabICLv2’s efficient
+inference machinery is preserved.
+The ICL transformer TFicl keeps TabICLv2’s 12 layers (Qu et al., 2026); since row compression fixes
+the per-row representation length, ICL depth contributes context-processing steps at no asymptotic
+context cost.
+5
+
+
+Step 1 · Input
+Input X
+∈RN×M
+Columns
+x11 x12 x13 · · · x1m
+x21 x22 x23 · · · x2m
+· · · · · · · · · · · · · · ·
+xn1 xn2 xn3 · · · xnm
+y1
+y2
+· · ·
+yn
+Labels
+Step 2 · Encoding pass 1
+Fourier scalar enc.
+learned sin/cos frequencies,
+adapted from TabFM / Causilo
+TFcol
+grouping + inducing points
+TFrow
+[CLS] row attention
+Step 3 · Encoding pass 2
+TFcol
+pass 2
+TFrow
+pass 2
+Step 4 · In-context learning
+TFicl × 12
+QASSMax attention,
+unchanged from TabICLv2
+xij
+scalar
+f1
+f2
+· · ·
+fK
+K learned frequencies
+sin f1x
+cos f1x
+sin f2x
+cos f2x
+...
+sin fKx
+ϕ(x) ∈R2K
+Linear proj. W
+eij
+∈Rd
+M features
+x1
+x2
+x3
+x4
+x5
+...
+xm
+Group 1
+x1
+x2
+x4
+Group 2
+x2
+x3
+x5
+...
+Group G
+xm
+x1
+x2
+e1
+e2
+...
+eG
+TFcol
+inducing points
+set attention
+latent slots
+e′
+1
+e′
+2
+...
+e′
+G
+groups: (j, j+1, j+3) mod m Lin : R3 →Rd
+updated tokens
+[CLS]1
+[CLS]2
+[CLS]n
+· · ·
+· · ·
+· · ·
+...
+[CLS] + cell tokens
+TFrow
+row attention
+[CLS] folds each row
+s1
+s2
+...
+sn
+row tokens si ∈Rd
+s∗
+query
+QASSMax
+select top ˜q · n of n samples
+˜q
+fraction
+context rows
+s1
+s2
+s3
+...
+sn
+s∗
+query
+TFicl
+×12 layers
+ˆy
+prediction
+˜q = q · MLPbase(log n) · (1 + tanh(MLPgate(q)))
+Figure 3: Overall architecture of TabAbax. Left: the main pipeline. The input matrix X ∈RN×M
+with targets yi ∈Y is encoded in two passes (Steps 2–3) and processed by a 12-layer in-context
+transformer (Step 4).
+Right (dashed zoom-ins, top to bottom): Fourier scalar encoding
+with K learned frequencies; repeated feature grouping with circular shifts (j, j+1, j+3) mod m and
+inducing-point set attention (TFcol); [CLS]-based row folding (TFrow); and query-adaptive sample
+selection (QASSMax) inside TFicl, where the query row s∗attends only to the top ˜q · n context
+rows.
+3.2
+Pretraining
+We pretrain classification and regression models separately, following the TabICLv2 pretraining
+protocol (Qu et al., 2026). The classifier is trained with a cross-entropy loss and the regressor with
+the 999-quantile pinball loss of Section 3.1. TabICLv2 pretrains in three stages that progressively
+expand dataset size, with up to 100 features and a batch size of 64 throughout: Stage 1: 500K
+6
+
+
+steps on datasets with 1,024 samples (30–90% for training), maximum learning rate 8e-4; Stage 2:
+40K steps on datasets with 400–10,240 samples (log-uniform, ∼80% for training), 1e-4; Stage 3:
+10K steps on datasets with 400–60K samples, 2e-5. Optimization uses the Muon optimizer (Jordan
+et al., 2024) (replacing AdamW) with weight decay 0.01, gradient clipping at 10 for Stages 1–2,
+and a cosine learning-rate schedule. We train TabAbax with the improved prior of Section 3.3: the
+three stages are trained on 8×H20 GPUs—around 8–12 days for Stage 1 and 3 days each for Stages
+2 and 3, roughly 2,700–3,500 GPU-hours in total.
+3.3
+Synthetic Prior
+Following TabPFN and TabICL (Hollmann et al., 2023; Qu et al., 2025, 2026), TabAbax is pre-
+trained entirely on synthetic datasets generated from an SCM prior. Our prior-side changes act
+across the generation pipeline. Figure 4 summarizes the pipeline in three stages; Figure 5 locates
+our changes within them.
+1. Task
+configuration
+2. Graph sampling
+& propagation
+3. Tabular
+realization
+Pretraining
+corpus
+unpredictable graphs ×
+Figure 4: Schematic overview of the improved synthetic data generation prior. The dataset-level
+pipeline samples dataset properties, generates a graph, and constructs the tabular data; graphs
+whose targets are unlearnable are rejected and resampled, so only learnable problems enter the
+pretraining corpus.
+1. Task configuration. Each synthetic task begins with a draw of its global configuration (Qu
+et al., 2026): the number of rows, the number of features, and their ratio; the mix of numerical
+and categorical columns together with their cardinalities; the target type—binary, multiclass,
+or regression, with the number of classes drawn for classification—and the context–query
+partition, which fixes how many labeled examples serve as in-context demonstrations and
+how many rows are queried.
+2. Graph sampling and propagation. A directed acyclic graph is drawn from TabICLv2’s
+random Cauchy mechanism (Qu et al., 2026); latent vectors propagate in topological order,
+and each node evaluates a random function of its parents from eight classes spanning smooth
+and non-smooth inductive biases. In TabAbax, the function family f and its hyper-parameters
+θ are drawn per node from richer families, f ∼p(f), θ ∼p(θ | f), so the columns of X realize
+diverse function shapes instead of correlated duplicates.
+3. Tabular realization.
+Graph nodes are designated as observed features or the target; a
+random subset of each node’s dimensions is revealed, the rest remaining latent. Continuous
+dimensions feed numerical features and regression targets, categorical ones arise through
+discretization or softmax sampling. In TabAbax, the declared cardinality Cj, the emitted
+categories, and the one-hot width of feature j agree exactly—no empty or extra slots—so
+the embedding layer learns stable category semantics.
+Class frequencies are drawn from
+multiple distributions, most prominently π ∼Dirichlet(α), reproducing the class imbalance
+of real data. TabICLv2’s converters may additionally apply a post-hoc monotone warping to
+7
+
+
+targets; TabAbax disables this step, preserving the native output of the causal mechanism,
+which itself still samples non-smooth node functions such as tree ensembles. Datasets failing
+the final signal check are rejected and resampled before entering the corpus.
+Together, these changes raise the quality and diversity of the synthetic prior: sampled tasks span
+diverse nonlinear feature interactions, carry stable categorical representations, and exhibit the
+skewed class frequencies of real data.
+Synthetic prior
+no – reject / resample
+1. Properties
+N, P, C, sizes
+2. Cauchy DAG
+assign X, y
+4. Collect X, y
+num, cat, y
+6. ICL task
+context / query
+3. Node reps
+topo. order
+5. Dataset good?
+filter: ExtraTrees
+Yes
+Node-level computation
+(zoom-in of Step 3)
+Inputs
+root · parents
+A. Concatenate,
+then transform
+B. Transform, then
+aggregate
+Random function · converters
+per-node family + θ
+Pre-processing
+normalization
+Output construction
+categorical sizes
+cat. meta-sampling
+Child latent vector
+→next node
+numerical converters
+family + θ re-sampled per node
+node j
+family
+fj ∼p(f)
+hyper-params
+θj ∼p(θ|fj )
+per node:
+MLP
+L=3 · W=32
+GP kernel
+ℓ= 0.7
+Spectral
+m=4 freqs
+Discretize
+bins=8
+one converter per column of X
+categorical sizes
+declare once, emit consistently
+1
+Cj ∼p(C)
+C=4
+?
+?
+?
+?
+vocabulary: 4 slots
+2
+generate
+3
+one-hot
+4
+count
+distinct = 4
+1
+1
+1
+2
+2
+3
+4
+4
+✓
+declared = emitted = width
+no empty slots · no extras
+meta-sampling
+how often each category appears
+1
+α = 0.6
+α
+uniform
+skewed
+2
+45%
+30%
+15%
+10%
+Σ = 100% · π ∼Dirichlet(α)
+3
+1
+2
+1
+3
+1
+2
+1
+4
+2
+1
+4
+×5
+×3
+×1
+×1
+dot count ∝share
+imbalanced, like real data
+Figure 5: The improved synthetic prior.
+Top: the dataset-level pipeline; datasets failing the
+signal check are resampled. Middle: the node-level computation of Step 3. Bottom: the three
+generation-time changes—richer converter function families (f and θ drawn per node), strict one-
+hot width matching (declared, emitted, and one-hot widths agree exactly), and class frequencies
+from multiple distributions, chiefly π ∼Dirichlet(α).
+8
+
+
+4
+Evaluation
+We evaluate TabAbax on two public tabular learning benchmarks, BeyondArena (Purucker et al.,
+2026) and TabArena (Erickson et al., 2025), which together cover a broad range of real-world
+classification and regression tasks; Table 1 summarizes their composition.
+BeyondArena (Purucker et al., 2026) probes generalization beyond standard IID splits with 142
+datasets (98 classification, 44 regression), stratified along four axes: task type (IID / Grouped /
+Temporal), dataset scale (Tiny / Small / Medium / Large), dimensionality (Low / High), and
+feature type (Text / High-Cardinality).
+Its size distribution—80 datasets below 10K rows, 35
+between 10K and 100K, and 27 above 100K—stresses regimes that IID-only suites underrepresent.
+TabArena (Erickson et al., 2025) is a living benchmark that compares tabular foundation mod-
+els and tuned classical ML pipelines under a unified evaluation protocol.
+Its suite contains 51
+datasets—38 classification and 13 regression (the benchmark’s full regression suite)—with sizes
+spanning under 10K rows (29 datasets), 10K–100K (20), and over 100K (2). Methods are ranked
+by an Elo rating anchored at default Random Forest = 1000; the leaderboard pools 99 evaluated
+entries, including the TabPFN family, TabICLv2, TabFM, Causilo, Kumo, LimiX-2 (Zhang et al.,
+2025; Wang et al., 2026), TabM (Gorishniy et al., 2025), and tuned/ensembled gradient-boosted
+trees, and complements Elo with aggregate per-dataset views (average and harmonic rank, oracle
+improvability, and win rate).
+Table 1: Statistics of the benchmark suites considered in our evaluation.
+Sizes are counted in
+number of instances per dataset; the size columns report the number of datasets in each range.
+Benchmark
+# Datasets
+Cls.
+Reg.
+<10K
+10K–100K
+>100K
+BeyondArena
+142
+98
+44
+80
+35
+27
+TabArena
+51
+38
+13
+29
+20
+2
+4.1
+Main Results
+BeyondArena. Beyond TabArena, we evaluate TabAbax on the BeyondArena suite (Purucker
+et al., 2026): 142 datasets (98 classification, 44 regression) with grouped and temporal splits in
+addition to IID ones, stratified along task, scale, dimensionality, and feature-type axes.
+Regression. On the 44 regression datasets of BeyondArena, TabAbax-regression reaches an Elo
+rating of 1,287, ranking 8th of the 41 evaluated methods—+127 over the TabICLv2 baseline (1,160)
+(Figure 6; the full 41-method table is given in Table 7).
+9
+
+
+Figure 6: BeyondArena regression Elo across the 44 regression datasets (top-15 leaderboard).
+TabAbax-regression (dark orange bar) reaches an Elo rating of 1,287, ranking 8th of the 41
+evaluated methods, +127 over the TabICLv2 baseline (1,160), while the Kumo family, TabPFN-
+3.5, Causilo, and TabPFN-3.5-Fast retain their lead. Methods marked ‡ are partially imputed.
+Classification.
+On the 98 classification datasets of BeyondArena, TabAbax-classification
+reaches an Elo rating of 1,219, ranking 11th of the 41 evaluated methods—+43 over the TabI-
+CLv2 baseline (1,176) (Figure 7; the full 41-method table is given in Table 8).
+Figure 7: BeyondArena classification Elo across the 98 classification datasets (binary + multiclass;
+top-15 leaderboard). TabAbax-classification (dark orange bar) reaches an Elo rating of 1,219,
+ranking 11th of the 41 evaluated methods, +43 over the TabICLv2 baseline (1,176), while the
+Kumo family, TabPFN-3.5, TabFM, EXAONE-Tabular, and TabPFN-3 retain their lead. Methods
+marked ‡ are partially imputed.
+Overall. On the full 142-dataset suite, TabAbax reaches an Elo rating of 1,238, ranking 10th of
+the 41 evaluated methods—+68 over the TabICLv2 baseline (1,170) (selected methods in Table 2;
+the full 41-method table is given in Table 6). The position is stable across strata: TabAbax ranks
+10
+
+
+9th on Tiny datasets and 10th or within a few positions of the top ten on every other stratum,
+indicating that its performance does not concentrate on a particular dataset regime—the same
+healthy-tail behavior observed on TabArena.
+Table 2: BeyondArena leaderboard, selected methods (142 datasets; the method set follows Table 3
+for comparability; Rank is the Elo ordinal among all 41 evaluated methods). Elo+ / Elo−are error-
+bar extents; Avg. rank is the mean per-dataset rank; Improv. is the oracle improvability (lower is
+better); Winrate is the per-dataset win rate. The full 41-method table is in Table 6.
+Rank
+Method
+Elo↑
+Elo+
+Elo−
+Avg. rank↓
+Improv. (%)↓
+Winrate↑
+5
+Causilo
+1,328.7
+30.7
+26.8
+11.4
+12.03
+0.740
+8
+TabFM
+1,274.4
+39.4
+36.9
+13.7
+10.82
+0.682
+10
+TabAbax (ours)
+1,237.7
+29.0
+29.1
+15.4
+14.47
+0.640
+13
+TabPFN-2.6
+1,175.9
+26.4
+24.0
+18.4
+16.56
+0.565
+16
+TabICLv2 (baseline)
+1,170.0
+27.4
+28.0
+18.7
+15.99
+0.558
+19
+LightGBM (tuned + ens.)
+1,150.0
+27.3
+23.2
+19.7
+17.36
+0.533
+22
+TabDPT-1.3
+1,122.7
+30.4
+30.8
+21.0
+18.47
+0.499
+25
+XGBoost (tuned + ens.)
+1,112.9
+27.5
+24.4
+21.5
+19.00
+0.487
+TabArena. Table 3 reports the overall leaderboard. Figure 9 reports the TabArena classification
+Elo leaderboard; the complete 99-method tables for all three suites are given in the appendix
+(Tables 9, 10, and 11). Throughout, TabArena entries appear under their submission names; our
+submission appears as TabAbax, backed by the task-specific checkpoints TabAbax-classification
+and TabAbax-regression for the classification and regression suites, respectively.
+Table 3: Overall TabArena leaderboard, selected methods (51 datasets; Elo anchored at default
+Random Forest = 1000; Rank is among all 99 evaluated methods; metric definitions as in Table 2).
+The full 99-method table is in Table 9.
+Rank
+Method
+Elo↑
+Elo+
+Elo−
+Avg. rank↓
+Improv. (%)↓
+Winrate↑
+6
+TabFM
+1,781.0
+101.5
+98.4
+12.3
+6.57
+0.885
+7
+Causilo
+1,780.3
+81.1
+49.3
+12.3
+9.07
+0.884
+11
+TabAbax (ours)
+1,676.0
+74.0
+58.3
+17.7
+11.14
+0.830
+14
+TabPFN-2.6
+1,577.2
+53.9
+36.9
+24.2
+12.98
+0.763
+16
+TabICLv2 (baseline)
+1,561.0
+55.8
+52.0
+25.4
+12.47
+0.751
+18
+TabDPT-1.3
+1,517.2
+57.4
+41.1
+28.9
+14.21
+0.715
+25
+LightGBM (tuned + ens.)
+1,410.5
+26.9
+26.3
+38.7
+17.11
+0.616
+36
+XGBoost (tuned + ens.)
+1,358.9
+28.7
+29.0
+43.9
+17.82
+0.562
+Regression. TabAbax performs particularly strongly on regression: on all 13 regression datasets of
+TabArena—the benchmark’s full regression suite—our regression checkpoint reaches an Elo rating
+of 2,024, ranking 7th of all 99 evaluated methods (Figure 8; full table in Table 10), with an average
+per-dataset rank of 10.1, a harmonic-mean rank of 6.3, a normalized score of 0.749, and a win rate
+of 0.907. It surpasses TabFM (2,003), Mitra-v2 (1,988), TabPFN-3.5-Fast (1,950), and EXAONE-
+Tabular (1,896), and is behind only Causilo (2,039) and the TabPFN-3.5 and Kumo family models—
+a +336 Elo gain over the TabICLv2 baseline (1,688).
+On the oracle-improvability metric the
+position is identical: TabAbax reaches 3.30% and again ranks 7th, on par with Mitra-v2 (3.33%)
+and better than TabPFN-3.5-Fast (4.59%), TabPFN-3 (4.88%), EXAONE-Tabular (5.15%), and
+11
+
+
+Xiaomi-TabLDM (5.26%)—as in classification, the rank is stable across complementary metrics.
+The aggregate Score view agrees: TabAbax reaches 0.749, again 7th of the 99 methods.
+Figure 8: TabArena regression Elo across all 13 datasets of the benchmark’s full regression suite
+(top-15 grouped leaderboard). TabAbax (dark orange bar; arena entry TabAbax, regression check-
+point) reaches an Elo rating of 2,024, ranking 7th of all 99 evaluated methods, +336 over the
+TabICLv2 official default baseline (1,688), +217 over TabPFN-3 (1,807), and +21 over TabFM
+(2,003). The full 99-method table is in Table 10.
+Classification. On the 38 classification datasets of TabArena, TabAbax reaches an Elo rating of
+1,647, ranking 12th of all 99 evaluated methods (Figure 9; full table in Table 11)—a +76 Elo gain
+over the TabICLv2 baseline (1,571). The position is again stable across complementary metrics:
+TabAbax ranks 12th on all five TabArena metrics—Elo, oracle improvability (13.8%), aggregate
+Score (0.555), average rank (20.2), and harmonic rank (11.2) (per-metric values in Table 11).
+Figure 9: TabArena classification Elo across all 38 classification datasets (top-15 grouped leader-
+board). TabAbax-classification (dark orange bar) reaches an Elo rating of 1,647, ranking 12th of
+all 99 evaluated methods, +76 over the TabICLv2 official default baseline (1,571) and +21 over
+TabPFN-3 (1,626); the full 99-method table is in Table 11.
+12
+
+
+Overall performance. Table 3 reports the overall leaderboard, and Figure 2 shows the overall
+TabArena Elo across all 51 datasets (the full 99-method table is given in Table 9): TabAbax reaches
+an Elo rating of 1,676, ranking 11th of the 99 evaluated methods, with a harmonic-mean rank of
+9.4, a median rank of 15, a normalized score of 0.60, and a win rate of 0.83—+115 Elo above the
+TabICLv2 baseline (1,561). TabAbax sits behind the frontier group (Kumo family, TabPFN-3.5,
+TabFM, Causilo, Mitra-v2, EXAONE-Tabular) and ahead of TabPFN-3 (1,626), Xiaomi-TabLDM
+(1,583), TABPFN-v2.6 (1,577), and RealTabPFN-v2.5. The pairwise win-rate matrix (Figure 10)
+shows the same picture from the head-to-head view.
+Figure 10: Pairwise win-rate matrix among the top methods on the overall TabArena suite (all
+51 datasets). How to read it: locate TabAbax’s row and scan across the columns—each cell (row,
+column) is the fraction of datasets on which the row method beats the column method (darker
+green favors the row method, darker purple favors the column method); reading down a column
+gives the mirror image, i.e., how often that method loses to each row method. The TabAbax row
+shows wins against the TabICLv2 baseline on 78% of datasets, against TabPFN-3 on 70%, and
+against Xiaomi-TabLDM, TabPFN-v2.6, and the RealTabPFN-v2.5 variants on 62–73%, while the
+frontier group (Kumo family, TabPFN-3.5, TabFM, Causilo, Mitra-v2, EXAONE-Tabular) remains
+ahead (13–42%).
+4.2
+Ablation: Isolating the Prior Changes
+To disentangle the two axes of improvement, we additionally trained prior-only variants of both
+checkpoints—the TabICLv2 architecture left unchanged, with only the improved prior of Section 3.3
+enabled—and evaluated them under the same leaderboard protocol as the full model (Table 4).
+13
+
+
+Table 4: Classification vs. regression split under the official TabArena metrics. The prior-only
+ablation rows (the unmodified TabICLv2 architecture trained with the improved prior; Section 4.2)
+isolate the prior contribution to the full model’s +76 classification and +336 regression Elo gains
+over the TabICLv2 baseline. Rank is the mean per-dataset rank, Improv. the oracle improvability
+(%, lower is better), and Win the per-dataset win rate. Full per-suite tables: Tables 11 and 10.
+Classification (38 datasets)
+Regression (13 datasets)
+Method
+Elo↑Rank↓
+Improv.↓
+Win↑
+Elo↑
+Rank↓
+Improv.↓
+Win↑
+TabAbax (ours)
+1,646.7
+20.2
+13.83
+0.804
+2,023.7
+10.1
+3.30
+0.907
+TabAbax-prior only
+1,582.6
+24.7
+14.74
+0.758
+1,915.8
+13.6
+4.11
+0.872
+TabICLv2 (baseline)
+1,570.6
+25.7
+14.56
+0.748
+1,688.1
+24.4
+6.35
+0.760
+Regression. TabAbax-regression-prior only reaches an Elo rating of 1,916, ranking 10th of
+the 99 evaluated methods: +228 over the TabICLv2 official default baseline (1,688), i.e., roughly
+two thirds of the full +336 gain, while the remaining +108 come from the architectural changes
+(Figure 11). The prior-only variant thus isolates the contribution of the prior changes and directly
+supports the central claim that prior quality, not architectural capacity, is the main lever for
+regression.
+Figure 11: Isolating the prior changes on the TabArena regression suite (top-15 grouped leader-
+board). TabAbax-regression-prior only (dark orange bar)—the unmodified TabICLv2 archi-
+tecture trained with the improved prior—reaches an Elo rating of 1,916, +228 over the TabICLv2
+official default baseline (1,688), while the full TabAbax regression checkpoint (2,024; Figure 8) adds
++108 from the architectural changes.
+Classification. The same decomposition mirrors the regression result: TabAbax-classification-
+prior only reaches an Elo rating of 1,583, ranking 13th of the 99 evaluated methods, only +12 over
+the TabICLv2 baseline (1,571), while the full TabAbax classification checkpoint (1,647; Figure 9)
+adds +64 from the architectural changes (Figure 12). The two suites are thus mirror images: the
+regression gain is dominated by the improved prior, and the classification gain by the architectural
+changes. The small but nonzero prior-side gain on classification (+12) is consistent with what the
+prior changes act on: strict one-hot width matching and Dirichlet-skewed class frequencies shape
+the categorical representations and class priors that classification consumes directly, whereas the
+14
+
+
+native smoothness of continuous targets—the aspect most relevant to regression—does not affect
+classification decisions.
+Figure 12: Isolating the prior changes on the TabArena classification suite (top-15 grouped leader-
+board). TabAbax-classification-prior only (dark orange bar)—the unmodified TabICLv2 ar-
+chitecture trained with the improved prior—reaches an Elo rating of 1,583, +12 over the TabICLv2
+official default baseline (1,571), while the full TabAbax classification checkpoint (1,647; Figure 9)
+adds +64 from the architectural changes.
+5
+Limitations
+Limitations of the current evaluation. The predictability filters reduce the effective corpus
+size, and we have not yet measured whether the diversity lost by filtering trades off against the
+quality gained at the extremes of the distribution. Beyond corpus size, filtering risks a coverage gap
+for weak-signal, high-noise tasks—exactly the regime of many real-world datasets, which resemble
+the problems the filter removes—so generalization on weak-signal real data may be reduced.
+Context and memory bounds. The ICL context holds a bounded number of rows; very large
+datasets and long-range dependencies remain limited by context size and memory. And like all
+in-context learners, predictions depend on the quality of the context rows: corrupted, mislabeled,
+or distribution-shifted demonstrations can silently degrade predictions.
+6
+Conclusion
+TabAbax extends TabICLv2 along two upstream axes. On the prior side, generation-time changes
+concentrate on data quality and complexity: strict one-hot width matching, class frequencies drawn
+from multiple distributions, richer converter function families, and the removal of the post-hoc
+monotone warping that artificially introduces non-smoothness into regression targets. On the en-
+coder side, Fourier scalar encoding and a two-pass column–row stack adapt the pre-compression
+recipe of TabFM and Causilo to TabICLv2’s own parameter budget. The prior-side changes yield
+large regression gains without increasing model parameter count or altering the inference archi-
+tecture, the architectural changes benefit both task types, and the combination carries both gains
+15
+
+
+at matched asymptotic inference cost. We believe prior quality control is a generally applicable
+recipe for SCM-pretrained tabular foundation models. More broadly, our results suggest that for
+such models, regression performance can be substantially improved through prior quality control,
+without scaling up model size.
+7
+Future Work
+Deeper post-compression interaction.
+The encoder evolution from TabICL’s single pre-
+compression pass, to TabFM’s two untied passes, to Kumo’s repeated post-compression column–row
+interaction suggests that interaction after compression is the next promising axis; we plan to move
+in this direction, adding deeper pre- and post-compression interaction stages within the linear-time
+inference budget.
+Width and capacity scaling. The changes above are all established at TabICLv2’s original
+width and parameter budget. We plan to scale the model—enlarging the hidden dimension of the
+column–row encoder and ICL backbone together with the parameter count—and study whether the
+gains from the prior changes and deeper pre-compression interaction persist, amplify, or saturate
+at larger capacity.
+Model parameter counts
+As shown in Table 5, we list the parameter counts and checkpoint sizes of the released TabAbax
+checkpoints. TabAbax is a dense architecture (no sparse mixture-of-experts routing), so all param-
+eters are active in a single forward pass; the classifier and regressor share the same encoder stack
+and differ only in the output head (class logits vs. 999 predicted quantiles).
+Table 5: Parameter counts and checkpoint sizes of the released TabAbax checkpoints.
+Model
+Type
+Total params
+File size
+TabAbax-classifier.ckpt
+Classification (max classes=10)
+28.85M
+231.15 MB
+TabAbax-regressor.ckpt
+Regression (quantiles=999)
+29.84M
+239.03 MB
+References
+M. Biloˇs, J. T. Wilson, A. Schneider, and Y. Nevmyvaka. A mechanistic study of tabular foundation
+models. arXiv preprint arXiv:2605.21288, 2026.
+T. Chen and C. Guestrin. XGBoost: A scalable tree boosting system. In KDD, 2016.
+O. Adams, M. Penn, and A. P. White. Real-TabPFN: A tabular foundation model for real-life
+datasets. arXiv preprint arXiv:2404.15184, 2024.
+M. Eo, M.-K. Suh, H.-S. Cho, J. Kim, S. Kim, S. Nam, and S. Lee. EXAONE Tabular 1.0: Technical
+report. arXiv preprint arXiv:2608.25774, 2026.
+N. Erickson, L. Purucker, A. Tschalzev, D. Holzm¨uller, P. Mutalik Desai, D. Salinas, and F. Hut-
+ter.
+TabArena: A living benchmark for machine learning on tabular data.
+arXiv preprint
+arXiv:2506.16791, 2025.
+16
+
+
+L. Purucker, A. Tschalzev, N. Erickson, G. Blayer, D. Holzm¨uller, A. Arazi, A. Pfefferle, M. Tajjar,
+G. Varoquaux, and F. Hutter. Beyond IID: How general are tabular foundation models, really?
+arXiv preprint arXiv:2606.30410, 2026.
+J. Gardner, J. C. Perdomo, and L. Schmidt. Large scale transfer learning for tabular data via lan-
+guage modeling. In Advances in Neural Information Processing Systems, 2024. arXiv:2406.12031.
+S. Garg, H. Tsipras, P. Liang, and G. Valiant. What can transformers learn in-context? A case
+study of simple function classes. In NeurIPS, 2022.
+Y. Gorishniy, A. Kotelnikov, and A. Babenko.
+TabM: Advancing tabular deep learning with
+parameter-efficient ensembling. In International Conference on Learning Representations, 2025.
+L. Grinsztajn, E. Oyallon, and G. Varoquaux. Why do tree-based models still outperform deep
+learning on tabular data? In Advances in Neural Information Processing Systems, 35, 2022.
+L. Grinsztajn, K. Fl¨oge, O. Key, F. Birkel, P. Jund, L. Purucker, N. Hollmann, and F. Hutter.
+TabPFN-2.5: Advancing the state of the art in tabular foundation models.
+arXiv preprint
+arXiv:2511.08667, 2025.
+L. Grinsztajn, K. Fl¨oge, O. Key, F. Birkel, P. Jund, B. Roof, M. Manium, S. B. Hoo, M. Buhler,
+A. Garg, D. Safaric, J. Robertson, B. J¨ager, S. Alessi, A. Hayler, V. Moroshan, L. Purucker,
+P. Singer, A. Arazi, J. Siems, J. H. Metzen, G. Grab, N. Erickson, S. Guo, E. Kalfon, S. Bing,
+D. Salinas, C. Cornu, L. C. Wehrhahn, D. Kriuchkova, K. Kaya, L. Sidhoum, M. Salmon, J. Chen,
+M. Hulsebos, Y. LeCun, S. Muller, B. Sch¨olkopf, S. Gambhir, N. Hollmann, and F. Hutter.
+TabPFN-3: Technical report. arXiv preprint arXiv:2605.13986, 2026.
+S. Hegselmann, A. Buendia, H. Lang, M. Agrawal, X. Jiang, and D. Sontag. TabLLM: Few-shot
+classification of tabular data with large language models. In International Conference on Artificial
+Intelligence and Statistics, 2023. arXiv:2210.10723.
+N. Hollmann, S. M¨uller, K. Eggensperger, and F. Hutter. TabPFN: A transformer that solves small
+tabular classification problems in a second. In International Conference on Learning Represen-
+tations, 2023. arXiv:2207.01848.
+N. Hollmann, S. M¨uller, F. Hutter, et al.
+Accurate predictions on small data with a tabular
+foundation model. Nature, 637:319–326, 2025.
+R. Hosseinzadeh, A. Labach, Z. Xue, S. Han, V. Thomas, and A. L. Caterini. TabDPT-Turbo:
+Efficient in-context learning for tabular prediction. arXiv preprint arXiv:2608.01400, 2026.
+G. Ke, Q. Meng, T. Finley, et al. LightGBM: A highly efficient gradient boosting decision tree. In
+NeurIPS, 2017.
+K. Jordan, et al.
+Muon:
+An optimizer for hidden-layer neural networks.
+arXiv preprint
+arXiv:2402.05296, 2024.
+J. Lee, Y. Lee, J. Kim, A. Kosiorek, S. Choi, and Y. W. Teh. Set transformer: A framework for
+attention-based permutation-invariant neural networks. In International Conference on Machine
+Learning, 2019.
+TabFM Team.
+TabFM: Tabular foundation models.
+https://github.com/google-research/
+tabfm, 2026. Software and model weights; no technical report released.
+17
+
+
+J. Ma, V. Thomas, R. Hosseinzadeh, H. Kamkari, A. Labach, J. C. Cresswell, K. Golestan, G. Yu,
+M. Volkovs, and A. L. Caterini. TabDPT: Scaling tabular foundation models on real data. In
+Advances in Neural Information Processing Systems, 2025. arXiv:2410.18164.
+S. M¨uller, N. Hollmann, S. Arango, et al. Transformers can do Bayesian inference. arXiv preprint
+arXiv:2111.06267, 2022.
+Nums AI. Causilo: A tabular foundation model technical report. arXiv preprint arXiv:2609.22866,
+2026.
+L. Prokhorenkova, G. Gusev, A. Vorobev, et al. CatBoost: Unbiased boosting with categorical
+features. In NeurIPS, 2018.
+J. Qu, D. Holzm¨uller, G. Varoquaux, and M. Le Morvan. TabICL: A tabular foundation model
+for in-context learning on large data. In International Conference on Machine Learning, 2025.
+arXiv:2502.05564.
+J. Qu, D. Holzm¨uller, G. Varoquaux, and M. Le Morvan. TabICLv2: A better, faster, scalable,
+and open tabular foundation model. arXiv preprint arXiv:2602.11139, 2026.
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polo-
+sukhin. Attention is all you need. In Advances in Neural Information Processing Systems, volume
+30, pages 5998–6008, 2017.
+Y. Wang, X. Zhang, H. Yu, M. Hao, G. Ren, H. Yuan, L. Mao, Y. Zhang, C. Yuan, and P. Cui.
+LimiX-2M: Mitigating low-rank collapse and attention bottlenecks in tabular foundation models.
+arXiv preprint arXiv:2606.04485, 2026.
+Xiaomi-TabLDM Team. Xiaomi-TabLDM: A tabular foundation model technical report. arXiv
+preprint, 2026.
+H.-J. Ye, H.-H. Yin, D.-C. Zhan, and W.-L. Chao. Revisiting nearest neighbor for tabular data: A
+deep tabular baseline two decades later. In International Conference on Learning Representations,
+2025.
+X. Zhang, G. Ren, H. Yu, H. Yuan, H. Wang, et al. LimiX: Unleashing structured-data modeling
+capability for generalist intelligence. arXiv preprint, 2025.
+18
+
+
+A
+Full leaderboard tables
+Tables 6, 7, and 8 report the complete BeyondArena leaderboards underlying Figures 1, 6, and 7;
+Tables 9, 10, and 11 report the complete TabArena leaderboards underlying Figures 8, 2, and 9
+(leaderboard snapshot as of October 2026). TabAbax is evaluated as a single submission (TabAbax);
+Elo+ / Elo−are the upper/lower error-bar extents, Avg. rank and Harm. rank are the mean and
+harmonic-mean per-dataset ranks, Score is the normalized aggregate score, Improv. is the oracle
+improvability (gap to the per-dataset best method, lower is better), and Winrate is the per-dataset
+win rate against all other methods. Bold: our submission.
+Table 6: Full BeyondArena leaderboard: all 142 datasets (98 classification and
+44 regression), 41 evaluated methods, sorted by Elo.
+Method
+Elo Elo+ Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+Kumo-Tabular (default)
+1,429.4
+42.5
+43.4
+7.8
+2.7
+0.747
+7.77
+0.830
+Kumo-Tabular-Medium (default)
+1,378.4
+40.0
+39.7
+9.5
+4.3
+0.669
+9.26
+0.788
+TabPFN-3.5 (default)
+1,377.1
+39.6
+35.5
+9.5
+4.2
+0.654
+11.04
+0.786
+Causilo (default)
+1,328.7
+30.7
+26.8
+11.4
+6.6
+0.558
+12.03
+0.740
+Kumo-Tabular-Small (default)
+1,323.0
+28.6
+30.2
+11.6
+6.8
+0.546
+11.81
+0.734
+TabPFN-3.5-Fast (default)
+1,320.6
+34.8
+25.3
+11.7
+6.1
+0.560
+12.14
+0.732
+LimiX-2 (default)
+1,288.7
+51.7
+45.4
+13.1
+3.1
+0.570
+10.09
+0.698
+TabFM (default)
+1,274.4
+39.4
+36.9
+13.7
+4.6
+0.497
+10.82
+0.682
+EXAONE-Tabular (default)
+1,245.6
+31.7
+33.8
+15.0
+7.8
+0.464
+14.19
+0.649
+TabAbax (default)
+1,237.7
+29.0
+29.1
+15.4
+8.8 0.411
+14.47
+0.640
+TabPFN-3 (default)
+1,232.6
+30.2
+26.0
+15.6
+8.7
+0.382
+14.55
+0.634
+RealMLP (tuned + ensembled)
+1,225.3
+26.9
+21.1
+16.0
+8.4
+0.305
+15.49
+0.625
+TabPFN-2.6 (default)
+1,175.9
+26.4
+24.0
+18.4
+11.8
+0.292
+16.56
+0.565
+TabM (tuned + ensembled)
+1,172.1
+26.8
+25.9
+18.6
+11.3
+0.215
+16.78
+0.561
+CatBoost (tuned + ensembled)
+1,171.8
+28.7
+21.0
+18.6
+10.8
+0.187
+17.02
+0.560
+TabICLv2 (default)
+1,170.0
+27.4
+28.0
+18.7
+10.6
+0.318
+15.99
+0.558
+RealMLP (tuned)
+1,167.0
+27.8
+23.5
+18.8
+9.5
+0.227
+16.75
+0.554
+CatBoost (tuned)
+1,158.3
+28.3
+21.1
+19.3
+11.6
+0.178
+17.19
+0.544
+LightGBM (tuned + ensembled)
+1,150.0
+27.3
+23.2
+19.7
+10.3
+0.182
+17.36
+0.533
+RealTabPFN-2.5 (default)
+1,141.5
+27.3
+26.9
+20.1
+13.0
+0.240
+17.56
+0.522
+TabM (tuned)
+1,138.8
+22.3
+25.2
+20.2
+12.5
+0.166
+17.51
+0.519
+TabDPT-1.3 (default)
+1,122.7
+30.4
+30.8
+21.0
+11.5
+0.257
+18.47
+0.499
+LightGBM (tuned)
+1,121.3
+27.5
+25.4
+21.1
+11.6
+0.157
+17.89
+0.497
+CatBoost (default)
+1,117.4
+28.6
+24.4
+21.3
+13.7
+0.151
+18.34
+0.492
+XGBoost (tuned + ensembled)
+1,112.9
+27.5
+24.4
+21.5
+13.1
+0.156
+19.00
+0.487
+XGBoost (tuned)
+1,092.0
+26.8
+25.3
+22.6
+14.7
+0.129
+19.30
+0.461
+TabM (default)
+1,091.2
+25.7
+29.2
+22.6
+14.9
+0.127
+18.93
+0.460
+RealMLP (default)
+1,047.7
+27.8
+32.4
+24.8
+14.7
+0.109
+20.26
+0.406
+TabSwift (default)
+1,047.4
+28.5
+30.1
+24.8
+15.3
+0.124
+21.18
+0.406
+TabDPT (default)
+1,027.7
+26.7
+36.1
+25.7
+15.0
+0.149
+22.35
+0.382
+XGBoost (default)
+1,000.0
+29.8
+28.5
+27.0
+20.4
+0.081
+21.84
+0.350
+LightGBM (default)
+989.8
+28.0
+23.4
+27.5
+19.8
+0.063
+21.88
+0.338
+ExtraTrees (tuned + ensembled)
+989.6
+23.1
+25.6
+27.5
+20.3
+0.033
+22.45
+0.338
+ExtraTrees (tuned)
+956.4
+26.7
+29.2
+29.0
+21.0
+0.029
+23.18
+0.301
+RandomForest (tuned + ensembled)
+951.0
+25.3
+32.2
+29.2
+23.2
+0.015
+23.49
+0.295
+RandomForest (tuned)
+933.7
+24.7
+31.9
+29.9
+23.2
+0.013
+23.85
+0.277
+Linear (tuned + ensembled)
+908.3
+36.2
+41.6
+31.0
+18.5
+0.064
+29.01
+0.251
+Linear (tuned)
+873.7
+38.7
+46.1
+32.3
+19.1
+0.048
+30.06
+0.218
+RandomForest (default)
+873.3
+31.0
+32.2
+32.3
+25.5
+0.012
+26.14
+0.218
+ExtraTrees (default)
+861.5
+38.6
+38.5
+32.7
+23.9
+0.030
+26.89
+0.208
+Linear (default)
+804.6
+43.0
+51.0
+34.5
+22.3
+0.037
+33.01
+0.161
+19
+
+
+Table 7: Full BeyondArena regression leaderboard: all 44 regression datasets,
+41 evaluated methods, sorted by Elo.
+Method
+Elo
+Elo+
+Elo−Avg. rank Harm. rank
+Score Improv. (%)
+Winrate
+Kumo-Tabular (default)
+1,497.5 111.0
+80.3
+6.2
+2.3
+0.802
+3.52
+0.870
+Kumo-Tabular-Medium (default)
+1,436.9
+89.6
+58.1
+7.9
+3.9
+0.721
+3.81
+0.828
+TabPFN-3.5 (default)
+1,383.0
+75.1
+61.0
+9.7
+4.3
+0.611
+5.92
+0.783
+Kumo-Tabular-Small (default)
+1,376.1
+80.0
+47.6
+9.9
+5.9
+0.589
+5.14
+0.777
+Causilo (default)
+1,341.2
+82.8
+56.9
+11.2
+6.2
+0.529
+6.33
+0.744
+LimiX-2 (default)
+1,293.5 109.1
+91.4
+13.2
+2.7
+0.583
+6.08
+0.695
+TabPFN-3.5-Fast (default)
+1,288.9
+68.3
+57.9
+13.4
+6.9
+0.448
+7.32
+0.690
+TabAbax (default)
+1,286.7
+64.7
+43.2
+13.5
+7.9 0.450
+7.29
+0.688
+RealMLP (tuned + ensembled)
+1,274.0
+53.1
+37.9
+14.0
+6.4
+0.374
+6.21
+0.674
+EXAONE-Tabular (default)
+1,248.0
+66.2
+68.8
+15.2
+7.7
+0.456
+8.23
+0.645
+TabPFN-3 (default)
+1,236.4
+40.2
+42.6
+15.7
+10.5
+0.334
+7.55
+0.632
+TabFM (default)
+1,233.7
+82.5
+67.0
+15.8
+8.7
+0.375
+8.01
+0.629
+RealMLP (tuned)
+1,218.6
+51.7
+39.9
+16.5
+7.3
+0.300
+6.78
+0.612
+TabPFN-2.6 (default)
+1,182.5
+66.2
+53.3
+18.2
+11.8
+0.308
+9.20
+0.569
+CatBoost (tuned + ensembled)
+1,181.8
+45.9
+41.0
+18.3
+10.1
+0.208
+9.09
+0.568
+TabM (tuned + ensembled)
+1,177.8
+41.6
+47.5
+18.5
+11.4
+0.224
+8.12
+0.564
+LightGBM (tuned + ensembled)
+1,170.0
+48.0
+47.1
+18.8
+9.6
+0.227
+7.86
+0.554
+CatBoost (tuned)
+1,161.8
+42.0
+39.5
+19.2
+12.5
+0.192
+9.26
+0.544
+TabICLv2 (default)
+1,159.5
+62.3
+58.0
+19.3
+12.2
+0.261
+9.75
+0.542
+LightGBM (tuned)
+1,144.0
+50.0
+49.1
+20.1
+11.3
+0.199
+8.17
+0.523
+TabM (tuned)
+1,140.1
+39.0
+45.9
+20.3
+13.5
+0.154
+8.96
+0.518
+RealTabPFN-2.5 (default)
+1,128.2
+57.0
+60.7
+20.8
+14.2
+0.220
+10.00
+0.504
+XGBoost (tuned + ensembled)
+1,124.9
+44.5
+40.8
+21.0
+14.8
+0.179
+10.25
+0.500
+CatBoost (default)
+1,116.1
+45.2
+52.1
+21.4
+14.0
+0.179
+10.44
+0.489
+XGBoost (tuned)
+1,099.5
+37.9
+44.8
+22.2
+15.6
+0.144
+10.45
+0.470
+RealMLP (default)
+1,099.0
+46.8
+48.9
+22.2
+14.5
+0.153
+9.51
+0.469
+TabDPT-1.3 (default)
+1,091.3
+47.2
+55.9
+22.6
+12.9
+0.229
+11.97
+0.460
+TabM (default)
+1,083.0
+40.1
+55.3
+23.0
+15.3
+0.101
+11.24
+0.450
+TabDPT (default)
+1,069.1
+51.2
+59.7
+23.7
+13.5
+0.201
+12.77
+0.434
+TabSwift (default)
+1,025.4
+50.6
+54.7
+25.7
+16.2
+0.124
+12.98
+0.383
+LightGBM (default)
+1,011.8
+42.1
+52.8
+26.3
+21.3
+0.090
+11.70
+0.368
+XGBoost (default)
+1,000.0
+46.1
+58.4
+26.8
+21.4
+0.104
+12.33
+0.355
+ExtraTrees (tuned + ensembled)
+967.4
+49.7
+53.3
+28.2
+22.6
+0.028
+13.46
+0.320
+ExtraTrees (tuned)
+947.8
+52.8
+52.4
+29.0
+22.1
+0.023
+13.58
+0.300
+RandomForest (tuned + ensembled)
+923.5
+53.4
+54.5
+30.0
+26.2
+0.009
+14.36
+0.276
+RandomForest (tuned)
+916.9
+48.4
+56.8
+30.2
+26.2
+0.006
+14.39
+0.269
+ExtraTrees (default)
+869.7
+66.1
+72.1
+31.9
+25.0
+0.011
+14.94
+0.227
+RandomForest (default)
+829.5
+45.6
+70.9
+33.3
+27.3
+0.002
+16.10
+0.193
+Linear (tuned + ensembled)
+793.4
+77.1
+92.9
+34.3
+25.0
+0.010
+24.48
+0.167
+Linear (tuned)
+741.3
+85.0 103.2
+35.7
+26.5
+0.008
+25.25
+0.132
+Linear (default)
+647.0
+95.6 116.4
+37.7
+26.4
+0.005
+28.49
+0.083
+Table 8:
+Full BeyondArena classification leaderboard:
+all 98 classification
+datasets, 41 evaluated methods, sorted by Elo.
+Method
+Elo Elo+ Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+Kumo-Tabular (default)
+1,405.1
+60.0
+54.3
+8.5
+2.9
+0.722
+9.68
+0.813
+TabPFN-3.5 (default)
+1,376.8
+44.5
+39.9
+9.5
+4.1
+0.673
+13.34
+0.788
+Kumo-Tabular-Medium (default)
+1,357.0
+54.6
+40.2
+10.2
+4.5
+0.645
+11.70
+0.770
+TabPFN-3.5-Fast (default)
+1,337.3
+37.2
+35.6
+11.0
+5.8
+0.610
+14.30
+0.750
+Causilo (default)
+1,325.2
+30.2
+33.0
+11.5
+6.8
+0.571
+14.59
+0.738
+Kumo-Tabular-Small (default)
+1,303.2
+35.6
+35.6
+12.4
+7.3
+0.526
+14.81
+0.715
+TabFM (default)
+1,294.7
+54.9
+44.3
+12.8
+3.8
+0.552
+12.08
+0.706
+LimiX-2 (default)
+1,288.3
+60.1
+58.9
+13.0
+3.4
+0.564
+11.89
+0.699
+EXAONE-Tabular (default)
+1,246.1
+40.7
+37.0
+15.0
+7.8
+0.468
+16.87
+0.651
+TabPFN-3 (default)
+1,232.5
+27.9
+33.6
+15.6
+8.1
+0.404
+17.70
+0.635
+TabAbax (default)
+1,218.8
+30.2
+33.7
+16.3
+9.4 0.393
+17.70
+0.618
+RealMLP (tuned + ensembled)
+1,206.4
+23.9
+26.5
+16.9
+9.8
+0.274
+19.66
+0.603
+continued on next page
+20
+
+
+Table 8 (continued)
+Method
+Elo Elo+ Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+TabICLv2 (default)
+1,175.6
+31.3
+40.7
+18.4
+10.0
+0.344
+18.79
+0.565
+TabPFN-2.6 (default)
+1,174.2
+28.2
+29.7
+18.5
+11.8
+0.284
+19.87
+0.564
+TabM (tuned + ensembled)
+1,170.8
+24.4
+31.5
+18.6
+11.3
+0.211
+20.67
+0.559
+CatBoost (tuned + ensembled)
+1,168.7
+23.5
+25.3
+18.7
+11.1
+0.178
+20.59
+0.557
+CatBoost (tuned)
+1,157.9
+24.8
+26.3
+19.3
+11.3
+0.172
+20.75
+0.543
+RealTabPFN-2.5 (default)
+1,148.1
+37.8
+21.9
+19.8
+12.5
+0.249
+20.95
+0.531
+RealMLP (tuned)
+1,146.4
+28.8
+27.7
+19.9
+11.1
+0.194
+21.23
+0.529
+LightGBM (tuned + ensembled)
+1,142.6
+28.4
+25.9
+20.1
+10.7
+0.162
+21.62
+0.524
+TabM (tuned)
+1,139.3
+23.6
+31.0
+20.2
+12.0
+0.171
+21.34
+0.520
+TabDPT-1.3 (default)
+1,136.8
+37.2
+35.8
+20.3
+11.0
+0.269
+21.40
+0.516
+CatBoost (default)
+1,118.8
+28.2
+28.7
+21.3
+13.5
+0.139
+21.89
+0.494
+LightGBM (tuned)
+1,112.5
+31.1
+26.7
+21.6
+11.7
+0.138
+22.26
+0.486
+XGBoost (tuned + ensembled)
+1,108.7
+30.5
+33.5
+21.8
+12.5
+0.145
+22.93
+0.481
+TabM (default)
+1,095.3
+26.4
+30.5
+22.4
+14.7
+0.139
+22.38
+0.464
+XGBoost (tuned)
+1,089.5
+31.2
+33.2
+22.7
+14.3
+0.123
+23.27
+0.457
+TabSwift (default)
+1,056.9
+28.1
+29.2
+24.4
+14.9
+0.123
+24.86
+0.416
+RealMLP (default)
+1,025.8
+36.9
+34.7
+25.9
+14.8
+0.089
+25.08
+0.378
+TabDPT (default)
+1,010.0
+37.0
+32.2
+26.6
+15.8
+0.126
+26.65
+0.359
+XGBoost (default)
+1,000.0
+29.6
+37.1
+27.1
+19.9
+0.071
+26.11
+0.347
+ExtraTrees (tuned + ensembled)
+998.6
+27.8
+29.1
+27.2
+19.4
+0.035
+26.48
+0.346
+LightGBM (default)
+980.3
+33.9
+35.6
+28.0
+19.1
+0.052
+26.46
+0.324
+RandomForest (tuned + ensembled)
+961.7
+31.2
+31.9
+28.9
+22.0
+0.017
+27.58
+0.304
+ExtraTrees (tuned)
+959.6
+32.4
+33.7
+28.9
+20.5
+0.031
+27.49
+0.301
+Linear (tuned + ensembled)
+948.5
+40.1
+45.8
+29.4
+16.6
+0.088
+31.04
+0.289
+RandomForest (tuned)
+939.9
+30.0
+29.2
+29.8
+22.0
+0.016
+28.10
+0.280
+Linear (tuned)
+917.8
+44.2
+50.6
+30.7
+17.0
+0.066
+32.22
+0.257
+RandomForest (default)
+889.3
+35.0
+44.8
+31.8
+24.8
+0.017
+30.66
+0.229
+ExtraTrees (default)
+856.1
+41.2
+57.8
+33.0
+23.4
+0.039
+32.25
+0.199
+Linear (default)
+853.0
+51.4
+58.1
+33.1
+20.8
+0.051
+35.04
+0.196
+Table 9: Full TabArena overall leaderboard: all 51 datasets (38 classification
+and 13 regression), 99 evaluated methods, sorted by Elo.
+Method
+Elo
+Elo+
+Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+Kumo-Tabular (default)
+1,957.2 160.7
+99.5
+6.2
+2.4
+0.885
+4.39
+0.946
+LimiX-2 (default)
+1,948.0 128.3
+82.8
+6.5
+2.2
+0.903
+3.32
+0.944
+Kumo-Tabular-Medium (default)
+1,898.1 105.0
+77.4
+7.9
+4.2
+0.827
+5.88
+0.929
+TabPFN-3.5 (default)
+1,859.1 102.0
+65.2
+9.2
+4.2
+0.784
+7.56
+0.916
+Kumo-Tabular-Small (default)
+1,797.4
+79.5
+56.1
+11.6
+7.5
+0.721
+8.90
+0.892
+TabFM (default)
+1,781.0 101.5
+98.4
+12.3
+3.7
+0.738
+6.57
+0.885
+Causilo (default)
+1,780.3
+81.1
+49.3
+12.3
+7.0
+0.708
+9.07
+0.884
+TabPFN-3.5-Fast (default)
+1,772.0
+84.1
+55.3
+12.7
+7.0
+0.701
+8.95
+0.881
+Mitra-v2 (default)
+1,760.9
+92.2
+67.7
+13.2
+6.0
+0.701
+8.37
+0.875
+EXAONE-Tabular (default)
+1,741.8
+68.3
+49.9
+14.1
+7.7
+0.675
+9.65
+0.866
+TabAbax
+1,676.0
+74.0
+58.3
+17.7
+9.4 0.605
+11.14
+0.830
+TabPFN-3 (default)
+1,625.9
+61.1
+44.6
+20.8
+13.3
+0.534
+11.71
+0.798
+Xiaomi-TabLDM (default)
+1,583.4
+59.7
+55.8
+23.7
+12.9
+0.507
+12.20
+0.768
+TabPFN-2.6 (default)
+1,577.2
+53.9
+36.9
+24.2
+18.1
+0.458
+12.98
+0.763
+RealTabPFN-2.5 (tuned + ensembled)
+1,561.3
+55.3
+44.0
+25.4
+16.3
+0.425
+12.70
+0.751
+TabICLv2 (default)
+1,561.0
+55.8
+52.0
+25.4
+14.5
+0.488
+12.47
+0.751
+RealTabPFN-2.5 (tuned)
+1,527.3
+50.4
+40.9
+28.1
+17.9
+0.390
+13.37
+0.724
+TabDPT-1.3 (default)
+1,517.2
+57.4
+41.1
+28.9
+14.8
+0.404
+14.21
+0.715
+RealTabPFN-2.5 (default)
+1,498.9
+49.3
+39.9
+30.5
+21.7
+0.366
+13.92
+0.699
+FTFM (default)
+1,484.3
+93.0
+97.9
+31.7
+11.0
+0.463
+13.35
+0.686
+RealMLP (tuned + ensembled)
+1,475.6
+42.9
+41.1
+32.5
+23.4
+0.293
+15.07
+0.678
+TabDPT-Turbo (default)
+1,433.3
+49.9
+42.7
+36.5
+20.9
+0.292
+16.09
+0.638
+TabDPT (tuned + ensembled)
+1,431.4
+50.3
+43.8
+36.6
+22.0
+0.276
+15.93
+0.636
+TabM (tuned + ensembled)
+1,422.1
+42.7
+35.5
+37.5
+27.4
+0.220
+16.19
+0.627
+LightGBM (tuned + ensembled)
+1,410.5
+26.9
+26.3
+38.7
+32.1
+0.165
+17.11
+0.616
+RealMLP (tuned)
+1,406.0
+35.1
+45.1
+39.1
+26.3
+0.207
+16.32
+0.611
+continued on next page
+21
+
+
+Table 9 (continued)
+Method
+Elo
+Elo+
+Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+CatBoost (tuned + ensembled)
+1,400.0
+36.6
+35.5
+39.7
+26.5
+0.171
+16.73
+0.605
+CatBoost (tuned)
+1,388.8
+30.5
+31.4
+40.8
+26.8
+0.157
+16.94
+0.593
+iLTM (tuned + ensembled)
+1,383.5
+36.1
+38.6
+41.4
+32.1
+0.158
+17.37
+0.588
+TabDPT (tuned)
+1,382.7
+50.3
+50.7
+41.5
+26.3
+0.242
+17.01
+0.587
+TabM (tuned)
+1,372.2
+43.9
+36.1
+42.5
+30.1
+0.171
+17.03
+0.576
+LightGBM (tuned)
+1,367.6
+25.8
+25.5
+43.0
+36.2
+0.114
+17.74
+0.571
+ModernNCA (tuned + ensembled)
+1,367.5
+61.1
+48.9
+43.0
+27.7
+0.201
+17.66
+0.571
+ChimeraBoost (tuned + ensembled)
+1,364.7
+41.4
+48.9
+43.3
+21.5
+0.163
+18.01
+0.568
+CatBoost (default)
+1,360.9
+38.1
+37.7
+43.7
+26.8
+0.142
+17.56
+0.564
+XGBoost (tuned + ensembled)
+1,358.9
+28.7
+29.0
+43.9
+35.5
+0.120
+17.82
+0.562
+LimiX (default)
+1,344.5
+73.6
+56.2
+45.4
+24.8
+0.231
+17.58
+0.547
+ModernNCA (tuned)
+1,340.0
+34.1
+36.8
+45.9
+28.1
+0.132
+18.06
+0.542
+ChimeraBoost (tuned)
+1,338.4
+43.0
+48.9
+46.1
+25.8
+0.137
+18.45
+0.540
+XGBoost (tuned)
+1,336.0
+27.2
+30.1
+46.3
+38.4
+0.095
+18.12
+0.538
+xRFM (tuned + ensembled)
+1,335.9
+43.4
+44.2
+46.3
+30.5
+0.152
+18.32
+0.538
+TabSwift (default)
+1,332.4
+59.0
+46.6
+46.7
+34.4
+0.179
+18.16
+0.534
+CTBoost (tuned + ensembled)
+1,326.1
+40.3
+45.5
+47.3
+32.3
+0.127
+18.75
+0.527
+TabPFN-v2 (tuned + ensembled)
+1,325.8
+61.4
+65.7
+47.4
+26.0
+0.234
+18.67
+0.527
+LightPFN (default)
+1,322.6
+65.1
+66.8
+47.7
+28.7
+0.234
+18.61
+0.523
+Mitra (default)
+1,315.6
+59.7
+61.9
+48.5
+28.6
+0.226
+19.18
+0.516
+TabDPT (default)
+1,311.9
+60.3
+54.5
+48.9
+30.0
+0.190
+19.19
+0.512
+TabICL (default)
+1,303.3
+50.1
+55.5
+49.8
+34.5
+0.172
+19.08
+0.502
+ChimeraBoost (default)
+1,302.7
+43.1
+55.9
+49.8
+30.8
+0.118
+19.26
+0.502
+CTBoost (tuned)
+1,296.6
+38.7
+47.3
+50.5
+37.9
+0.098
+19.28
+0.495
+xRFM (tuned)
+1,292.1
+43.6
+42.9
+51.0
+34.8
+0.109
+19.43
+0.490
+iLTM (tuned)
+1,284.3
+32.8
+34.7
+51.8
+39.2
+0.070
+19.14
+0.481
+TabM (default)
+1,283.9
+42.1
+40.8
+51.9
+38.8
+0.100
+19.02
+0.481
+TabPFN-v2 (tuned)
+1,272.0
+54.8
+56.1
+53.1
+29.8
+0.174
+20.11
+0.468
+NN-Torch (tuned + ensembled)
+1,270.7
+45.4
+46.8
+53.3
+43.4
+0.079
+19.19
+0.467
+Beta (default)
+1,269.8
+58.7
+60.3
+53.4
+34.8
+0.124
+20.47
+0.466
+SAP-RPT-OSS (default)
+1,268.7
+60.6
+58.1
+53.5
+23.8
+0.140
+20.30
+0.464
+EBM (tuned + ensembled)
+1,254.2
+35.6
+39.2
+55.0
+42.0
+0.062
+20.62
+0.449
+TabPFN-v2 (default)
+1,245.9
+63.1
+62.1
+55.9
+31.3
+0.153
+20.91
+0.440
+ModernNCA (default)
+1,241.7
+37.4
+37.2
+56.4
+37.5
+0.054
+21.11
+0.435
+EBM (tuned)
+1,220.4
+46.2
+42.2
+58.6
+45.0
+0.041
+21.24
+0.412
+RealMLP (default)
+1,220.0
+32.6
+41.3
+58.7
+44.6
+0.038
+20.52
+0.411
+PrismBoost (tuned + ensembled)
+1,215.5
+48.3
+46.5
+59.1
+48.6
+0.053
+22.58
+0.407
+XGBoost (default)
+1,209.0
+31.8
+36.6
+59.8
+51.3
+0.031
+20.77
+0.400
+ExtraTrees (tuned + ensembled)
+1,204.3
+44.8
+46.4
+60.3
+42.2
+0.066
+21.68
+0.395
+NN-Torch (tuned)
+1,201.9
+43.1
+45.4
+60.6
+48.2
+0.041
+20.83
+0.392
+FastaiMLP (tuned + ensembled)
+1,193.9
+54.6
+59.9
+61.4
+44.4
+0.067
+21.58
+0.384
+EBM (default)
+1,191.5
+47.0
+51.0
+61.7
+43.1
+0.041
+22.15
+0.381
+APLR (tuned + ensembled)
+1,185.0
+41.3
+61.1
+62.3
+49.5
+0.044
+22.25
+0.374
+LightGBM (default)
+1,183.8
+34.7
+33.3
+62.5
+55.3
+0.023
+21.27
+0.373
+PrismBoost (tuned)
+1,182.4
+42.2
+42.6
+62.6
+50.7
+0.037
+23.13
+0.371
+ExtraTrees (tuned)
+1,180.5
+42.8
+55.8
+62.8
+37.6
+0.054
+22.42
+0.370
+TabSTAR-v1.1 (default)
+1,179.0
+65.2
+84.7
+62.9
+33.5
+0.089
+23.52
+0.368
+RandomForest (tuned + ensembled)
+1,173.3
+50.9
+46.2
+63.5
+41.7
+0.050
+22.66
+0.362
+CTBoost (default)
+1,173.1
+62.0
+67.2
+63.6
+42.6
+0.070
+23.15
+0.362
+Nori-30M (default)
+1,161.5
+73.0
+84.0
+64.7
+28.9
+0.139
+24.91
+0.350
+Nori (default)
+1,151.9
+70.5
+79.4
+65.7
+39.4
+0.122
+25.15
+0.340
+APLR (tuned)
+1,143.6
+46.0
+58.4
+66.5
+53.8
+0.024
+23.34
+0.331
+FastaiMLP (tuned)
+1,138.4
+55.2
+61.4
+67.0
+48.4
+0.025
+22.94
+0.326
+RandomForest (tuned)
+1,137.9
+47.9
+48.3
+67.1
+39.2
+0.031
+23.35
+0.326
+PrismBoost (default)
+1,126.6
+47.3
+52.6
+68.2
+57.1
+0.031
+24.77
+0.315
+PerpetualBooster (tuned + ensembled)
+1,093.2
+43.1
+46.9
+71.3
+60.3
+0.017
+28.01
+0.282
+Orion-MSP (default)
+1,085.4
+53.4
+54.6
+72.0
+56.4
+0.034
+25.44
+0.275
+iLTM (default)
+1,084.1
+46.9
+59.6
+72.2
+50.5
+0.021
+24.83
+0.274
+APLR (default)
+1,076.4
+51.8
+83.2
+72.8
+61.2
+0.014
+26.21
+0.267
+NN-Torch (default)
+1,072.6
+39.4
+50.4
+73.2
+59.4
+0.004
+24.62
+0.263
+PerpetualBooster (tuned)
+1,058.2
+43.3
+45.8
+74.4
+57.2
+0.007
+29.29
+0.251
+xRFM (default)
+1,044.2
+55.8
+68.8
+75.6
+66.1
+0.020
+28.15
+0.238
+ExtraTrees (default)
+1,010.7
+45.7
+62.0
+78.3
+69.9
+0.008
+27.86
+0.211
+continued on next page
+22
+
+
+Table 9 (continued)
+Method
+Elo
+Elo+
+Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+TabFlex (default)
+1,010.1
+66.8
+72.9
+78.4
+57.2
+0.026
+29.28
+0.210
+FastaiMLP (default)
+1,005.4
+60.8
+64.0
+78.7
+59.7
+0.005
+27.36
+0.207
+RandomForest (default)
+1,000.0
+41.8
+45.4
+79.2
+72.8
+0.000
+27.95
+0.202
+KNN (tuned + ensembled)
+992.7
+63.6
+82.0
+79.7
+56.2
+0.010
+29.43
+0.197
+Linear (tuned + ensembled)
+987.8
+70.6 103.8
+80.1
+52.9
+0.029
+33.78
+0.193
+Linear (tuned)
+948.8
+68.2 116.5
+82.8
+54.9
+0.020
+34.58
+0.165
+PerpetualBooster (default)
+935.4
+41.0
+66.5
+83.7
+63.1
+0.000
+33.14
+0.157
+KNN (tuned)
+887.8
+59.9 100.1
+86.5
+65.7
+0.003
+34.21
+0.128
+Linear (default)
+861.1
+67.4 121.2
+87.9
+67.5
+0.009
+38.20
+0.113
+KNN (default)
+631.2
+88.0 103.4
+95.5
+87.5
+0.000
+47.05
+0.035
+Table 10: Full TabArena regression leaderboard: all 13 regression datasets, 99
+evaluated methods, sorted by Elo.
+Method
+Elo
+Elo+
+Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+Kumo-Tabular (default)
+2,394.7
+264.2 183.1
+2.9
+1.7
+0.969
+0.70
+0.980
+LimiX-2 (default)
+2,269.0
+329.2 173.5
+4.6
+1.9
+0.931
+0.95
+0.963
+Kumo-Tabular-Medium (default)
+2,249.8
+208.3 136.4
+4.9
+3.6
+0.896
+1.72
+0.960
+TabPFN-3.5 (default)
+2,144.3
+220.0 117.0
+7.0
+4.2
+0.826
+2.75
+0.939
+Kumo-Tabular-Small (default)
+2,117.9
+150.7
+84.3
+7.6
+5.5
+0.815
+2.71
+0.933
+Causilo (default)
+2,038.6
+176.3 109.7
+9.7
+6.1
+0.768
+3.27
+0.911
+TabAbax
+2,023.7 179.7
+95.8
+10.1
+6.3 0.749
+3.30
+0.907
+TabFM (default)
+2,002.9
+140.9
+78.5
+10.8
+7.2
+0.733
+4.09
+0.900
+Mitra-v2 (default)
+1,987.5
+170.2 106.9
+11.2
+7.2
+0.726
+3.33
+0.896
+TabPFN-3.5-Fast (default)
+1,949.6
+146.5
+82.7
+12.5
+7.6
+0.703
+4.59
+0.883
+EXAONE-Tabular (default)
+1,895.9
+118.3
+79.9
+14.5
+10.9
+0.650
+5.15
+0.862
+TabPFN-3 (default)
+1,807.2
+187.6 113.8
+18.3
+13.2
+0.585
+4.88
+0.824
+Nori-30M (default)
+1,778.5
+130.4
+72.7
+19.6
+10.5
+0.544
+5.93
+0.810
+Xiaomi-TabLDM (default)
+1,777.1
+233.1 174.4
+19.7
+12.3
+0.602
+5.26
+0.809
+TabPFN-2.6 (default)
+1,751.1
+93.0
+39.1
+21.0
+17.9
+0.518
+6.40
+0.796
+RealTabPFN-2.5 (tuned + ensembled)
+1,750.0
+122.7
+88.0
+21.1
+16.2
+0.491
+5.82
+0.795
+TabDPT (tuned + ensembled)
+1,741.6
+132.2
+71.4
+21.5
+14.6
+0.490
+6.61
+0.791
+Nori (default)
+1,705.9
+133.8
+75.5
+23.4
+16.9
+0.478
+6.89
+0.771
+TabDPT (tuned)
+1,690.0
+101.3
+56.2
+24.3
+19.0
+0.454
+7.03
+0.762
+TabICLv2 (default)
+1,688.1
+218.7 130.4
+24.4
+15.5
+0.525
+6.35
+0.761
+TabDPT-1.3 (default)
+1,672.3
+193.7 115.4
+25.3
+14.4
+0.458
+6.87
+0.752
+RealMLP (tuned + ensembled)
+1,670.3
+80.1
+48.5
+25.5
+20.8
+0.400
+7.40
+0.750
+RealTabPFN-2.5 (tuned)
+1,643.9
+115.5
+94.0
+27.0
+19.5
+0.403
+6.55
+0.734
+TabDPT-Turbo (default)
+1,624.9
+170.0
+77.3
+28.2
+16.0
+0.390
+7.53
+0.722
+TabDPT (default)
+1,607.5
+133.0
+61.3
+29.3
+20.1
+0.377
+7.91
+0.711
+RealMLP (tuned)
+1,576.6
+86.5
+61.5
+31.4
+26.4
+0.295
+8.33
+0.690
+ModernNCA (tuned + ensembled)
+1,558.9
+114.8 106.0
+32.6
+21.3
+0.294
+9.49
+0.678
+RealTabPFN-2.5 (default)
+1,553.0
+128.3 123.6
+33.0
+26.0
+0.333
+7.93
+0.674
+CatBoost (tuned + ensembled)
+1,520.5
+78.0
+53.4
+35.3
+30.9
+0.197
+10.18
+0.650
+LightGBM (tuned + ensembled)
+1,514.5
+66.6
+63.8
+35.7
+32.2
+0.183
+10.59
+0.646
+CatBoost (tuned)
+1,496.9
+85.5
+60.8
+37.0
+32.4
+0.179
+10.32
+0.632
+xRFM (tuned + ensembled)
+1,495.1
+90.4
+94.2
+37.2
+29.4
+0.221
+9.71
+0.631
+TabM (tuned + ensembled)
+1,475.9
+118.4
+84.1
+38.6
+33.1
+0.214
+9.20
+0.616
+iLTM (tuned + ensembled)
+1,467.7
+66.5
+49.4
+39.2
+33.8
+0.169
+11.49
+0.610
+LightGBM (tuned)
+1,451.0
+72.5
+79.0
+40.5
+36.2
+0.134
+11.15
+0.597
+ChimeraBoost (tuned + ensembled)
+1,443.8
+114.2
+99.5
+41.1
+13.2
+0.172
+11.44
+0.591
+XGBoost (tuned + ensembled)
+1,443.8
+51.5
+44.8
+41.1
+38.4
+0.117
+11.11
+0.591
+XGBoost (tuned)
+1,421.6
+60.0
+56.4
+42.8
+39.6
+0.102
+11.25
+0.574
+TabSwift (default)
+1,418.0
+149.2 119.9
+43.1
+33.6
+0.219
+9.58
+0.571
+xRFM (tuned)
+1,412.9
+74.4
+81.6
+43.5
+38.7
+0.158
+10.36
+0.566
+ChimeraBoost (tuned)
+1,409.7
+102.3 114.1
+43.7
+17.8
+0.148
+11.76
+0.564
+CatBoost (default)
+1,408.6
+86.0
+92.6
+43.8
+37.5
+0.116
+11.71
+0.563
+TabM (tuned)
+1,401.0
+108.0
+95.7
+44.4
+37.9
+0.147
+10.08
+0.557
+ModernNCA (tuned)
+1,397.9
+99.8
+89.5
+44.7
+35.4
+0.154
+11.38
+0.554
+iLTM (tuned)
+1,361.1
+68.8
+56.7
+47.7
+42.6
+0.085
+11.46
+0.524
+continued on next page
+23
+
+
+Table 10 (continued)
+Method
+Elo
+Elo+
+Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+ChimeraBoost (default)
+1,344.9
+106.9 120.6
+49.0
+25.4
+0.109
+12.49
+0.510
+TabPFN-v2 (tuned + ensembled)
+1,326.5
+175.5 123.6
+50.5
+28.3
+0.201
+10.95
+0.495
+PrismBoost (tuned + ensembled)
+1,315.3
+68.3
+64.4
+51.5
+48.7
+0.054
+13.06
+0.485
+TabM (default)
+1,299.8
+123.4 103.9
+52.8
+46.4
+0.081
+11.64
+0.472
+ModernNCA (default)
+1,299.0
+80.2
+70.0
+52.8
+46.5
+0.074
+12.84
+0.471
+Mitra (default)
+1,276.5
+141.8 128.6
+54.7
+38.6
+0.142
+12.46
+0.452
+SAP-RPT-OSS (default)
+1,272.3
+165.0 161.6
+55.1
+30.5
+0.133
+12.94
+0.448
+LimiX (default)
+1,258.8
+187.9 155.7
+56.2
+38.3
+0.120
+12.51
+0.437
+PrismBoost (tuned)
+1,253.2
+60.4
+55.7
+56.7
+53.9
+0.025
+13.72
+0.432
+NN-Torch (tuned + ensembled)
+1,249.2
+114.2 124.7
+57.0
+45.9
+0.068
+13.09
+0.429
+CTBoost (tuned + ensembled)
+1,247.3
+96.0 137.9
+57.2
+50.4
+0.049
+14.64
+0.427
+ExtraTrees (tuned + ensembled)
+1,246.7
+104.2 106.2
+57.2
+47.0
+0.083
+14.94
+0.426
+TabPFN-v2 (tuned)
+1,239.7
+157.2 147.6
+57.8
+38.8
+0.127
+11.96
+0.420
+RealMLP (default)
+1,238.5
+110.1
+93.6
+57.9
+51.2
+0.063
+12.70
+0.420
+LightGBM (default)
+1,232.7
+37.2
+52.4
+58.4
+56.5
+0.006
+13.46
+0.415
+ExtraTrees (tuned)
+1,225.6
+104.2 104.9
+59.0
+44.1
+0.072
+15.16
+0.409
+PrismBoost (default)
+1,218.3
+75.0
+71.2
+59.6
+54.8
+0.027
+14.13
+0.402
+XGBoost (default)
+1,211.8
+79.7
+88.5
+60.1
+55.3
+0.025
+14.09
+0.397
+CTBoost (tuned)
+1,206.2
+100.8 136.8
+60.6
+54.2
+0.035
+15.01
+0.392
+PerpetualBooster (tuned + ensembled)
+1,195.1
+67.3 100.1
+61.5
+57.9
+0.012
+15.14
+0.383
+TabPFN-v2 (default)
+1,194.8
+139.8 162.0
+61.5
+49.0
+0.104
+13.30
+0.383
+NN-Torch (tuned)
+1,192.8
+102.0 118.2
+61.7
+53.1
+0.047
+13.85
+0.381
+RandomForest (tuned + ensembled)
+1,182.8
+68.4
+93.7
+62.5
+59.3
+0.019
+15.91
+0.372
+xRFM (default)
+1,161.2
+124.0 122.9
+64.2
+55.9
+0.034
+15.74
+0.355
+EBM (tuned + ensembled)
+1,149.5
+144.3 189.7
+65.2
+54.1
+0.051
+16.41
+0.345
+TabSTAR-v1.1 (default)
+1,143.8
+121.7 145.8
+65.6
+58.1
+0.036
+16.09
+0.340
+PerpetualBooster (tuned)
+1,140.2
+56.6 102.0
+65.9
+62.9
+0.000
+16.16
+0.337
+RandomForest (tuned)
+1,130.4
+69.1 106.2
+66.7
+63.3
+0.007
+16.37
+0.330
+EBM (tuned)
+1,104.5
+144.2 184.9
+68.7
+57.2
+0.034
+16.93
+0.309
+ExtraTrees (default)
+1,065.6
+91.2 118.9
+71.6
+63.4
+0.012
+17.50
+0.279
+EBM (default)
+1,043.2
+128.7 186.5
+73.3
+64.8
+0.017
+17.81
+0.262
+NN-Torch (default)
+1,043.0
+90.6 124.9
+73.3
+68.7
+0.002
+17.11
+0.262
+APLR (tuned + ensembled)
+1,036.4
+111.3 135.4
+73.8
+69.2
+0.001
+17.87
+0.258
+FastaiMLP (tuned + ensembled)
+1,025.6
+111.7 132.4
+74.5
+69.6
+0.015
+17.30
+0.250
+RandomForest (default)
+1,000.0
+45.5
+89.2
+76.3
+74.4
+0.000
+17.84
+0.232
+FTFM (default)
+1,000.0
+45.5
+89.2
+76.3
+74.4
+0.000
+17.84
+0.232
+LightPFN (default)
+1,000.0
+45.5
+89.2
+76.3
+74.4
+0.000
+17.84
+0.232
+Beta (default)
+1,000.0
+45.5
+89.2
+76.3
+74.4
+0.000
+17.84
+0.232
+TabFlex (default)
+1,000.0
+45.5
+89.2
+76.3
+74.4
+0.000
+17.84
+0.232
+Orion-MSP (default)
+1,000.0
+45.5
+89.2
+76.3
+74.4
+0.000
+17.84
+0.232
+TabICL (default)
+1,000.0
+45.5
+89.2
+76.3
+74.4
+0.000
+17.84
+0.232
+APLR (tuned)
+993.2
+110.9 143.8
+76.7
+71.2
+0.002
+18.63
+0.228
+FastaiMLP (tuned)
+981.1
+115.3 135.5
+77.5
+73.4
+0.009
+17.77
+0.219
+CTBoost (default)
+979.2
+114.6 185.9
+77.6
+72.0
+0.014
+20.26
+0.218
+PerpetualBooster (default)
+929.9
+94.4 138.2
+80.6
+78.5
+0.000
+19.53
+0.187
+KNN (tuned + ensembled)
+873.3
+160.8 194.6
+83.7
+72.0
+0.000
+22.69
+0.156
+FastaiMLP (default)
+860.9
+124.4 169.2
+84.3
+81.8
+0.000
+21.72
+0.150
+iLTM (default)
+852.6
+79.4 122.3
+84.7
+83.6
+0.000
+20.75
+0.146
+APLR (default)
+839.8
+130.9 214.6
+85.3
+81.6
+0.000
+23.00
+0.139
+KNN (tuned)
+767.1
+171.2 211.1
+88.4
+81.0
+0.000
+24.97
+0.108
+KNN (default)
+655.2
+201.1 339.4
+91.9
+72.7
+0.000
+31.81
+0.072
+Linear (tuned + ensembled)
+434.8
+128.7 371.6
+96.0
+95.8
+0.000
+38.65
+0.031
+Linear (tuned)
+397.4
+153.9 480.5
+96.4
+96.2
+0.000
+38.81
+0.026
+Linear (default)
+183.5
+173.4 460.3
+98.2
+98.1
+0.000
+41.14
+0.008
+Table 11:
+Full TabArena classification leaderboard:
+all 38 classification
+datasets, 99 evaluated methods, sorted by Elo.
+Method
+Elo
+Elo+
+Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+LimiX-2 (default)
+1,929.0 135.9
+77.4
+7.1
+2.3
+0.893
+4.13
+0.937
+continued on next page
+24
+
+
+Table 11 (continued)
+Method
+Elo
+Elo+
+Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+Kumo-Tabular (default)
+1,920.4 158.7 110.1
+7.4
+2.7
+0.856
+5.65
+0.935
+Kumo-Tabular-Medium (default)
+1,873.0 133.6
+94.2
+8.9
+4.5
+0.803
+7.31
+0.919
+TabPFN-3.5 (default)
+1,845.4 106.7
+69.6
+10.0
+4.2
+0.770
+9.20
+0.909
+TabPFN-3.5-Fast (default)
+1,779.8
+95.1
+69.4
+12.8
+6.9
+0.701
+10.45
+0.880
+TabFM (default)
+1,778.4 125.3 117.3
+12.8
+3.1
+0.740
+7.42
+0.879
+Kumo-Tabular-Small (default)
+1,775.8
+88.4
+55.7
+12.9
+8.6
+0.689
+11.01
+0.878
+Causilo (default)
+1,769.9
+81.6
+64.1
+13.2
+7.4
+0.688
+11.05
+0.875
+Mitra-v2 (default)
+1,756.6 122.3
+85.5
+13.9
+5.7
+0.692
+10.09
+0.869
+EXAONE-Tabular (default)
+1,754.3
+85.4
+52.8
+14.0
+7.0
+0.683
+11.19
+0.867
+FTFM (default)
+1,707.1
+79.1
+89.2
+16.5
+8.5
+0.621
+11.82
+0.842
+TabAbax
+1,646.7
+81.7
+72.4
+20.2
+11.2 0.555
+13.83
+0.804
+TabPFN-3 (default)
+1,626.0
+72.7
+63.9
+21.6
+13.4
+0.516
+14.04
+0.789
+Xiaomi-TabLDM (default)
+1,578.7
+70.4
+54.2
+25.1
+13.1
+0.475
+14.57
+0.754
+TabPFN-2.6 (default)
+1,576.6
+53.5
+48.2
+25.3
+18.2
+0.437
+15.24
+0.752
+TabICLv2 (default)
+1,570.6
+75.6
+64.0
+25.7
+14.1
+0.475
+14.56
+0.748
+RealTabPFN-2.5 (tuned + ensembled)
+1,556.5
+62.5
+60.8
+26.9
+16.3
+0.403
+15.05
+0.736
+RealTabPFN-2.5 (tuned)
+1,537.3
+61.4
+53.6
+28.4
+17.4
+0.386
+15.71
+0.720
+RealTabPFN-2.5 (default)
+1,523.5
+53.8
+49.8
+29.6
+20.5
+0.378
+15.97
+0.708
+TabDPT-1.3 (default)
+1,517.3
+73.8
+55.1
+30.1
+15.0
+0.386
+16.72
+0.703
+RealMLP (tuned + ensembled)
+1,464.3
+48.6
+41.8
+34.9
+24.5
+0.256
+17.69
+0.654
+TabM (tuned + ensembled)
+1,440.9
+51.8
+39.2
+37.2
+25.8
+0.222
+18.58
+0.631
+LightPFN (default)
+1,432.9
+68.2
+79.1
+38.0
+23.7
+0.314
+18.87
+0.623
+TabDPT-Turbo (default)
+1,419.7
+70.3
+54.4
+39.3
+23.4
+0.259
+19.02
+0.609
+LightGBM (tuned + ensembled)
+1,415.6
+44.5
+30.0
+39.7
+32.0
+0.159
+19.33
+0.605
+TabICL (default)
+1,405.3
+49.0
+51.4
+40.7
+29.2
+0.231
+19.50
+0.595
+CatBoost (tuned + ensembled)
+1,400.2
+48.8
+43.2
+41.2
+25.3
+0.163
+18.96
+0.589
+LimiX (default)
+1,395.5
+82.0
+70.8
+41.7
+22.1
+0.269
+19.31
+0.585
+RealMLP (tuned)
+1,395.0
+55.4
+45.7
+41.8
+26.3
+0.176
+19.05
+0.584
+TabDPT (tuned + ensembled)
+1,394.5
+64.6
+45.6
+41.8
+26.5
+0.203
+19.12
+0.583
+TabM (tuned)
+1,393.8
+46.8
+40.1
+41.9
+28.1
+0.180
+19.40
+0.583
+iLTM (tuned + ensembled)
+1,391.6
+42.2
+39.3
+42.1
+31.6
+0.155
+19.38
+0.580
+CatBoost (tuned)
+1,391.3
+46.3
+43.0
+42.1
+25.2
+0.150
+19.21
+0.580
+CatBoost (default)
+1,376.6
+44.8
+43.6
+43.7
+24.4
+0.151
+19.56
+0.565
+LightGBM (tuned)
+1,374.7
+35.2
+31.0
+43.9
+36.2
+0.107
+20.00
+0.563
+CTBoost (tuned + ensembled)
+1,373.4
+50.2
+55.7
+44.0
+28.8
+0.154
+20.16
+0.561
+ChimeraBoost (tuned + ensembled)
+1,372.6
+48.7
+57.2
+44.1
+27.5
+0.160
+20.26
+0.560
+XGBoost (tuned + ensembled)
+1,364.9
+41.6
+45.7
+44.9
+34.7
+0.121
+20.12
+0.552
+Beta (default)
+1,358.6
+48.2
+49.0
+45.5
+29.5
+0.167
+21.37
+0.546
+ModernNCA (tuned)
+1,351.4
+50.0
+36.3
+46.3
+26.2
+0.124
+20.34
+0.538
+TabPFN-v2 (tuned + ensembled)
+1,351.4
+85.9
+71.9
+46.3
+25.3
+0.245
+21.31
+0.538
+Mitra (default)
+1,351.2
+77.2
+77.1
+46.3
+26.3
+0.255
+21.48
+0.537
+ModernNCA (tuned + ensembled)
+1,348.7
+72.4
+66.9
+46.6
+30.9
+0.169
+20.46
+0.535
+ChimeraBoost (tuned)
+1,346.2
+48.2
+56.1
+46.8
+30.4
+0.133
+20.74
+0.532
+CTBoost (tuned)
+1,344.4
+46.7
+53.1
+47.0
+34.4
+0.119
+20.74
+0.530
+TabDPT (tuned)
+1,341.6
+57.0
+50.7
+47.3
+30.3
+0.170
+20.42
+0.527
+XGBoost (tuned)
+1,340.0
+36.0
+40.7
+47.5
+37.9
+0.092
+20.48
+0.525
+TabSwift (default)
+1,336.1
+57.7
+58.8
+47.9
+34.7
+0.166
+21.10
+0.521
+xRFM (tuned + ensembled)
+1,321.8
+51.2
+48.5
+49.4
+30.9
+0.128
+21.26
+0.506
+ChimeraBoost (default)
+1,315.4
+52.9
+65.5
+50.1
+33.2
+0.121
+21.58
+0.499
+TabPFN-v2 (tuned)
+1,302.2
+69.2
+76.1
+51.5
+27.6
+0.190
+22.90
+0.484
+TabM (default)
+1,302.2
+51.8
+44.2
+51.5
+36.7
+0.106
+21.54
+0.484
+EBM (tuned + ensembled)
+1,301.9
+40.9
+37.2
+51.6
+39.0
+0.066
+22.06
+0.484
+NN-Torch (tuned + ensembled)
+1,298.0
+42.6
+36.0
+52.0
+42.6
+0.083
+21.28
+0.480
+SAP-RPT-OSS (default)
+1,289.0
+55.6
+70.8
+52.9
+22.2
+0.143
+22.82
+0.470
+iLTM (tuned)
+1,286.4
+42.4
+38.9
+53.2
+38.1
+0.065
+21.77
+0.467
+xRFM (tuned)
+1,283.5
+56.8
+65.8
+53.5
+33.6
+0.093
+22.53
+0.464
+TabPFN-v2 (default)
+1,279.1
+74.8
+80.4
+54.0
+27.8
+0.170
+23.51
+0.459
+EBM (tuned)
+1,268.1
+43.2
+38.6
+55.2
+42.0
+0.043
+22.71
+0.447
+TabDPT (default)
+1,264.7
+60.4
+59.5
+55.5
+36.1
+0.126
+23.05
+0.443
+FastaiMLP (tuned + ensembled)
+1,251.7
+59.8
+70.3
+56.9
+39.6
+0.085
+23.05
+0.429
+ModernNCA (default)
+1,245.5
+42.0
+42.3
+57.6
+35.1
+0.048
+23.94
+0.423
+EBM (default)
+1,244.5
+44.5
+51.9
+57.7
+38.7
+0.050
+23.64
+0.422
+APLR (tuned + ensembled)
+1,237.4
+45.6
+60.3
+58.4
+45.1
+0.058
+23.75
+0.414
+continued on next page
+25
+
+
+Table 11 (continued)
+Method
+Elo
+Elo+
+Elo−Avg. rank Harm. rank
+Score Improv. (%) Winrate
+CTBoost (default)
+1,234.4
+63.3
+67.4
+58.7
+37.4
+0.089
+24.14
+0.411
+RealMLP (default)
+1,232.5
+41.4
+41.7
+58.9
+42.7
+0.030
+23.20
+0.409
+XGBoost (default)
+1,224.9
+37.9
+47.9
+59.7
+50.0
+0.032
+23.05
+0.401
+NN-Torch (tuned)
+1,220.6
+50.7
+38.6
+60.2
+46.8
+0.039
+23.22
+0.396
+ExtraTrees (tuned + ensembled)
+1,209.0
+57.8
+54.1
+61.4
+40.8
+0.060
+23.98
+0.384
+PrismBoost (tuned + ensembled)
+1,205.3
+67.0
+60.4
+61.8
+48.5
+0.052
+25.84
+0.380
+TabSTAR-v1.1 (default)
+1,202.9
+68.6
+74.1
+62.0
+29.2
+0.107
+26.06
+0.377
+APLR (tuned)
+1,193.0
+51.7
+65.4
+63.0
+49.7
+0.031
+24.95
+0.367
+FastaiMLP (tuned)
+1,188.9
+58.0
+69.7
+63.5
+43.3
+0.030
+24.71
+0.363
+LightGBM (default)
+1,185.0
+51.5
+45.9
+63.8
+54.9
+0.028
+23.94
+0.359
+RandomForest (tuned + ensembled)
+1,184.6
+61.1
+67.7
+63.9
+37.9
+0.061
+24.97
+0.358
+ExtraTrees (tuned)
+1,182.5
+64.7
+64.3
+64.1
+35.9
+0.048
+24.90
+0.356
+PrismBoost (tuned)
+1,177.2
+65.2
+59.4
+64.6
+49.7
+0.041
+26.34
+0.351
+RandomForest (tuned)
+1,151.2
+71.0
+65.0
+67.2
+34.7
+0.039
+25.73
+0.324
+iLTM (default)
+1,144.5
+55.5
+57.1
+67.9
+44.5
+0.029
+26.23
+0.318
+APLR (default)
+1,137.0
+60.4
+71.7
+68.6
+56.4
+0.019
+27.31
+0.310
+Orion-MSP (default)
+1,115.3
+63.5
+68.5
+70.6
+52.1
+0.046
+28.03
+0.290
+PrismBoost (default)
+1,109.7
+75.2
+64.5
+71.1
+57.9
+0.033
+28.41
+0.285
+NN-Torch (default)
+1,087.1
+46.7
+56.2
+73.1
+56.7
+0.005
+27.19
+0.264
+Linear (tuned + ensembled)
+1,070.1
+94.7
+93.2
+74.6
+45.8
+0.039
+32.12
+0.249
+PerpetualBooster (tuned + ensembled)
+1,069.3
+58.6
+61.6
+74.7
+61.2
+0.019
+32.41
+0.248
+FastaiMLP (default)
+1,043.3
+72.5
+76.6
+76.8
+54.6
+0.007
+29.29
+0.226
+PerpetualBooster (tuned)
+1,036.8
+56.0
+60.3
+77.4
+55.4
+0.009
+33.79
+0.221
+Linear (tuned)
+1,027.0
+90.4 102.2
+78.1
+47.8
+0.027
+33.13
+0.213
+KNN (tuned + ensembled)
+1,024.3
+74.2
+94.1
+78.3
+52.3
+0.014
+31.73
+0.211
+TabFlex (default)
+1,014.1
+82.7 104.7
+79.1
+53.0
+0.035
+33.20
+0.203
+xRFM (default)
+1,008.6
+71.4
+91.7
+79.5
+70.5
+0.015
+32.40
+0.199
+RandomForest (default)
+1,000.0
+60.7
+62.4
+80.2
+72.2
+0.000
+31.40
+0.192
+Nori-30M (default)
+1,000.0
+60.7
+62.4
+80.2
+72.2
+0.000
+31.40
+0.192
+Nori (default)
+1,000.0
+60.7
+62.4
+80.2
+72.2
+0.000
+31.40
+0.192
+ExtraTrees (default)
+993.4
+75.0
+73.1
+80.6
+72.4
+0.007
+31.40
+0.187
+Linear (default)
+937.1
+83.7 111.5
+84.4
+61.0
+0.012
+37.19
+0.149
+PerpetualBooster (default)
+931.5
+60.0
+81.9
+84.7
+59.1
+0.000
+37.79
+0.146
+KNN (tuned)
+912.1
+89.6 114.1
+85.8
+61.7
+0.005
+37.37
+0.134
+KNN (default)
+563.3 105.5 116.9
+96.8
+94.1
+0.000
+52.27
+0.023
+26

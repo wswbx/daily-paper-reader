@@ -1,0 +1,2507 @@
+When, Where, How: Active In-Context Learning for Tabular Foundation Models
+Christian M. M. Frey 1
+Abstract
+Tabular Foundation Models (TFMs) adapt to a
+new task only through the labeled rows in their
+context. However, labels are expensive to acquire
+in real-world scenarios due to the need for highly
+specific domain knowledge to ensure high-quality
+data. Active in-context learning transfers classi-
+cal acquisition rules to this setting, in which the
+model that guides acquisition changes with every
+label added. We ask how the value of diversity,
+predictive uncertainty and target-aware informa-
+tion gain changes as a frozen TFM acquires more
+context. For that, we study Target-Aware Nearest
+Neighbor (TANN) acquisition and the Expected
+Predictive Information Gain in Context (EPIC)
+and evaluate them against classical rules. Our
+study across twenty benchmarks with two well-
+established TFMs and classical GBDTs highlights
+three findings: (i) When: diversity-based acquisi-
+tion is best during the first acquisition iterations;
+(ii) Where: labeling pool rows that serve the target
+inputs via a simple target-aware nearest-neighbor
+rule matters substantially; (iii) How: EPIC yields
+the best models at the label budget, retains on av-
+erage 80–87% of the chance-corrected full-data
+performance with only 5–10% of the pool labeled
+on the eight benchmarks with the largest pools,
+and selects labels that also improve the predictive
+performance of gradient-boosted decision trees.
+1. Introduction
+Tabular foundation models (TFMs) like TabPFN (Hollmann
+et al., 2023; 2025) and TabICL (Qu et al., 2025; 2026),
+pre-trained on a large corpus of synthetic tasks, solve new
+tasks by in-context learning (Dong et al., 2024). The frozen
+models are given labeled rows together with the query rows
+and return predictions in a single forward pass. The labeled
+1Department of Computer Science & Artificial Intelligence,
+University of Technology Nuremberg, Dr.-Luise-Herzberg-Straße
+4, 90461 Nuremberg, Germany. Correspondence to: Christian
+Frey <Christian.Frey@utn.de>.
+Preprint. November 6, 2026.
+rows are therefore the only information that adapts a TFM
+to a new task, and they have a decisive influence on its
+predictive performance. This, however, presupposes access
+to labeled data that can be fed to the model. In many real-
+world applications, labels are the bottleneck (Chai et al.,
+2022; Tharwat & Schenck, 2023; Li et al., 2023): they
+are the costly resource, as they require expert annotation,
+measurement or time, while unlabeled data are abundant.
+The choice of the rows to label is therefore a central lever
+and a question in its own right.
+Recently, active in-context learning (AICL) has emerged
+as a paradigm to dynamically grow the context of a frozen
+TFM from an unlabeled pool. Tab-AICL (Treerath & Pit-
+torino, 2026) transfers conventional acquisition like margin-
+, core-set- and hybrid-based rules (Settles, 2009; Sener &
+Savarese, 2018) from classical active learning to TFMs. A
+key finding is that no rule dominates across datasets and that
+the gains are concentrated in the cold start. Their analysis
+also makes the assumption that the rules applied remain un-
+changed throughout acquisition, yet a frozen TFM changes
+with every acquired label. The quantities that acquisition
+rules rely on, the model’s uncertainty and its view of which
+rows are similar, change accordingly as more labels are ac-
+quired. Moreover, existing rules score a candidate by its
+own uncertainty or by its distance to the labeled set, and
+ignore where the model will be used. In classical active
+learning, the dependence of the best strategy on the budget
+has been documented (Hacohen et al., 2022), and prediction-
+oriented criteria have been proposed that target the inputs
+of interest (Yu et al., 2006; Smith et al., 2023); for frozen
+TFMs, neither aspect has been examined.
+We therefore ask: how does the value of diversity, predictive
+uncertainty and target-aware information gain change as a
+frozen tabular foundation model acquires more context? An-
+swering this question requires measuring the value of a label
+for the predictions that are actually required. For conven-
+tional active learning approaches, this value, the expected
+predictive information gain (EPIG) (Smith et al., 2023),
+requires a posterior over parameters and refitting on hypo-
+thetical data. A TFM removes both obstacles: its prediction
+already approximates a posterior predictive distribution, and
+conditioning it on a hypothetical label amounts to appending
+one row to its context. We introduce the expected predictive
+information gain in context (EPIC), which is assessed on
+1
+arXiv:2611.07886v1  [cs.LG]  5 Nov 2026
+
+
+When, Where, How: AICL4TFMs
+the target inputs through the model’s in-context condition-
+ing and evaluates all candidate-label hypotheses of a round
+with a single fit. Moreover, we define a target-aware nearest
+neighbor (TANN) approach, a simple rule that labels, for the
+targets on which the model is least certain, their nearest pool
+rows. Together with diversity- and uncertainty-based rules
+from prior works, these instruments separate three aspects
+of acquisition.
+Our evaluation on the twenty benchmarks of Treerath &
+Pittorino (2026) supports three findings:
+• When: acquisition should change as the context grows.
+Diversity-based acquisition is the best use of the first few
+dozen labels, while prediction-oriented rules overtake it
+once the model’s predictions become informative. The
+pattern holds for both TabICL and TabPFN (Section E),
+where the diversity-based rule leads with 1% of the pool
+labeled and prediction-oriented acquisition from 5% on
+(Section 4.2).
+• Where: target awareness matters. Controls that use
+the target inputs without uncertainty already improve on
+random labeling, and choosing which targets to serve
+improves further. The simple TANN rule is statistically
+indistinguishable from EPIC at about an eighth of its cost
+(Section 4.3).
+• How:
+in-context conditioning makes prediction-
+oriented information gain computable. EPIC imple-
+ments EPIG for a frozen TFM without parameter poste-
+riors or retraining (Section 3). It yields the best models
+at the label budget, improving on the best previous rule
+on 15 of 20 datasets and on TabPFN-, gradient-boosting-
+and label-spreading-based baselines. With 5% and 10%
+of the pool labeled, it retains on average 80% and 87% of
+the full-data Cohen’s κ on the eight benchmarks with the
+largest pools (Figure 4). Moreover, the labels it selects
+also improve classical GBDTs, XGBoost and CatBoost,
+over their own acquisition rules (Section 4.4).
+2. Related Work
+Tabular foundation models. TabPFN (Hollmann et al.,
+2023) established prior-data fitted networks for small classi-
+fication problems, and its successor (Hollmann et al., 2025)
+extended it to regression, larger tables and heterogeneous
+features. TabICL (Qu et al., 2025) introduced a three-stage
+architecture of column-wise embedding, row-wise inter-
+action and dataset-wise in-context learning that scales in-
+context learning to substantially larger tables, and TabI-
+CLv2 (Qu et al., 2026) further improved its accuracy and
+efficiency. Common to these models is that labeled data
+enter only through the context, which has two consequences
+that our work builds on: adapting the model to new labels
+requires no training, and the model’s response to a hypo-
+thetical label can be obtained by a forward pass.
+Active learning. When labels are expensive, active learning
+chooses which instances to label (Settles, 2009). Uncer-
+tainty sampling queries the instances on which the current
+model is least confident, for example by the margin between
+the two most probable classes or by predictive entropy, and
+diversity-based rules such as core-set selection (Sener &
+Savarese, 2018) cover the input space with a small set of
+representatives; hybrid rules combine both. These criteria
+are proxies: they describe the candidate, not the effect its
+label would have on the model, and they do not depend on
+where predictions will be required. Transductive experimen-
+tal design (Yu et al., 2006) addresses the latter by choosing
+the instances that best represent the unlabeled data on which
+predictions are needed. Classical active learning further
+retrains the model after every batch, which is costly and,
+with few labels, prone to an unstable cold start.
+Acquisition depends on the budget. Which of these cri-
+teria works best depends on how many labels are available.
+Hacohen et al. (2022) show that representative, typical ex-
+amples are most useful when labels are scarce, whereas
+uncertain, atypical examples become more useful as the
+budget grows, and propose a typicality-based rule for the
+low-budget regime; the cold start of uncertainty sampling,
+whose estimates are unreliable while the model is poorly
+trained, is a recurring theme of the same literature (Settles,
+2009). For a frozen TFM the learner is never trained, and
+what changes with the budget is only the context it condi-
+tions on. The context’s value of diversity and uncertainty
+w.r.t. its size has not been studied in this regime.
+Target-aware and information-based acquisition. A prin-
+cipled alternative measures the value of a label by the infor-
+mation it provides. Lindley (1956) defined the information
+of an experiment as the expected reduction of uncertainty
+about the quantity of interest, and MacKay (1992) derived
+information-based objectives for active data selection, distin-
+guishing information about the model parameters from infor-
+mation about predictions at chosen inputs. BALD (Houlsby
+et al., 2011) selects by the mutual information between a la-
+bel and the model parameters. Prediction-oriented Bayesian
+active learning (Smith et al., 2023) argues that parameter
+information can be spent on aspects of the model that are
+irrelevant to the predictions of interest and introduces the
+expected predictive information gain (EPIG), the mutual
+information between the label of a candidate and the label
+of a target input drawn from the deployment distribution.
+Context restriction and context selection.
+Attention
+across context rows grows quadratically with the context
+size, and performance can degrade when the context leaves
+the range of the pre-training prior (Chen et al., 2026). Re-
+trieval conditions each query on its nearest training rows:
+2
+
+
+When, Where, How: AICL4TFMs
+LoCalPFN (Thomas et al., 2024) retrieves neighbors for
+TabPFN and fine-tunes the model on local contexts, and
+Localized TabICLv2 (Guta, 2026) retrieves neighbors in
+TabICLv2’s row-representation space and retains most of
+the full-context accuracy at a fraction of the inference cost.
+Compression replaces the training set by a short learned con-
+text, either synthetic rows obtained by in-context data distil-
+lation (Ma et al., 2024) or learned context tokens obtained
+by prompt tuning (Feuer et al., 2024). VIP-COp (Chen et al.,
+2026) selects a subset of real rows by estimating the value
+of each row from the validation performance of random
+contexts. All of these methods select the labeled rows the
+model sees, but not which ones to label.
+Active in-context learning and our position. Active in-
+context learning combines a frozen model, as in context
+selection, with label acquisition under a budget, as in active
+learning. Tab-AICL (Treerath & Pittorino, 2026) formalizes
+this setting for TabPFN, grows the context from one row
+per class in batches, and adapts margin, core-set, hybrid and
+proxy-filtered rules; the gains over random sampling are
+concentrated in the cold-start regime, and no rule dominates
+across datasets. Each rule is applied unchanged throughout
+acquisition, and none uses the inputs on which the model
+will be deployed. Our work addresses both aspects.
+We study how the value of diversity, uncertainty and target-
+aware information changes as the context grows, extending
+the budget dependence observed by Hacohen et al. (2022) to
+frozen in-context learners. We show that target awareness,
+as in transductive experimental design (Yu et al., 2006),
+is a central lever in this setting, already in the form of a
+simple nearest-neighbor rule. And we make prediction-
+oriented information gain (Smith et al., 2023) computable
+for frozen TFMs by replacing the parameter posterior with
+in-context conditioning, which requires neither posterior
+samples nor retraining. To our knowledge, this is the first
+study of acquisition dynamics and target-aware acquisition
+for frozen tabular foundation models.
+3. Method
+We consider active in-context learning with a frozen TFM:
+labels are bought from an oracle under a budget, and the
+models are affected only through their context.
+To as-
+sess the acquisitions’ impact, we compare three families:
+diversity-based rules, which spread labels over the input
+space; uncertainty-based rules, which label the candidates
+the model is least certain about; and target-aware rules,
+which label candidates for the sake of the inputs on which
+the model will be used. We contribute two target-aware
+instruments: TANN (Section 3.2) labels, for the targets on
+which the model is least certain, their nearest pool rows; and
+EPIC (Section 3.3) scores a candidate by the information
+its label is expected to carry about the target predictions.
+3.1. Problem Setting
+Let U = {xi}n
+i=1 ⊂X be an unlabeled pool, and let an
+oracle reveal the label yi ∈Y = {1, . . . , C} of a pool
+row at unit cost. Let T = {x⋆
+j}m
+j=1 be the target inputs
+whose labels are to be predicted, distributed according to
+the deployment distribution pT . We adopt the transductive
+setting in which the target inputs, but not their labels, are
+available before labeling starts. Otherwise, T is a held-out
+sample of unlabeled rows from pT . For an index set L ⊆[n]
+we write DL = {(xi, yi)}i∈L.
+A frozen TFM with parameters θ maps a labeled context
+D and an input x to a predictive distribution pθ(y | x, D)
+over Y. Acquisition starts from an initial labeled set L0 that
+contains one uniformly drawn row per class and proceeds in
+rounds: in round r a batch Ar ⊆U \Lr of b rows is selected,
+their labels are queried, and we set Lr+1 ←Lr ∪Ar, until
+the budget |L| = B is reached. Predictions on T are always
+made with the current context information defined in round
+r. The workflow is illustrated in Figure 1.
+3.2. TANN: Target-aware nearest-neighbor acquisition
+One way to direct labels towards the targets is to place them
+next to targets on which the model is least certain. In round
+r, the model conditioned on DLr scores every target by
+its margin uncertainty ur(x⋆) = 1 −
+ p(1) −p(2)
+
+, where
+p(1) ≥p(2) are its two largest predicted class probabilities.
+Proximity is measured in the TFM’s own row representation:
+for TabICL (Qu et al., 2025), h(x; D) denotes the concate-
+nated class tokens of row x after the row-wise interaction
+stage, averaged over the ensemble members; with the nor-
+malization ν(v) = (v −¯v1)/∥v −¯v1∥2, the distance is
+dD(x, x′) = ∥ν(h(x; D)) −ν(h(x′; D))∥2. Because the
+column embedding of TabICL attends to the labeled context,
+this representation changes as labels are acquired. TANN
+visits the b most uncertain targets in order of decreasing ur
+and assigns to each its nearest unlabeled pool row that has
+not been assigned yet,
+aj =
+arg min
+i∈Ur\{ai}i=j−1
+i=1
+dDLr
+ x⋆
+πr(j), xi
+
+,
+j=1, . . . , b, (1)
+where πr orders the targets by decreasing uncertainty and
+Ur = [n] \ Lr. A variant, dubbed TANN-feat, uses the Eu-
+clidean distance of features standardized with pool statistics.
+3.3. EPIC: Expected Predictive Information Gain in
+Context
+The value of an observation for prediction is measured by
+the information it provides about the quantities to be pre-
+dicted (Lindley, 1956; MacKay, 1992). Prediction-oriented
+active learning leverages the expected predictive information
+gain (EPIG) (Smith et al., 2023), i.e., the mutual information
+between the label of a candidate and the label of a target
+3
+
+
+When, Where, How: AICL4TFMs
+Initialize
+Evaluate candidates with EPIC
+2
+Select and label
+3
+Predict and iterate
+4
+\(\text{Unlabeled pool }\mathcal{U}\)
+\(f_1\)
+\(f_2\)
+\(\cdots\)
+\(f_d\)
+\(u_1\)
+\(\cdots\)
+\(u_2\)
+\(\cdots\)
+\(\vdots\)
+\(\vdots\)
+\(u_n\)
+\(\cdots\)
+\(\text{Initial labeled set }\mathcal{D}_L\)
+\(f_1\)
+\(f_2\)
+\(\cdots\)
+\(f_d\)
+y
+\(\ell_1\)
+\(\cdots\)
+\(y_1\)
+\(\ell_2\)
+\(\cdots\)
+\(y_2\)
+\(\vdots\)
+\(\vdots\)
+\(\vdots\)
+\(\ell_{|\mathcal{L}|}\)
+\(\cdots\)
+\(y_{|\mathcal{L}|}\)
+For each shortlisted candidate \( u\in\mathcal{C}_r\subseteq\mathcal{U} \) and each possible label \( y\in\mathcal{Y} \):
+Augmented context
+\(\mathcal{D}_L\cup\{(u,y)\}\)
+\(f_1\)
+\(f_2\)
+\(\cdots\)
+y
+\(\ell_1\)
+\(\cdots\)
+\(y_1\)
+\(\vdots\)
+\(\vdots\)
+\(\vdots\)
+\(\ell_{|\mathcal{L}|}\)
+\(\cdots\)
+\(y_{|\mathcal{L}|}\)
+\(u\)
+\(\cdots\)
+\(y\)
+Frozen
+Tabular
+Foundation
+Model
+(TFM)
+❄
+Predictions on sampled
+targets \(\mathcal{T}_r\subseteq\mathcal{T}\)
+Target \(x^\star\)
+\(p(y^\star\mid x^\star,\mathcal{D}_L\cup\{(u,y)\})\)
+\(x^\star_1\)
+\(p_1(y^\star)\)
+\(x^\star_2\)
+\(p_2(y^\star)\)
+\(\vdots\)
+\(\vdots\)
+\(x^\star_{m_r}\)
+\(p_{m_r}(y^\star)\)
+Compute expected predictive information gain:
+\(s(u)=\mathbb{E}_{x^\star\sim p_{\mathcal{T}}}\!\left[\,\mathrm{I}\!\left(y_u;\,y^\star \mid x^\star,\mathcal{D}_L\right)\right]\)
+Acquire the \(b\) candidates with
+the highest EPIC scores:
+\(A_r=\underset{u\in\mathcal{C}_r}{\text{top-}b}\; s(u) \)
+Query label
+Update labeled set
+\(\mathcal{D}_L \leftarrow \mathcal{D}_L\cup\{(u_i,y_i)\}_{u_i\in A_r}\)
+Use the updated context 
+\(\mathcal{D}_L\) to make predictions on
+target inputs \(\mathcal{T}:\)
+Target \(x^\star\)
+\(p(y^\star\mid x^\star,\mathcal{D}_L)\)
+\(x^\star_1\)
+\(p_1(y^\star)\)
+\(x^\star_2\)
+\(p_2(y^\star)\)
+\(\vdots\)
+\(\vdots\)
+\(x^\star_{|\mathcal{T}|}\)
+\(p_{|\mathcal{T}|}(y^\star)\)
+Repeat steps 2 – 4 until the
+label budget is exhausted
+Next round (updated \(\mathcal{D}_L\) )
+1
+Figure 1. Workflow for the Expected Predictive Information Gain in context for tabular foundation models.
+drawn from the target distribution. We instantiate it with the
+predictive model defined by a frozen TFM.
+Definition 3.1 (EPIC). Given labeled data D, the Expected
+Predictive Information Gain in Context of a candidate x is
+EPIC(x; D) = Ex⋆∼pT
+h
+H
+
+¯p(y⋆| x⋆)
+
+−
+X
+y∈Y
+pθ(y | x, D) H
+
+pθ(y⋆| x⋆, D ∪{(x, y)})
+i
+,
+(2)
+where ¯p(y⋆| x⋆) = P
+y∈Y pθ(y | x, D) pθ(y⋆| x⋆, D ∪
+{(x, y)}) is the predictive distribution of the target label
+marginalized over the unknown candidate label, and H de-
+notes the Shannon entropy.
+The bracket in Equation (2) is the mutual information
+between y and y⋆under the joint distribution pθ(y |
+x, D) pθ(y⋆| x⋆, D ∪{(x, y)}).
+Therefore, it is non-
+negative and vanishes exactly when no possible label of
+x changes the prediction at x⋆. Intuitively, a candidate re-
+ceives a high score when its possible labels would move the
+target predictions in different, confident directions, and a
+low score when its label is already certain or irrelevant to the
+targets. Pseudo-code of EPIC is provided in Section A.2.1
+3.4. Estimation with a frozen TFM
+Evaluating Equation (2) requires, for every candidate x
+and every label y ∈Y, the predictions of the TFM on the
+targets with the augmented context D ∪{(x, y)}. With
+conventional models this would require refitting on every
+hypothetical dataset. Leveraging a TFM, it requires only a
+forward pass with one more context row. Each acquisition
+round estimates Equation (2) as follows:
+Targets.
+The expectation over pT is replaced by its
+Monte Carlo estimate on a subsample Tr ⊆T of size
+1Code repository available on acceptance.
+mr= min(m, 256), drawn uniformly without replacement
+and redrawn in every round.
+Candidate shortlist. Every scored candidate requires C
+hypothetical contexts, so we score a shortlist Cr of at most
+s=64 unlabeled rows (all unlabeled rows if fewer remain),
+composed of three parts of about equal size: the ⌊s/3⌋rows
+with the smallest margin between their two most probable
+classes; for the targets in Tr with the smallest margins, their
+nearest unlabeled rows in the row-representation space of
+the TFM (Qu et al., 2025), until ⌊2s/3⌋rows are collected;
+and uniformly drawn rows for the remainder, which keep
+the shortlist from being determined by the heuristics alone.
+Hypothetical contexts. For every x ∈Cr and y ∈Y, the
+TFM is evaluated on Tr with the context DLr ∪{(x, y)},
+which gives s · C predictive distributions for each target.
+With the true label of the candidate, a table reproduces
+exactly the prediction of the fitted estimator restricted to the
+context Lr ∪{x}; for any label, it differs from an estimator
+fitted on Lr ∪{x} alone only through the preprocessing
+statistics, which are fitted on Lr ∪Cr.
+Score. With pθ(y | x, DLr) taken from the estimator fitted
+on DLr, Equation (2) is evaluated in closed form over Y
+and averaged over Tr. No sampling over labels is required.
+Cost. Let c(k) be the cost of one forward pass on a table
+with k rows and M the number of ensemble members of the
+TFM (M = 8 in our experiments), each of which processes
+every table. One round costs one fit and O
+ s C M c(|Lr| +
+1 + mr)
+
+for the hypothetical contexts. Because |Lr| ≤B
+and mr ≤256, this cost is independent of the pool size,
+apart from the shortlist, which requires one pass over the
+unlabeled rows (ablation provided in Section F).
+Batch. The batch Ar consists of the b shortlisted candidates
+with the largest scores. This greedy top-b selection treats
+the candidates independently and may select near-duplicate
+4
+
+
+When, Where, How: AICL4TFMs
+rows whose information about the targets overlaps; joint
+batch criteria (Kirsch et al., 2019) remove this redundancy at
+a higher cost. We use the independent selection throughout
+and leave joint batch criteria to future work.
+Scientific scope. We focus on classification, where the hy-
+pothetical labels can be enumerated. For regression, Equa-
+tion (2) can be estimated by drawing hypothetical targets
+from pθ(y | x, D) and replacing the entropies by those of the
+predictive distributions, which we leave to future work. All
+quantities are computed with forward passes of the frozen
+model, so the procedure applies to any TFM that permits
+context rows and their labels to be specified individually.
+4. Evaluation
+We organize the evaluation around the three findings: When
+diversity- and prediction-oriented acquisition are most valu-
+able (Section 4.2); Where labels should be acquired (Sec-
+tion 4.3); and How EPIC performs as a computation of
+prediction-oriented information gain (Section 4.4). Sec-
+tion 4.5 discusses the limitations. Further results are re-
+ported in Section D.
+4.1. Evaluation protocol
+Benchmarks. We use the twenty OpenML (Vanschoren
+et al., 2014) classification datasets of Tab-AICL (Treerath
+& Pittorino, 2026) (details in Section B). They range from
+145 to 581,012 rows, from 4 to 94 features and from 2 to
+7 classes, and include strongly imbalanced tasks such as
+Blood-Transfusion, Bank-Marketing and JM1. Following
+Tab-AICL, datasets with more than 10,000 rows are subsam-
+pled uniformly to 10,000 rows. For every seed, each dataset
+is split into a pool of unlabeled candidates and a held-out
+test set by a stratified 70/30 split that is redrawn per seed.
+We refer to the eight datasets whose pools contain 1,358 to
+7,000 rows as large and to the remaining twelve (101 to 700
+rows) as small.
+Acquisition protocol. The context is initialized with one
+uniformly drawn row per class and grown in batches of
+b=10 rows until the budget B=100 is reached, or until half
+of the pool has been labeled on the smallest datasets. Every
+configuration is repeated with ten seeds, which change the
+split, the initial context and all random choices.
+Competitors. We compare ten acquisition rules, which dif-
+fer only in how the next batch is chosen, and group them into
+three families: diversity-based, uncertainty-based and
+target-aware. Following Tab-AICL’s rules (Treerath & Pit-
+torino, 2026): Random (uniform sampling); Margin (small-
+est margin between the two most probable classes); Coreset
+(greedy k-center in the standardized feature space (Sener
+& Savarese, 2018)); Hybrid (the most uncertain half of the
+pool by predictive entropy, then the row nearest to each of
+b k-means centroids); and Proxy-Hybrid (a shortlist from
+a linear proxy model, then Hybrid on the shortlist). As
+Target-aware rules (Section 3.2): TANN labels, for each
+of the b target inputs with the smallest margin, its nearest
+unlabeled pool row in the TFM’s row-representation space;
+TANN-feat measures the distance in the standardized feature
+space instead. Additionally, we implement Target-Random
+that assigns nearest pool rows to uniformly drawn targets,
+and Target-Coverage to the targets farthest from the labeled
+set; both use the target inputs but no uncertainty. Finally,
+EPIC (Section 3.3) with s=64 shortlisted candidates and
+mr=256 sampled targets per round. An ablation on s and
+mr is provided in Section F.
+Baselines with other models. To relate the TabICL-based
+rules to the baselines of Tab-AICL, we further evaluate
+under the same protocol (Table 6): the frozen TabPFN v3
+with the Tab-AICL rules (Random, Margin, Coreset, Hybrid
+and Proxy-Hybrid) and TANN-feat, the gradient-boosted
+tree models XGBoost-Margin and CatBoost-Margin, which
+are refitted on the labeled set in every round and select by
+their own margin, and LabelSpreading-Random (Treerath &
+Pittorino, 2026), a graph-based semi-supervised model over
+the labeled rows, the pool and the test inputs with random
+acquisition. In addition, to test whether the findings depend
+on the backbone, we repeat the complete study (all rules,
+including EPIC and TANN) with TabPFN v3 as the frozen
+model (Section E).
+Metrics. Following Tab-AICL, we measure the normalized
+area under the curve of Cohen’s κ on the test split over the
+acquisition rounds (AULC), which equals the average κ over
+the trajectory and rewards rules that are accurate early. Be-
+cause the purpose of acquisition is the model obtained once
+the budget is spent, we additionally report κ at the budget
+(final κ) and use it to assess the models’ capabilities at the
+budget. Cohen’s κ corrects accuracy for chance agreement,
+which matters on imbalanced datasets.
+Statistical analysis. For every dataset, each metric is av-
+eraged over the ten seeds. Across the twenty datasets we
+report mean values and mean ranks, and for pairs of meth-
+ods the number of wins, ties (|∆| ≤0.005) and losses
+together with the two-sided Wilcoxon signed-rank test on
+the dataset means. When a method is compared with all nine
+others, we additionally apply the Holm correction for mul-
+tiple comparisons and state it explicitly. All other p-values
+are uncorrected.
+Implementation. All acquisition rules of the main compar-
+ison use the same frozen TFM, TabICL with the publicly
+released v2 classification checkpoint (Qu et al., 2025; 2026),
+with an ensemble of eight members and its default inference
+settings. The TabPFN baselines use the TabPFN v3 clas-
+sification checkpoints (binary and multiclass) (Hollmann
+et al., 2025), also with eight ensemble members. XGBoost
+5
+
+
+When, Where, How: AICL4TFMs
+and CatBoost use their library defaults, as no validation data
+is available for tuning with at most 100 labels, and label
+spreading uses a seven-nearest-neighbor graph on standard-
+ized features. Features are passed to the model as provided
+by OpenML, with categorical columns ordinally encoded
+and missing values left to the model. Each job ran on one
+NVIDIA A40 GPU (48 GB) with 16 CPU cores.
+4.2. When: the value of acquisition criteria changes as
+the context grows
+Diversity leads in the cold start, prediction-oriented ac-
+quisition at the budget.
+Figure 2 illustrates that EPIC
+attains the highest κ (0.578, rank 3.30) and improves on Hy-
+brid (0.549) on 15 of the 20 datasets (+0.030, p = 0.011;
+p = 0.064 after Holm correction over nine comparisons),
+and TANN improves on Hybrid on 13 datasets (+0.021,
+p = 0.049, uncorrected; Tables 1 and 2). The learning
+curves locate the transition (Figure 3): Hybrid leads clearly
+during the first 40 labels, by up to 0.05 κ over Random, but
+its advantage shrinks steadily afterwards; TANN overtakes it
+at about 50 labels and EPIC at about 60, and both stay ahead
+until the budget. The figure averages the fifteen datasets
+whose budget is 100 labels, because averaging requires a
+common label axis and the five smallest datasets stop at half
+of their pool (50 to 74 labels); the AULC over all twenty
+datasets shows the same pattern. The learning curves after
+each acquisition round are provided in Section D.1.
+2
+4
+6
+8
+10
+Mean rank (1 = best)
+EPIC
+TANN-feat
+TANN
+Target-Coverage
+Margin
+Target-Random
+Hybrid
+Proxy-Hybrid
+Random
+Coreset
+3.30
+3.77
+4.40
+4.58
+5.30
+5.72
+5.88
+6.70
+6.90
+8.45
+Figure 2. Mean rank of every acquisition rule over the twenty
+datasets (1 is best), for Cohen’s κ at the maximal label budget,
+with TabICL as the backbone.
+The transition recurs with a second model and at larger
+budgets. The full replication with TabPFN as the backbone
+(Section E) shows the same transition: Hybrid leads over
+the trajectory (AULC 0.456 vs. 0.447 for EPIC and 0.450
+for TANN; ahead on 13 and 10 of 20 datasets, p = 0.33
+and p = 0.43), whereas EPIC and TANN lead at the budget
+(final κ 0.558 and 0.554 vs. 0.534; 14/1/5, p = 0.017, and
+12/4/4, p = 0.040), with EPIC overtaking Hybrid after
+20
+40
+60
+80
+100
+Labels
+−0.02
+0.00
+0.02
+0.04
+0.06
+Δκ to Random
+Margin
+Hybrid
+TANN
+EPIC
+Figure 3. Learning curves on the fifteen datasets with a budget of
+100 labels, with TabICL as the backbone. Difference to Random
+baselines where the bands show ±1 standard error over datasets.
+about 70 labels (Figure 7). With TabICL, when the budget is
+expressed as a fraction of the pool on the eight datasets with
+large pools (Table 7), Hybrid retains the most full-context
+κ with 1% of the pool labeled (60.4% vs. 50.9% for EPIC,
+ahead on 7 of 8 datasets, p = 0.023), the two are level at
+2%, and EPIC leads at 5% and 10% (80.3% vs. 76.0% and
+87.0% vs. 82.0%, 7/0/1 datasets, p = 0.078 and p = 0.055).
+With very few labels, the frozen model’s predictions on the
+targets carry little information, so criteria that rely on them,
+its uncertainty and its response to hypothetical labels, are
+unreliable, whereas spreading the first labels over the input
+space is effective regardless. As the context grows, the pre-
+dictions become informative enough to direct acquisition,
+and diversity loses its value. This mirrors the budget depen-
+dence that Hacohen et al. (2022) report for retrained models,
+here for a learner that is never trained and changes only
+through its context.
+4.3. Where: target awareness matters substantially
+Using the target inputs helps, and so does choosing which
+targets to serve. The target-aware rules see the test inputs,
+which the Tab-AICL rules do not. The two controls separate
+the use of these inputs from the choice of the targets: they
+assign nearest pool rows to targets drawn at random (Target-
+Random) or chosen for coverage (Target-Coverage), without
+uncertainty. Access to the target inputs alone already im-
+proves on random labeling: Target-Random in AULC on
+13 of 20 datasets (+0.016, p = 0.008) and Target-Coverage
+at the budget on 13 (+0.028, p = 0.012). Choosing the
+targets by the model’s uncertainty or by information gain
+improves further: at the budget, TANN improves on Target-
+Random on 12 datasets (+0.014, p = 0.070), and EPIC
+on 15 (+0.022, p = 0.036) and on Target-Coverage on 13
+(+0.014, p = 0.091) (details in Tables 1 and 9).
+Target awareness captures most of the benefit. TANN
+6
+
+
+When, Where, How: AICL4TFMs
+Table 1. Cohen’s κ at the label budget (mean ± std over 10 seeds); best in bold, second underlined.
+Dataset
+Random
+Margin
+Coreset
+Hybrid
+Proxy-
+Hybrid
+Target-
+Random
+Target-
+Coverage
+TANN-feat
+TANN
+EPIC
+iris
+0.940 ±0.053 0.927 ±0.051 0.920 ±0.052 0.930 ±0.041 0.930 ±0.053 0.933 ±0.047 0.933 ±0.047 0.940 ±0.036 0.930 ±0.050 0.923 ±0.052
+glass
+0.635 ±0.058 0.651 ±0.084 0.594 ±0.070 0.623 ±0.066 0.632 ±0.090 0.676 ±0.046 0.638 ±0.065 0.675 ±0.052 0.667 ±0.080 0.706 ±0.073
+ionosphere
+0.878 ±0.047 0.872 ±0.028 0.740 ±0.058 0.863 ±0.039 0.864 ±0.031 0.878 ±0.048 0.833 ±0.031 0.850 ±0.051 0.880 ±0.030 0.887 ±0.040
+balance-scale
+0.855 ±0.039 0.975 ±0.013 0.899 ±0.023 0.927 ±0.015 0.970 ±0.015 0.904 ±0.031 0.922 ±0.026 0.915 ±0.036 0.897 ±0.056 0.964 ±0.019
+vehicle
+0.954 ±0.028 0.991 ±0.009 0.934 ±0.034 0.965 ±0.023 0.989 ±0.011 0.957 ±0.014 0.937 ±0.041 0.986 ±0.011 0.989 ±0.006 0.996 ±0.005
+page-blocks
+0.695 ±0.047 0.770 ±0.074 0.695 ±0.080 0.798 ±0.025 0.791 ±0.036 0.725 ±0.030 0.804 ±0.028 0.832 ±0.023 0.819 ±0.067 0.812 ±0.040
+parkinsons
+0.739 ±0.119 0.835 ±0.100 0.725 ±0.115 0.799 ±0.113 0.815 ±0.107 0.763 ±0.087 0.827 ±0.096 0.833 ±0.096 0.824 ±0.120 0.844 ±0.100
+seeds
+0.933 ±0.032 0.926 ±0.038 0.929 ±0.028 0.933 ±0.030 0.926 ±0.025 0.914 ±0.032 0.929 ±0.024 0.938 ±0.036 0.926 ±0.033 0.929 ±0.035
+bank-marketing
+0.235 ±0.059 0.311 ±0.063 0.279 ±0.085 0.200 ±0.103 0.292 ±0.078 0.340 ±0.076 0.307 ±0.088 0.254 ±0.109 0.321 ±0.083 0.252 ±0.071
+adult
+0.441 ±0.047 0.468 ±0.037 0.442 ±0.070 0.491 ±0.035 0.464 ±0.044 0.484 ±0.045 0.495 ±0.032 0.490 ±0.027 0.487 ±0.031 0.509 ±0.038
+covertype
+0.425 ±0.027 0.446 ±0.026 0.433 ±0.049 0.436 ±0.033 0.421 ±0.050 0.435 ±0.038 0.450 ±0.036 0.459 ±0.018 0.445 ±0.028 0.458 ±0.024
+kc1
+0.448 ±0.155 0.511 ±0.115 0.392 ±0.134 0.362 ±0.148 0.431 ±0.071 0.424 ±0.133 0.465 ±0.092 0.484 ±0.105 0.454 ±0.099 0.508 ±0.167
+jm1
+0.173 ±0.053 0.090 ±0.062 0.116 ±0.049 0.162 ±0.042 0.101 ±0.060 0.128 ±0.067 0.136 ±0.065 0.055 ±0.065 0.071 ±0.067 0.123 ±0.054
+blood-transfusion 0.152 ±0.088 0.213 ±0.071 0.211 ±0.076 0.255 ±0.068 0.176 ±0.113 0.246 ±0.097 0.228 ±0.096 0.239 ±0.112 0.266 ±0.082 0.202 ±0.121
+diabetes
+0.412 ±0.075 0.406 ±0.060 0.422 ±0.049 0.421 ±0.056 0.419 ±0.051 0.425 ±0.037 0.433 ±0.049 0.446 ±0.052 0.448 ±0.045 0.438 ±0.049
+tic-tac-toe
+0.288 ±0.036 0.295 ±0.059 0.215 ±0.065 0.209 ±0.051 0.259 ±0.050 0.270 ±0.059 0.308 ±0.040 0.301 ±0.068 0.291 ±0.059 0.291 ±0.049
+credit-g
+0.259 ±0.100 0.265 ±0.059 0.251 ±0.069 0.309 ±0.063 0.279 ±0.056 0.247 ±0.071 0.248 ±0.090 0.280 ±0.085 0.271 ±0.055 0.289 ±0.074
+steel-plates
+0.560 ±0.022 0.577 ±0.030 0.546 ±0.061 0.585 ±0.023 0.537 ±0.072 0.577 ±0.042 0.595 ±0.050 0.619 ±0.022 0.626 ±0.033 0.627 ±0.037
+phoneme
+0.545 ±0.031 0.609 ±0.031 0.523 ±0.028 0.540 ±0.055 0.524 ±0.155 0.563 ±0.035 0.585 ±0.031 0.614 ±0.038 0.626 ±0.028 0.623 ±0.031
+ilpd
+0.163 ±0.062 0.128 ±0.062 0.143 ±0.095 0.162 ±0.054 0.183 ±0.087 0.230 ±0.076 0.216 ±0.105 0.165 ±0.057 0.156 ±0.055 0.181 ±0.077
+Mean rank ↓
+6.90
+5.30
+8.45
+5.88
+6.70
+5.72
+4.58
+3.77
+4.40
+3.30
+and EPIC are statistically indistinguishable, in AULC (8/5/7
+datasets, p = 0.96) and at the budget (11/4/5 in favor of
+EPIC, +0.008, p = 0.13), although TANN needs no model
+of how a label changes the predictions and is roughly eight
+times cheaper (18 s vs. 145 s per run on the large datasets).
+Nor does the geometry in which proximity is measured mat-
+ter: TANN in the TFM’s row representation and in the stan-
+dardized feature space are indistinguishable (AULC 6/6/8,
+p = 0.84; final κ 6/3/11, p = 0.60). TANN also saves labels
+relative to random labeling about as much as EPIC (Sec-
+tion 4.4: median 61% vs. 63% of the budget for the quality
+Random reaches with all of it, compared with 78% for Mar-
+gin and Hybrid), and its labels transfer to tree-based mod-
+els almost as well (Table 3). Therefore, serving uncertain
+targets with nearby labels captures most of what prediction-
+oriented acquisition achieves. With TabPFN, TANN and
+EPIC again improve on both target-aware controls, but target
+access alone does not: Target-Random is level with Random
+(p = 0.39; Section E).
+4.4. How: EPIC computes prediction-oriented
+information gain in context
+Best models at the budget. EPIC attains the highest mean
+κ at the budget and the best mean rank (Table 1). In pairwise
+comparisons (Table 2), it improves on Random on 16 of 20
+datasets (+0.042), on Coreset on 16 (+0.058) and on Proxy-
+Hybrid on 15 (+0.028), all significant after Holm correction,
+and on Margin, the best Tab-AICL rule at the budget, on
+13 (+0.015, p = 0.024 uncorrected). With TabPFN as the
+backbone, EPIC again attains the best final κ (14/1/5 against
+Hybrid, p = 0.017, Holm-adjusted p = 0.086), and the
+rankings of the rules agree across backbones (Spearman ρ =
+0.89; Table 10). A comparison against baselines of other
+Table 2.
+Pairwise comparison across the 20 datasets:
+wins/ties/losses of the row method against each rule (tie: |∆| ≤
+0.005), mean difference ∆of the dataset means, and the p-value
+of a two-sided Wilcoxon signed-rank test (p < 0.05 in bold).
+AULC κ
+Final κ
+Method vs.
+W/T/L
+∆
+p
+W/T/L
+∆
+p
+EPIC
+Random
+16/1/3 +0.026 0.001 16/2/2 +0.042 0.000
+Margin
+13/4/3 +0.012 0.017 13/4/3 +0.015 0.024
+Coreset
+16/0/4 +0.055 0.000 16/2/2 +0.058 0.001
+Hybrid
+7/2/11
+-0.003 0.701 15/1/4 +0.030 0.011
+Proxy-Hybrid
+10/4/6 +0.014 0.177 15/2/3 +0.028 0.001
+Target-Random
+10/6/4 +0.010 0.165 15/0/5 +0.022 0.036
+Target-Coverage 11/4/5 +0.008 0.277 13/1/6 +0.014 0.091
+TANN-feat
+9/4/7
++0.003 0.927 12/2/6 +0.009 0.165
+TANN
+8/5/7
++0.000 0.956 11/4/5 +0.008 0.133
+TANN
+Random
+16/2/2 +0.026 0.002 14/2/4 +0.033 0.006
+Margin
+15/1/4 +0.012 0.015 11/5/4 +0.006 0.198
+Coreset
+18/1/1 +0.055 0.000 17/2/1 +0.049 0.000
+Hybrid
+7/3/10
+-0.004 0.571 13/2/5 +0.021 0.049
+Proxy-Hybrid
+9/5/6
++0.013 0.154 13/3/4 +0.020 0.035
+Target-Random
+12/3/5 +0.010 0.083 12/3/5 +0.014 0.070
+Target-Coverage 10/4/6 +0.007 0.261 10/4/6 +0.005 0.409
+TANN-feat
+6/6/8
++0.003 0.841 6/3/11 +0.001 0.596
+EPIC
+7/5/8
+-0.000 0.956 5/4/11
+-0.008 0.133
+competitors (TabPFN v3, XGBoost, CatBoost) is provided
+in Section D.2. Reshaping the context of the acquired labels
+improves κ by at most 0.015 (confident pseudo-labels) and
+restricting it to local contexts lowers κ, whereas the ordering
+of the rules remains unchanged (Section C).
+Fewer labels for the same quality. Relative to random
+labeling, EPIC reaches the κ that Random attains with the
+full budget using a median of 63% of the labels (mean 64%),
+and no more than 80% on 14 of the 20 datasets, determined
+from the seed-averaged learning curves. Relative to the
+fully labeled pool, we extended the budget to 10% of the
+pool in batches of 0.5% on the eight datasets whose pools
+7
+
+
+When, Where, How: AICL4TFMs
+1%
+2%
+5%
+10%
+Labelled fraction of the pool
+50
+60
+70
+80
+90
+100
+κ relative to full context (%)
+95%
+Random
+Margin
+Hybrid
+TANN
+EPIC
+Figure 4. Cohen’s κ with a fraction of the pool labeled, TabICL
+as the backbone, relative to the fully labeled pool, on the eight
+datasets with pools of 1,358 to 7,000 rows (mean over datasets
+of the means over ten seeds). The dotted line marks 95% of the
+full-context performance.
+contain 1,358 to 7,000 rows, where a fraction of a few
+percent is still meaningful, and compared κ at 1%, 2%,
+5% and 10% with the full-context κ on the same splits
+over ten seeds (Figure 4). With 5% and 10% of the pool
+labeled, EPIC already retains on average 80.3% and 87.0%
+of the full-context κ, compared with 72.5% and 78.9% for
+Random, and improves on Random on all eight datasets at
+both fractions (p = 0.008). More details are provided in
+Section D.2. EPIC also provides a signal for when to stop
+labeling: the largest information gain of a round decreases
+steadily as labels are acquired, from about 10−1 to about
+2 · 10−3 nats over the budget. Stopping a run once it falls
+below a threshold τ, however, improves only marginally on
+stopping every run at the same fraction of its budget (by at
+most 0.010 κ; Section D.3).
+Labels that transfer to other models. A rule that exploits
+the frozen TFM might select labels that are useful only to
+that model. We therefore re-ran five TabICL rules and, after
+every round, also fitted XGBoost and CatBoost on the labels
+acquired so far (Table 3). Trained on the labels selected by
+EPIC, XGBoost and CatBoost reach a final κ of 0.530 and
+0.543, compared with 0.498 and 0.525 when they acquire
+their own labels by margin (17/1/2 datasets, p < 0.001,
+and 12/2/6, p = 0.030), and improve on randomly acquired
+labels on 15 datasets for both models (p ≤0.003). XGBoost
+reaches the κ of its own acquisition at the budget with a
+median of 73% of the labels selected by EPIC, on 19 of the
+20 datasets; CatBoost, whose own acquisition is stronger,
+needs 75% on average and reaches it on 12.
+4.5. Discussion and limitations
+Acquisition for a frozen TFM is not a single fixed problem.
+Early on, the value of a label lies in covering the input
+Table 3. Label transfer: final κ of models trained on the labels
+acquired by each TabICL rule (mean over datasets and seeds). The
+diagonal reference rows give the same model with its own margin-
+based acquisition. The rules were rerun for this analysis; the κ of
+EPIC differs from Table 1 (0.578) because of GPU nondetermin-
+ism.
+Labels acquired by
+TabICL
+CatBoost
+XGBoost
+Random
+0.536
+0.500
+0.487
+Margin
+0.563
+0.523
+0.514
+Hybrid
+0.549
+0.519
+0.504
+TANN
+0.570
+0.538
+0.519
+EPIC
+0.579
+0.543
+0.530
+CatBoost-Margin (own labels)
+–
+0.525
+–
+XGBoost-Margin (own labels)
+–
+–
+0.498
+space; once the model’s predictions are informative, it lies in
+resolving the predictions where the model will be used, and
+serving uncertain targets with nearby labels captures most
+of this value. EPIC expresses the latter principle exactly and
+yields the best models at the budget, while TANN offers
+most of its benefit at a fraction of its cost.
+Limitations. (i) No adaptive rule yet. We observe when
+each criterion is valuable but do not evaluate a rule that
+switches between them; whether such a switch improves
+on both, and how to detect the transition, is the most di-
+rect test of the first finding. (ii) Transductive setting. The
+target-aware rules require the target inputs, or a represen-
+tative sample of them, before labeling. (iii) Classification.
+EPIC enumerates hypothetical labels and is implemented
+for classification only. (iv) Approximations. EPIC selects
+batches greedily, so the rows of a batch may carry overlap-
+ping information. Its two other approximations, the shortlist
+of candidates and the sample of targets, do not affect κ at
+the budget (Section F) in our setting.
+5. Conclusion
+We ask how the value of diversity, predictive uncertainty and
+target-aware information gain changes as a frozen tabular
+foundation model (TFM) acquires more context. Across
+twenty benchmarks and two TFMs, the answer has three
+parts. Diversity is the best use of the first few dozen labels,
+and prediction-oriented acquisition overtakes it once the
+model’s predictions become informative. Where the model
+will be used matters substantially: serving the targets on
+which the model is least certain with nearby labels captures
+most of the benefit of prediction-oriented acquisition, inde-
+pendently of how proximity is measured. And in-context
+conditioning makes prediction-oriented information gain
+computable for a frozen model: EPIC yields the best mod-
+els at the label budget, retains on average 80–87% of the
+chance-corrected full-data performance with 5–10% of the
+pool labeled on the eight benchmarks with the largest pools,
+and selects labels that also improve gradient-boosted trees.
+8
+
+
+When, Where, How: AICL4TFMs
+AI use statement
+In this work, we used generative AI tools to assist with code
+modifications, generate scripts for higher-quality figure plot-
+ting. We have not used generative AI tools for research
+ideas, designing core methodology, or writing initial text
+from scratch. Additionally, we used generative AI tools
+to improve sentence fluency while still using our original
+wording and arguments. We have reviewed all AI-assisted
+work: all modified code and plotting scripts were manually
+inspected, executed, and verified for correctness by the au-
+thors, and all edited text was carefully checked to ensure
+it had the same semantic meaning as our original version.
+We take responsibility for the final content of this work,
+including text, claims or artifacts produced with the aid of
+generative AI.
+Acknowledgments
+We acknowledge funding from the Bayerisches Staatsmin-
+isterium f¨ur Wirtschaft, Landesentwicklung und Energie
+under the research programme BayVFP F¨orderlinie Digital-
+isierung (grant reference DIK-2507-0024// DIK0836/01).
+We gratefully acknowledge the scientific support and HPC
+resources provided by the Erlangen National High Perfor-
+mance Computing Center (NHR@FAU) of the Friedrich-
+Alexander-Universit¨at Erlangen-N¨urnberg (FAU) under the
+NHR project DeepSmall - Meta-learning for regulariz-
+ing deep networks under small data regimes. NHR fund-
+ing is provided by federal and Bavarian state authorities.
+NHR@FAU hardware is partially funded by the German
+Research Foundation (DFG) – 440719683.
+Impact Statement
+This paper presents work whose goal is to advance the field
+of Machine Learning. There are many potential societal
+consequences of our work, none which we feel must be
+specifically highlighted here.
+References
+Chai, C.-L., Liu, J.-B., Tang, N., Li, G., and Luo, Y.-Y.
+Selective data acquisition in the wild for model charging.
+Proc. VLDB Endow., 15:1466–1478, 2022. doi: 10.14778/
+3523210.3523223.
+Chen, Y., Ding, X., and Akoglu, L.
+Vip-cop: Context
+optimization for tabular foundation models. 2026. URL
+https://arxiv.org/abs/2605.12904.
+Dong, Q., Li, L., Dai, D., Zheng, C., Ma, J., Li, R., Xia, H.,
+Xu, J., Wu, Z., Chang, B., Sun, X., Li, L., and Sui, Z. A
+survey on in-context learning. In Al-Onaizan, Y., Bansal,
+M., and Chen, Y.-N. (eds.), Proceedings of the 2024 Con-
+ference on Empirical Methods in Natural Language Pro-
+cessing, pp. 1107–1128, Miami, Florida, USA, November
+2024. Association for Computational Linguistics. doi:
+10.18653/v1/2024.emnlp-main.64.
+URL https://
+aclanthology.org/2024.emnlp-main.64/.
+Feuer, B., Schirrmeister, R. T., Cherepanova, V., Hegde,
+C., Hutter, F., Goldblum, M., Cohen, N., and White, C.
+Tunetables: context optimization for scalable prior-data
+fitted networks. In Proceedings of the 38th International
+Conference on Neural Information Processing Systems,
+NIPS ’24, Red Hook, NY, USA, 2024. Curran Associates
+Inc. ISBN 9798331314385.
+Guta, B. B. Localized tabiclv2: Scaling tabular in-context
+learning through k-nn. 2026. URL https://arxiv.
+org/abs/2608.16429.
+2nd ICML Workshop on
+Foundation Models for Structured Data (FMSD).
+Hacohen, G., Dekel, A., and Weinshall, D. Active learn-
+ing on a budget:
+Opposite strategies suit high and
+low budgets. In Chaudhuri, K., Jegelka, S., Song, L.,
+Szepesvari, C., Niu, G., and Sabato, S. (eds.), Pro-
+ceedings of the 39th International Conference on Ma-
+chine Learning, volume 162 of Proceedings of Machine
+Learning Research, pp. 8175–8195. PMLR, 17–23 Jul
+2022. URL https://proceedings.mlr.press/
+v162/hacohen22a.html.
+Hollmann, N., M¨uller, S., Eggensperger, K., and Hutter,
+F.
+Tabpfn: A transformer that solves small tabular
+classification problems in a second.
+In International
+Conference on Learning Representations (ICLR), 2023.
+arXiv:2207.01848.
+Hollmann, N., M¨uller, S., Purucker, L., Krishnakumar,
+A., K¨orfer, M., Hoo, S. B., Schirrmeister, R. T., and
+Hutter, F. Accurate predictions on small data with a
+tabular foundation model. Nature, 637(8045):319–326,
+January 2025.
+ISSN 1476-4687.
+doi:
+10.1038/
+s41586-024-08328-6. URL http://dx.doi.org/
+10.1038/s41586-024-08328-6.
+Houlsby, N., Huszar, F., Ghahramani, Z., and Lengyel,
+M.
+Bayesian active learning for classification and
+preference learning. CoRR, abs/1112.5745, 2011. URL
+http://dblp.uni-trier.de/db/journals/
+corr/corr1112.html#abs-1112-5745.
+Kirsch, A., van Amersfoort, J., and Gal, Y. Batchbald:
+efficient and diverse batch acquisition for deep bayesian
+active learning. In Proceedings of the 33rd International
+Conference on Neural Information Processing Systems,
+Red Hook, NY, USA, 2019. Curran Associates Inc.
+Li, J., Chen, D., Qi, X.-D., Li, Z., Huang, Y.-B., Morris,
+D., and Tan, X. Label-efficient learning in agriculture:
+9
+
+
+When, Where, How: AICL4TFMs
+A comprehensive review. Comput. Electron. Agric., 215:
+108412, 2023. doi: 10.48550/arxiv.2305.14691.
+Lindley, D. V.
+On a measure of the information
+provided by an experiment.
+Annals of Mathemat-
+ical Statistics, 27:986–1005, 1956.
+URL https:
+//api.semanticscholar.org/CorpusID:
+123582195.
+Ma, J., Thomas, V., Yu, G., and Caterini, A. In-context data
+distillation with tabpfn. 2024. URL https://arxiv.
+org/abs/2402.06971.
+MacKay, D. J. C. Information-based objective functions
+for active data selection. Neural Comput., 4(4):590–604,
+July 1992. ISSN 0899-7667. doi: 10.1162/neco.1992.4.
+4.590. URL https://doi.org/10.1162/neco.
+1992.4.4.590.
+Qu, J., Holzm¨uller, D., Varoquaux, G., and Morvan, M. L.
+Tabicl: A tabular foundation model for in-context learn-
+ing on large data. In Proceedings of the 42nd Interna-
+tional Conference on Machine Learning (ICML), 2025.
+arXiv:2502.05564.
+Qu, J., Holzm¨uller, D., Varoquaux, G., and Morvan, M. L.
+Tabiclv2: A better, faster, scalable, and open tabular
+foundation model. In Proceedings of the 43rd Interna-
+tional Conference on Machine Learning (ICML), 2026.
+arXiv:2602.11139.
+Sener, O. and Savarese, S. Active learning for convolu-
+tional neural networks: A core-set approach.
+In 6th
+International Conference on Learning Representations,
+ICLR 2018, Vancouver, BC, Canada, April 30 - May 3,
+2018, Conference Track Proceedings. OpenReview.net,
+2018. URL https://openreview.net/forum?
+id=H1aIuk-RW.
+Settles, B.
+Active learning literature survey.
+Com-
+puter
+Sciences
+Technical
+Report
+1648,
+Univer-
+sity of Wisconsin–Madison, 2009.
+URL http:
+//axon.cs.byu.edu/˜martinez/classes/
+778/Papers/settles.activelearning.pdf.
+Smith, F. B., Kirsch, A., Farquhar, S., Gal, Y., Foster, A.,
+and Rainforth, T. Prediction-oriented bayesian active
+learning. In Ruiz, F. J. R., Dy, J. G., and van de Meent,
+J. (eds.), International Conference on Artificial Intelli-
+gence and Statistics, 25-27 April 2023, Palau de Con-
+gressos, Valencia, Spain, volume 206 of Proceedings
+of Machine Learning Research, pp. 7331–7348. PMLR,
+2023. URL https://proceedings.mlr.press/
+v206/smith23a.html.
+Tharwat, A. and Schenck, W. A survey on active learning:
+State-of-the-art, practical challenges and research direc-
+tions. Mathematics, 2023. doi: 10.3390/math11040820.
+Thomas, V., Ma, J., Hosseinzadeh, R., Golestan, K., Yu, G.,
+Volkovs, M., and Caterini, A. Retrieval & fine-tuning for
+in-context tabular models. 2024.
+Treerath, W. and Pittorino, F. Active in-context learning
+for tabular foundation models.
+2026.
+URL https:
+//arxiv.org/abs/2603.27385.
+Vanschoren, J., van Rijn, J. N., Bischl, B., and Torgo,
+L.
+Openml:
+networked science in machine learn-
+ing.
+SIGKDD Explor. Newsl., 15(2):49–60, June
+2014.
+ISSN 1931-0145.
+doi:
+10.1145/2641190.
+2641198.
+URL https://doi.org/10.1145/
+2641190.2641198.
+Yu, K., Bi, J., and Tresp, V. Active learning via transduc-
+tive experimental design. In Proceedings of the 23rd
+International Conference on Machine Learning, ICML
+’06, pp. 1081–1088, New York, NY, USA, 2006. Asso-
+ciation for Computing Machinery. ISBN 1595933832.
+doi: 10.1145/1143844.1143980. URL https://doi.
+org/10.1145/1143844.1143980.
+10
+
+
+When, Where, How: AICL4TFMs
+A. Implementation Details
+A.1. Hyperparameter Settings
+We evaluate all models with at most 100 labels, no validation data is available, so all models use their default settings and all
+acquisition rules the values below, which are identical for every dataset and seed.
+Frozen TFMs. TabICL uses the publicly released v2 classification checkpoint (package tabicl 2.2.0) and TabPFN the v3
+classification checkpoints, the binary one for binary and the multiclass one for multiclass tasks (package tabpfn 9.2.0,
+with the pre-training limits on the numbers of rows and features disabled). Both use an ensemble of eight members, their
+default preprocessing and inference settings, and the seed of the run as random state. No parameter of either model is
+updated in any experiment; the model is refitted, i.e., conditioned on the current labeled set, after every acquisition round.
+Protocol. For every seed 0, . . . , 9, a stratified 70/30 split into pool and test set; an initial context of one uniformly drawn
+pool row per class; batches of b = 10 rows; budget B = min(100, ⌊|U|/2⌋); Cohen’s κ on the test split after every round.
+Ties in the win/tie/loss counts are differences of at most 0.005.
+Feature space. Coreset, Hybrid, Proxy-Hybrid and TANN-feat measure distances in the feature space standardized with the
+mean and standard deviation of the pool; missing values are set to zero after standardization.
+Tab-AICL rules. Margin labels the b pool rows with the largest margin uncertainty 1 −(p(1) −p(2)), where p(1) and
+p(2) are the two largest predicted class probabilities. Coreset selects greedily the b pool rows farthest (squared Euclidean
+distance) from the labeled set (k-center). Hybrid restricts the unlabeled rows Ur = U \ Lr to the max(2b, ⌊|Ur|/2⌋) rows
+with the largest predictive entropy, runs k-means with k = b on them (scikit-learn, automatic number of initializations, seed
+of the run) and labels the row nearest to each centroid. Proxy-Hybrid fits a logistic regression with balanced class weights (at
+most 1,000 iterations) on the labeled rows, shortlists the min(|Ur|, max(200, min(2000, ⌊0.05|Ur|⌋))) rows with the largest
+proxy entropy, keeps the 3b of them with the largest TFM entropy, and applies the k-means step of Hybrid.
+Target-aware rules. The targets are the inputs of the test split. TANN chooses the b targets with the largest margin uncertainty
+under the current context and assigns to each its nearest unlabeled pool row, without repetition. Distances are Euclidean in
+the TFM’s row representation, recomputed in every round, after centering and scaling each row’s representation across its
+dimensions and normalizing it to unit length; TANN-feat uses the standardized feature space instead. Target-Random assigns
+nearest pool rows to b uniformly drawn targets and Target-Coverage to b targets chosen greedily as farthest from the labeled
+rows and the targets already chosen, both in the row representation.
+EPIC. In every round, mr = 256 targets are drawn uniformly without replacement and a shortlist of s = 64 candidates is
+formed from the 21 unlabeled rows with the largest margin uncertainty, the nearest unlabeled rows to the most uncertain
+targets in the row representation (up to 42 candidates in total) and uniformly drawn unlabeled rows for the remainder. The
+hypothetical contexts DL ∪{(x, y)} for all x in the shortlist and y ∈Y are evaluated in batched forward passes of 64
+contexts, and the b candidates with the largest EPIC score are labeled. With TabICL, the preprocessing statistics are fitted
+once on DL and the shortlist with placeholder labels and shared among the hypothetical contexts; with TabPFN, every
+hypothetical context is preprocessed separately (Section E).
+Baselines with other models. XGBoost (package xgboost 3.4.1, histogram tree method) and CatBoost (package
+catboost 1.2.10) use their library defaults and are refitted on the labeled rows in every round; Margin uses their predicted
+probabilities. LabelSpreading (scikit-learn 1.9.1) uses a k-nearest-neighbor kernel with seven neighbors and at most 100
+iterations on the standardized features of the labeled rows, the pool and the test inputs.
+Label reduction. The budget is 10% of the pool and the batch size 0.5% of the pool (rounded up); EPIC labels at most 32
+rows per round, so its larger batches are split into several rounds. κ at 1%, 2%, 5% and 10% of the pool is interpolated
+linearly from the learning curve and divided by the κ of the same backbone with the fully labeled pool as context on the
+same split.
+Context analysis. Local contexts consist of the K ∈{25, 50} labeled rows nearest to a query in the row representation,
+completed so that every class is present, and of K = 100 rows when the whole pool is labeled. Pseudo-labeled rows are
+pool rows that TabICL, conditioned on the acquired labels, predicts with probability at least 0.9; the per-query variants add
+the 50 such rows nearest to the query. SMOTE generates 500 synthetic rows by interpolating between an acquired row and
+one of its five nearest acquired rows of the same class in the standardized feature space, of which the 50 nearest to the query
+are added.
+11
+
+
+When, Where, How: AICL4TFMs
+Software and hardware. PyTorch 2.14.1; every run used one NVIDIA A40 GPU (48 GB) and 16 CPU cores.
+A.2. Pseudo-Code
+Algorithm 1 EPIC: expected predictive information gain in context of TFMs
+Input: pool U, targets T , frozen TFM pθ, budget B, batch size b, shortlist size s, target sample size mr
+L ←one uniformly drawn row per class; query its labels
+while |L| < B do
+fit pθ on DL
+{no parameter update}
+Tr ←uniform subsample of T of size mr
+Cr ←shortlist of s unlabeled rows
+{Section 3.4}
+fit pθ once on DL and Cr with placeholder labels
+compute pθ(y⋆| x⋆, DL ∪{(x, y)}) for all x ∈Cr, y ∈Y, x⋆∈Tr
+{batched}
+compute EPIC(x; DL) for all x ∈Cr
+{Equation (2)}
+A ←the min(b, B −|L|) candidates with the largest EPIC score
+query the labels of A; L ←L ∪A
+end while
+Predict: pθ(· | x⋆, DL) for all x⋆∈T
+B. Benchmark Datasets: Details
+Table 4 summarizes the dataset statistics of the twenty OpenML (Vanschoren et al., 2014) classification datasets used in our
+evaluation. The setup encompasses the same setup as in Tab-AICL (Treerath & Pittorino, 2026).
+Table 4. Benchmark datasets (OpenML identifiers as in Tab-AICL). Rows after uniform subsampling to at most 10,000 (original size in
+parentheses), number of features d and classes C, and the label budget B, which is 100 or half of the pool.
+Dataset
+OpenML
+Rows
+d
+C
+B
+Iris
+61
+150
+4
+3
+52
+Glass
+41
+214
+9
+6
+74
+Ionosphere
+59
+351
+34
+2
+100
+Balance-scale
+997
+625
+4
+2
+100
+Vehicle
+994
+846
+18
+2
+100
+Page-blocks
+1021
+5,473
+10
+2
+100
+Parkinsons
+1488
+195
+22
+2
+68
+Seeds
+1499
+210
+7
+3
+73
+Bank-Marketing
+45065
+10,000 (45,211)
+16
+2
+100
+Adult
+45068
+10,000 (48,842)
+14
+2
+100
+CoverType
+1596
+10,000 (581,012)
+54
+7
+100
+KC1
+1066
+145
+94
+2
+50
+JM1
+46979
+10,000 (10,885)
+21
+2
+100
+Blood-Transfusion
+46913
+748
+4
+2
+100
+Diabetes
+46921
+768
+8
+2
+100
+Tic-Tac-Toe
+137
+10,000 (39,366)
+9
+2
+100
+Credit-g
+46918
+1,000
+20
+2
+100
+Steel-Plates
+46959
+1,941
+26
+7
+100
+Phoneme
+44127
+3,172
+5
+2
+100
+ILPD
+41943
+583
+10
+2
+100
+C. Labels vs. Context
+Labels or context?
+A natural alternative to acquiring better labels is to make better use of the labels one has by reshaping
+the context. For every dataset and seed, we took the labeled sets that Random, Hybrid, TANN and EPIC acquired up to the
+budget and evaluated them with restricted and with enlarged contexts (Table 5).
+Restricting the context to the labeled rows nearest to each query in TabICL’s representation lowers κ for all four rules: by
+0.04 to 0.05 with K = 25 rows (worse on 15 to 17 of 20 datasets) and by about 0.02 with K = 50. Even when the whole
+12
+
+
+When, Where, How: AICL4TFMs
+Table 5. Reshaping the context of the acquired labels on the twenty Tab-AICL benchmarks (frozen TabICL, 10 seeds). First row: Cohen’s
+κ at the budget with the acquired labels as one global context. The acquired labels are those of the rerun in Table 3, so the κ of EPIC
+differs from Table 1 (0.578) because of GPU nondeterminism. Other rows: mean difference to that context over datasets and win/tie/loss
+(tie: |∆| ≤0.005); ∗: two-sided Wilcoxon signed-rank test over datasets, p < 0.05 after Holm correction over all comparisons of the
+table. Local contexts contain the K labelled rows nearest to each query in TabICL’s row representation. Augmented contexts contain all
+acquired labels plus either every pool row that TabICL labels with probability ≥0.9, with its predicted label (confident pseudo-labels),
+or, per query, the 50 nearest such rows with predicted or true labels, or the 50 nearest SMOTE rows. K = 50: 19 datasets (on KC1 the
+budget is 50 labels).
+Context
+Random
+Hybrid
+TANN
+EPIC
+Global context (κ)
+0.536
+0.549
+0.570
+0.579
+Local context, K = 25
+−0.043∗3/0/17
+−0.037∗3/2/15
+−0.040∗2/2/16
+−0.046∗1/2/17
+Local context, K = 50
+−0.018 2/4/13
+−0.019∗2/4/13
+−0.020∗2/5/12
+−0.013 2/4/13
++ confident pseudo-labels
++0.013 12/7/1
++0.015 12/5/3
++0.010∗13/7/0
++0.009 11/8/1
++ pseudo-labelled neighbours
+−0.001 9/6/5
++0.005 10/5/5
++0.003 7/11/2
+−0.000 3/13/4
++ same neighbours, true labels (oracle)
++0.026∗16/2/2
++0.034∗16/4/0
++0.022∗15/4/1
++0.020∗13/6/1
++ synthetic neighbours (SMOTE)
+−0.014 5/2/13
+−0.012 3/2/15
+−0.016 4/1/15
+−0.016 3/3/14
+All pool labels: global context κ = 0.661; local context, K = 100: −0.021 3/4/13
+pool is labeled, local contexts of 100 rows remain below the global context (0.640 versus 0.661, worse on 13 datasets),
+which is in line with the observation that local contexts retain most, but not all, of the full-context accuracy and are motivated
+by inference cost (Guta, 2026). With at most 100 acquired labels, the global context is small, and localization only discards
+information that the model exploits.
+Enlarging the context with every pool row that TabICL predicts with probability at least 0.9, labeled with its prediction,
+yields a small and consistent gain of 0.009 to 0.015 (better on 11 to 13 datasets, worse on at most three; uncorrected
+p ≤0.015 for every rule, significant after Holm correction for TANN). These pseudo-labels are 93 to 94% correct on
+average, and the errors matter: adding the 50 pseudo-labeled rows nearest to each query has no effect, whereas the same
+rows with their true labels improve κ by 0.020 to 0.034. Synthetic SMOTE neighbors lower κ for all rules (worse on 13 to
+15 datasets).
+This provides evidence for two conclusions. First, the effect of reshaping the context is small compared with the effect of
+acquisition: the best manipulation that requires no further labels adds about 0.01, whereas EPIC improves on Random by
+0.04 and on Hybrid by 0.03 with the same number of labels. Second, the ordering of the four rules at the budget (EPIC,
+TANN, Hybrid, Random) is the same under every context variant, so the comparison of Section 4.4 does not depend on
+how the acquired labels are presented to the model, and confident pseudo-labeling is a complementary addition to, not a
+substitute for, the choice of labels.
+D. Additional Results with TabICL
+D.1. When: the value of acquisition criteria changes as the context grows
+Diversity leads in the cold start, prediction-oriented acquisition at the budget. Figure 5 shows the learning curves on the
+fifteen datasets with a budget of 100 labels. We observe that in cold start Hybrid leads but converges subpar to the proposed
+acquisition rules of TANN and EPIC.
+D.2. How: EPIC computes prediction-oriented information gain in context - Other baselines
+Best models at the budget. Against the baselines of other models (Table 6), EPIC improves on XGBoost-Margin and
+LabelSpreading-Random on all twenty datasets, on CatBoost-Margin on 18, and on every rule run with TabPFN v3 on 13 to
+18 datasets (p ≤0.03); with the same acquisition rule, TabICL attains a higher AULC than TabPFN for all five Tab-AICL
+rules (13 to 16 of 20 datasets, p ≤0.014). The improvement of EPIC at the budget also holds for two secondary metrics that
+we record alongside κ, balanced accuracy (0.756 vs. 0.742 for Hybrid) and macro-averaged one-vs-rest ROC AUC (0.875
+vs. 0.870).
+Fewer labels for the same quality.
+Table 7 summarizes the performance. On Page-blocks, 5% of the pool (192 labels)
+suffices for 98% of the full-context κ and 10% for practically all of it; with 10% of the labels, EPIC retains 95% on
+13
+
+
+When, Where, How: AICL4TFMs
+20
+40
+60
+80
+100
+Labels
+0.25
+0.30
+0.35
+0.40
+0.45
+0.50
+Cohen's κ
+Random
+Margin
+Hybrid
+TANN
+EPIC
+Figure 5. Learning curves on the fifteen datasets with a budget of 100 labels, with TabICL as the backbone. Cohen’s κ after each
+acquisition round, averaged over datasets (each averaged over seeds)
+Table 6. Comparison with baselines using other models on 20 datasets (mean over datasets of the seed means; ranks among all listed
+methods). The last columns compare EPIC with each method in final κ (W/T/L, two-sided Wilcoxon p). TabPFN rules use the frozen
+TabPFN v3; gradient-boosting and label spreading baselines are refitted every round.
+AULC κ
+Final κ
+EPIC vs.
+Method
+Mean Rank Mean Rank
+W/T/L (p)
+EPIC
+0.479
+3.85
+0.578
+3.35
+–
+TANN
+0.479
+3.80
+0.570
+4.85
+11/4/5 (0.133)
+Hybrid
+0.482
+3.55
+0.549
+6.42
+15/1/4 (0.011)
+Margin
+0.467
+5.50
+0.563
+5.58
+13/4/3 (0.024)
+Random
+0.453
+6.90
+0.536
+7.65
+16/2/2 (0.000)
+TabPFN-Random
+0.419
+9.40
+0.518
+8.88
+18/0/2 (0.000)
+TabPFN-Margin
+0.437
+8.00
+0.542
+6.50
+14/1/5 (0.004)
+TabPFN-Coreset
+0.382
+9.90
+0.489
+9.95
+16/3/1 (0.000)
+TabPFN-Hybrid
+0.456
+6.05
+0.534
+7.67
+16/1/3 (0.000)
+TabPFN-Proxy-Hybrid
+0.435
+7.90
+0.551
+5.92
+14/2/4 (0.017)
+TabPFN-TANN-feat
+0.444
+7.35
+0.553
+5.72
+13/1/6 (0.027)
+XGBoost-Margin
+0.374 11.15 0.498 10.80 20/0/0 (0.000)
+CatBoost-Margin
+0.426
+9.50
+0.525
+8.75
+18/1/1 (0.000)
+LabelSpreading-Random 0.351 12.15 0.424 12.95 20/0/0 (0.000)
+Adult, 91% on Phoneme, 81–87% on CoverType, Bank-Marketing, Tic-Tac-Toe and Steel-Plates, and 73% on JM1, whose
+full-context κ is only 0.22. Because κ discounts chance agreement, it is a strict measure of retention; in accuracy, EPIC
+retains 93.5% and 96.2% of the full-context value with 5% and 10% of the labels (Random: 91.3% and 93.9%). Labeling a
+few percent of the pool thus recovers most, but generally not all, of the full-data performance.
+D.3. Cost and the information signal
+EPIC takes 48 s per run on the small and 145 s on the large datasets at the 100-label budget, roughly an order of magnitude
+more than the other rules, and 2 to 30 minutes per run when labeling up to 10% of a pool of up to 7,000 rows; its cost does
+not grow with the pool beyond the shortlist. As an instrument, the largest information gain of a round decreases steadily
+with the number of labels, from about 10−1 to about 2 · 10−3 nats over the budget. Used as a stopping rule, i.e., stopping a
+run once this value falls below a threshold τ, it improves only marginally on stopping every run at the same fraction of its
+budget, by at most 0.010 κ (Table 8).
+D.4. Analysis: whole trajectory
+As shown in Figure 6, we observe that the two primary metrics (AULC and the evaluation of κ at the label budget as shown
+in Figure 2) make the rules differently. Over the whole trajectory, Hybrid, which combines uncertainty with k-means
+diversity, has the best mean AULC (0.482) and mean rank (3.65, Table 9); EPIC (0.479, rank 4.30) and TANN (0.479, rank
+14
+
+
+When, Where, How: AICL4TFMs
+Table 7. Label reduction on 8 datasets (pools of 1,358 to 7,000 rows): Cohen’s κ with a fraction of the pool labeled, relative to TabICL
+with the fully labeled pool (in %, mean over datasets of the seed means; 100% = full-context performance). In parentheses: datasets
+reaching at least 95% of the full-context κ out of those where the fraction is defined.
+Rule
+Labelled fraction of the pool
+1%
+2%
+5%
+10%
+Random 55.7 (0/8) 62.6 (0/8) 72.5 (0/8) 78.9 (0/8)
+Margin
+51.2 (0/8) 59.0 (0/8) 73.7 (1/8) 83.6 (1/8)
+Hybrid
+60.4 (0/8) 66.0 (0/8) 76.0 (0/8) 82.0 (0/8)
+TANN
+50.6 (0/8) 61.9 (0/8) 75.8 (1/8) 83.5 (1/8)
+EPIC
+50.9 (0/8) 64.8 (0/8) 80.3 (1/8) 87.0 (1/8)
+Table 8. Stopping EPIC once the largest information gain of a round falls below τ (post hoc). Labels used as a fraction of the budget, κ at
+the stopping point, and κ when every run instead stops at the same fraction of its budget.
+τ
+Labels used
+κ (adaptive)
+κ (fixed fraction)
+κ (full budget)
+0.02
+39.6%
+0.493
+0.483
+0.578
+0.01
+57.2%
+0.526
+0.526
+0.578
+0.005
+72.5%
+0.554
+0.550
+0.578
+0.002
+91.2%
+0.574
+0.569
+0.578
+0.001
+97.4%
+0.577
+0.576
+0.578
+4.15) are statistically indistinguishable from it (EPIC vs. Hybrid: 7/2/11 datasets, p = 0.70). However, in the learning
+curves, we see that with increasing label budget, TANN and EPIC win over Hybrid.
+Table 9. AULC of Cohen’s κ (mean ± std over 10 seeds) on the Tab-AICL benchmarks with TabICL; best in bold, second underlined.
+Dataset
+Random
+Margin
+Coreset
+Hybrid
+Proxy-
+Hybrid
+Target-
+Random
+Target-
+Coverage
+TANN-feat
+TANN
+EPIC
+iris
+0.884 ±0.051 0.877 ±0.045 0.890 ±0.039 0.897 ±0.029 0.891 ±0.037 0.889 ±0.043 0.887 ±0.034 0.891 ±0.039 0.885 ±0.048 0.884 ±0.043
+glass
+0.499 ±0.037 0.516 ±0.060 0.441 ±0.051 0.524 ±0.044 0.519 ±0.037 0.540 ±0.046 0.525 ±0.058 0.551 ±0.054 0.554 ±0.062 0.586 ±0.046
+ionosphere
+0.734 ±0.042 0.744 ±0.042 0.525 ±0.089 0.788 ±0.034 0.759 ±0.045 0.759 ±0.061 0.706 ±0.077 0.730 ±0.060 0.760 ±0.044 0.719 ±0.038
+balance-scale
+0.711 ±0.042 0.770 ±0.048 0.756 ±0.029 0.780 ±0.005 0.769 ±0.017 0.735 ±0.048 0.753 ±0.048 0.767 ±0.031 0.764 ±0.042 0.772 ±0.053
+vehicle
+0.781 ±0.037 0.769 ±0.080 0.763 ±0.045 0.843 ±0.032 0.770 ±0.055 0.785 ±0.035 0.758 ±0.057 0.802 ±0.038 0.796 ±0.033 0.809 ±0.036
+page-blocks
+0.640 ±0.044 0.663 ±0.043 0.485 ±0.119 0.720 ±0.024 0.700 ±0.031 0.636 ±0.023 0.694 ±0.061 0.711 ±0.029 0.706 ±0.049 0.666 ±0.054
+parkinsons
+0.570 ±0.124 0.605 ±0.144 0.591 ±0.125 0.636 ±0.107 0.662 ±0.114 0.626 ±0.101 0.672 ±0.116 0.654 ±0.080 0.626 ±0.119 0.650 ±0.104
+seeds
+0.883 ±0.021 0.880 ±0.020 0.890 ±0.021 0.884 ±0.024 0.881 ±0.023 0.880 ±0.030 0.888 ±0.017 0.881 ±0.022 0.886 ±0.022 0.877 ±0.026
+bank-marketing
+0.191 ±0.058 0.255 ±0.071 0.222 ±0.063 0.175 ±0.072 0.237 ±0.060 0.255 ±0.062 0.226 ±0.055 0.167 ±0.053 0.230 ±0.057 0.203 ±0.064
+adult
+0.362 ±0.056 0.381 ±0.054 0.343 ±0.047 0.411 ±0.035 0.389 ±0.035 0.405 ±0.045 0.400 ±0.029 0.390 ±0.028 0.392 ±0.057 0.399 ±0.050
+covertype
+0.304 ±0.023 0.331 ±0.037 0.290 ±0.013 0.333 ±0.026 0.305 ±0.049 0.321 ±0.031 0.315 ±0.034 0.335 ±0.040 0.327 ±0.041 0.323 ±0.035
+kc1
+0.422 ±0.124 0.457 ±0.086 0.348 ±0.089 0.398 ±0.100 0.365 ±0.092 0.383 ±0.135 0.424 ±0.062 0.453 ±0.094 0.396 ±0.103 0.462 ±0.084
+jm1
+0.145 ±0.071 0.087 ±0.072 0.066 ±0.080 0.145 ±0.039 0.088 ±0.045 0.113 ±0.060 0.099 ±0.039 0.062 ±0.067 0.081 ±0.064 0.108 ±0.052
+blood-transfusion 0.158 ±0.052 0.173 ±0.062 0.201 ±0.075 0.207 ±0.053 0.160 ±0.084 0.181 ±0.052 0.174 ±0.088 0.177 ±0.088 0.215 ±0.092 0.182 ±0.098
+diabetes
+0.337 ±0.027 0.351 ±0.062 0.336 ±0.039 0.365 ±0.066 0.338 ±0.058 0.352 ±0.059 0.373 ±0.041 0.379 ±0.040 0.365 ±0.043 0.369 ±0.057
+tic-tac-toe
+0.190 ±0.045 0.198 ±0.065 0.143 ±0.052 0.178 ±0.050 0.204 ±0.036 0.200 ±0.042 0.222 ±0.057 0.208 ±0.071 0.206 ±0.063 0.207 ±0.050
+credit-g
+0.183 ±0.073 0.182 ±0.053 0.171 ±0.040 0.241 ±0.036 0.209 ±0.069 0.201 ±0.054 0.193 ±0.050 0.212 ±0.060 0.194 ±0.028 0.195 ±0.069
+steel-plates
+0.462 ±0.027 0.472 ±0.037 0.438 ±0.046 0.502 ±0.026 0.430 ±0.050 0.473 ±0.032 0.488 ±0.029 0.512 ±0.019 0.510 ±0.028 0.502 ±0.038
+phoneme
+0.473 ±0.033 0.482 ±0.050 0.454 ±0.031 0.469 ±0.051 0.458 ±0.124 0.469 ±0.028 0.474 ±0.047 0.497 ±0.065 0.515 ±0.053 0.495 ±0.049
+ilpd
+0.138 ±0.050 0.150 ±0.055 0.127 ±0.045 0.153 ±0.062 0.179 ±0.079 0.180 ±0.056 0.163 ±0.085 0.140 ±0.057 0.168 ±0.060 0.180 ±0.047
+Mean
+0.453
+0.467
+0.424
+0.482
+0.466
+0.469
+0.472
+0.476
+0.479
+0.479
+Mean rank ↓
+7.65
+6.40
+8.35
+3.65
+5.75
+5.40
+5.10
+4.25
+4.15
+4.30
+E. TabPFN as the Backbone
+All results in the main text use TabICL as the frozen TFM. To test whether the findings depend on this backbone, we
+repeated the complete study with TabPFN v3 (Hollmann et al., 2025) (binary and multiclass classification checkpoints, eight
+ensemble members) under the identical protocol: the same twenty datasets, splits, seeds, initial contexts, batch size and
+budgets, and all ten acquisition rules, including TANN, the two controls and EPIC. Only the backbone changes.
+Implementation. The target-aware rules require the TFM’s row representation and EPIC additionally the model’s predictions
+under hypothetical contexts. For TabPFN, the row representation is the transformer’s output for the query rows, conditioned
+15
+
+
+When, Where, How: AICL4TFMs
+2
+4
+6
+8
+10
+Mean rank (1 = best)
+Hybrid
+TANN
+TANN-feat
+EPIC
+Target-Coverage
+Target-Random
+Proxy-Hybrid
+Margin
+Random
+Coreset
+3.65
+4.15
+4.25
+4.30
+5.10
+5.40
+5.75
+6.40
+7.65
+8.35
+Figure 6. Mean rank of every acquisition rule over the twenty datasets (1 is best), for the AULC of Cohen’s κ, with TabICL as the
+backbone.
+Table 10. Every rule with TabICL and TabPFN as the frozen TFM on the 20 datasets: mean Cohen’s κ over datasets (mean rank in
+parentheses; best per column in bold). Spearman correlations of the rule means between the two TFMs: ρ = 0.94 (AULC), ρ = 0.89
+(final).
+AULC κ
+Final κ
+Rule
+TabICL
+TabPFN
+TabICL
+TabPFN
+Random
+0.453 (7.65) 0.419 (7.10) 0.536 (6.90) 0.518 (7.03)
+Margin
+0.467 (6.40) 0.437 (5.90) 0.563 (5.30) 0.542 (5.15)
+Coreset
+0.424 (8.35) 0.382 (7.30) 0.520 (8.45) 0.489 (7.88)
+Hybrid
+0.482 (3.65) 0.456 (3.75) 0.549 (5.88) 0.534 (5.55)
+Proxy-Hybrid
+0.466 (5.75) 0.435 (5.70) 0.550 (6.70) 0.551 (4.15)
+Target-Random
+0.469 (5.40) 0.427 (6.60) 0.556 (5.72) 0.526 (7.03)
+Target-Coverage 0.472 (5.10) 0.446 (4.80) 0.564 (4.58) 0.536 (6.00)
+TANN-feat
+0.476 (4.25) 0.444 (5.05) 0.569 (3.77) 0.553 (4.05)
+TANN
+0.479 (4.15) 0.450 (4.10) 0.570 (4.40) 0.554 (4.22)
+EPIC
+0.479 (4.30) 0.447 (4.70) 0.578 (3.30) 0.558 (3.95)
+on the current context and averaged over the ensemble members, analogous to TabICL. For EPIC, every hypothetical context
+DL ∪{(x, y)} is evaluated by an exact forward pass with its own preprocessing, batched over contexts, instead of sharing
+the preprocessing statistics among the hypothetical contexts as for TabICL (Section 3.4). With TabPFN, EPIC takes 253 s
+and 437 s per run on the small and large datasets, compared with 48 s and 145 s with TabICL, which we attribute to the
+per-context preprocessing; TANN takes 13 s and 22 s.
+Overall agreement. Table 10 juxtaposes every rule with both backbones. TabPFN attains a lower mean κ than TabICL for
+every rule except Proxy-Hybrid at the budget (by 0.01 to 0.04), but the rules are ordered almost identically: the Spearman
+correlation of the rule means between the two backbones is 0.94 for the AULC and 0.89 for κ at the budget. The only
+notable change concerns Proxy-Hybrid, which ranks considerably better with TabPFN (4.15 vs. 6.70 at the budget).
+When. The transition from diversity- to prediction-oriented acquisition recurs (Figure 7). Hybrid leads during the cold
+start, by up to 0.069 κ over Random at 30 labels, and its advantage shrinks afterwards; EPIC overtakes it at about 70 labels
+and TANN at about 80, somewhat later than with TabICL. Accordingly, Hybrid has the best AULC and mean rank over
+the trajectory (0.456, rank 3.75; Figure 8, Table 12), whereas EPIC attains the highest κ and the best mean rank at the
+budget (0.558, rank 3.95; Table 11) and improves on Hybrid on 14 of 20 datasets (+0.024, p = 0.017; p = 0.086 after
+Holm correction over nine comparisons), mirroring the TabICL result (p = 0.011 and 0.064). In the label-reduction study
+(Figure 9, Table 13), Hybrid retains the most full-context κ with 1% and 2% of the pool labeled (57.0% and 63.4%) and
+EPIC with 5% and 10% (75.5% and 84.5%; ahead of Hybrid on 7 of 8 datasets at both fractions, p = 0.20 and p = 0.15,
+and of Random on all eight at 10%, p = 0.008). The crossover is thus the same as with TabICL, although the individual
+differences are smaller.
+16
+
+
+When, Where, How: AICL4TFMs
+Table 11. Cohen’s κ at the label budget with TabPFN (mean ± std over 10 seeds); best in bold, second underlined.
+Dataset
+Random
+Margin
+Coreset
+Hybrid
+Proxy-Hybrid
+Target-
+Random
+Target-
+Coverage
+TANN-feat
+TANN
+EPIC
+iris
+0.957 ±0.030 0.950 ±0.045 0.943 ±0.042 0.957 ±0.052
+0.957 ±0.033
+0.933 ±0.039 0.950 ±0.040 0.957 ±0.042 0.957 ±0.033 0.940 ±0.042
+glass
+0.609 ±0.054 0.616 ±0.052 0.546 ±0.090 0.593 ±0.035
+0.601 ±0.085
+0.641 ±0.065 0.590 ±0.074 0.665 ±0.076 0.667 ±0.061 0.680 ±0.066
+ionosphere
+0.869 ±0.045 0.894 ±0.040 0.619 ±0.102 0.877 ±0.041
+0.890 ±0.048
+0.869 ±0.037 0.871 ±0.025 0.828 ±0.051 0.886 ±0.040 0.874 ±0.043
+balance-scale
+0.847 ±0.033 0.938 ±0.018 0.882 ±0.028 0.919 ±0.021
+0.941 ±0.016
+0.879 ±0.025 0.868 ±0.032 0.900 ±0.041 0.928 ±0.021 0.940 ±0.014
+vehicle
+0.946 ±0.019 0.995 ±0.007 0.927 ±0.041 0.969 ±0.019
+0.994 ±0.007
+0.950 ±0.029 0.959 ±0.022 0.989 ±0.007 0.996 ±0.005 0.993 ±0.008
+page-blocks
+0.673 ±0.061 0.774 ±0.056 0.714 ±0.073 0.755 ±0.054
+0.782 ±0.076
+0.697 ±0.065 0.797 ±0.037 0.833 ±0.019 0.830 ±0.021 0.815 ±0.022
+parkinsons
+0.726 ±0.110 0.744 ±0.085 0.671 ±0.120 0.774 ±0.097
+0.791 ±0.100
+0.741 ±0.088 0.778 ±0.092 0.789 ±0.118 0.778 ±0.093 0.780 ±0.099
+seeds
+0.948 ±0.028 0.943 ±0.032 0.933 ±0.037 0.952 ±0.032
+0.940 ±0.031
+0.933 ±0.037 0.943 ±0.027 0.950 ±0.027 0.948 ±0.032 0.938 ±0.034
+bank-marketing
+0.190 ±0.102 0.203 ±0.107 0.254 ±0.121 0.198 ±0.124
+0.324 ±0.059
+0.240 ±0.130 0.195 ±0.059 0.236 ±0.091 0.232 ±0.080 0.234 ±0.076
+adult
+0.420 ±0.076 0.477 ±0.074 0.371 ±0.089 0.464 ±0.060
+0.500 ±0.031
+0.430 ±0.104 0.475 ±0.063 0.460 ±0.071 0.450 ±0.153 0.490 ±0.049
+covertype
+0.447 ±0.028 0.465 ±0.014 0.461 ±0.034 0.463 ±0.019
+0.433 ±0.035
+0.444 ±0.030 0.448 ±0.025 0.462 ±0.024 0.476 ±0.015 0.458 ±0.020
+kc1
+0.491 ±0.128 0.417 ±0.127 0.456 ±0.112 0.425 ±0.133
+0.439 ±0.127
+0.457 ±0.108 0.466 ±0.144 0.494 ±0.097 0.490 ±0.151 0.495 ±0.097
+jm1
+0.117 ±0.062 0.079 ±0.066 0.099 ±0.071 0.112 ±0.040
+0.088 ±0.072
+0.084 ±0.071 0.080 ±0.029 0.067 ±0.049 0.066 ±0.052 0.069 ±0.060
+blood-transfusion 0.094 ±0.088 0.271 ±0.050 0.105 ±0.077 0.199 ±0.085
+0.191 ±0.092
+0.169 ±0.091 0.091 ±0.079 0.212 ±0.097 0.190 ±0.074 0.153 ±0.069
+diabetes
+0.419 ±0.070 0.411 ±0.053 0.433 ±0.037 0.422 ±0.044
+0.455 ±0.044
+0.409 ±0.062 0.421 ±0.073 0.451 ±0.074 0.423 ±0.053 0.443 ±0.065
+tic-tac-toe
+0.202 ±0.075 0.182 ±0.084 0.123 ±0.083 0.191 ±0.048
+0.220 ±0.053
+0.154 ±0.125 0.270 ±0.033 0.235 ±0.095 0.266 ±0.100 0.260 ±0.076
+credit-g
+0.195 ±0.128 0.238 ±0.113 0.181 ±0.092 0.190 ±0.063
+0.228 ±0.069
+0.163 ±0.122 0.188 ±0.093 0.220 ±0.093 0.216 ±0.113 0.227 ±0.101
+steel-plates
+0.551 ±0.036 0.585 ±0.021 0.457 ±0.095 0.604 ±0.034
+0.565 ±0.028
+0.588 ±0.036 0.594 ±0.038 0.621 ±0.032 0.577 ±0.039 0.621 ±0.025
+phoneme
+0.554 ±0.038 0.568 ±0.062 0.507 ±0.032 0.537 ±0.047
+0.563 ±0.056
+0.591 ±0.040 0.563 ±0.048 0.632 ±0.027 0.608 ±0.047 0.633 ±0.021
+ilpd
+0.101 ±0.074 0.089 ±0.075 0.090 ±0.100 0.084 ±0.094
+0.119 ±0.104
+0.139 ±0.087 0.173 ±0.137 0.063 ±0.077 0.093 ±0.099 0.121 ±0.099
+Mean
+0.518
+0.542
+0.489
+0.534
+0.551
+0.526
+0.536
+0.553
+0.554
+0.558
+Mean rank ↓
+7.03
+5.15
+7.88
+5.55
+4.15
+7.03
+6.00
+4.05
+4.22
+3.95
+20
+40
+60
+80
+100
+Labels
+0.15
+0.20
+0.25
+0.30
+0.35
+0.40
+0.45
+0.50
+Cohen's κ
+Random
+Margin
+Hybrid
+TANN
+EPIC
+(a) Mean Cohen’s κ
+20
+40
+60
+80
+100
+Labels
+−0.025
+0.000
+0.025
+0.050
+0.075
+Δκ to Random
+Margin
+Hybrid
+TANN
+EPIC
+(b) Difference to Random (±1 s.e.)
+Figure 7. TabPFN as the backbone: learning curves on the fifteen datasets with a budget of 100 labels, averaged over datasets (each
+averaged over ten seeds). Hybrid leads in the cold start; EPIC and TANN overtake it after about 70 and 80 labels.
+Where. With TabPFN, access to the target inputs alone does not improve on random labeling: Target-Random is level
+with Random (AULC 10/2/8 datasets, p = 0.39; at the budget 10/3/7, p = 0.29), and Target-Coverage improves only the
+AULC (12/5/3, +0.026, p = 0.015). Choosing the targets by the model’s uncertainty or by information gain, however,
+matters even more than with TabICL (Table 14): at the budget, TANN improves on Target-Random on 16 datasets (+0.028,
+p = 0.002, significant after Holm correction) and on Target-Coverage on 12 (+0.018, p = 0.030), and EPIC improves on
+Target-Random on 14 (+0.033, p = 0.001) and on Target-Coverage on 13 (+0.022, p = 0.007), both significant after Holm
+correction. As with TabICL, TANN and EPIC are statistically indistinguishable (AULC 9/3/8, p = 0.93; at the budget 7/5/8,
+p = 0.45), as are TANN in the row representation and in the feature space (at the budget 6/8/6, p = 0.78).
+How. EPIC attains the highest mean κ at the budget and improves on Random (15/2/3, +0.040), Coreset (15/3/2, +0.070)
+and both controls, all significant after Holm correction, and on Margin on 11 datasets (+0.016, p = 0.064); Proxy-Hybrid
+and TANN are statistically level with it (Table 14). The labels acquired by EPIC with TabPFN again transfer to tree-based
+models (Table 15): XGBoost and CatBoost trained on them reach a final κ of 0.530 and 0.541, compared with 0.498 and
+0.525 with their own margin-based acquisition (17/1/2 datasets, p < 0.001, and 13/4/3, p = 0.012), and the ordering
+Random < Hybrid < Margin < TANN < EPIC of the transferred labels is the same for both tree models.
+17
+
+
+When, Where, How: AICL4TFMs
+Table 12. AULC of Cohen’s κ (mean ± std over 10 seeds) on the Tab-AICL benchmarks with TabPFN; best in bold, second underlined.
+Dataset
+Random
+Margin
+Coreset
+Hybrid
+Proxy-
+Hybrid
+Target-
+Random
+Target-
+Coverage
+TANN-feat
+TANN
+EPIC
+iris
+0.902 ±0.045 0.902 ±0.030 0.916 ±0.041 0.903 ±0.040 0.909 ±0.034 0.889 ±0.034 0.900 ±0.035 0.908 ±0.036 0.907 ±0.033 0.896 ±0.038
+glass
+0.471 ±0.039 0.478 ±0.048 0.385 ±0.041 0.472 ±0.035 0.449 ±0.048 0.515 ±0.053 0.493 ±0.060 0.529 ±0.063 0.540 ±0.055 0.551 ±0.044
+ionosphere
+0.702 ±0.072 0.727 ±0.034 0.346 ±0.108 0.784 ±0.036 0.771 ±0.042 0.706 ±0.085 0.759 ±0.038 0.705 ±0.051 0.744 ±0.057 0.651 ±0.056
+balance-scale
+0.695 ±0.052 0.703 ±0.053 0.737 ±0.025 0.752 ±0.024 0.714 ±0.051 0.705 ±0.039 0.691 ±0.069 0.714 ±0.049 0.718 ±0.036 0.739 ±0.030
+vehicle
+0.753 ±0.049 0.790 ±0.045 0.719 ±0.048 0.822 ±0.026 0.802 ±0.039 0.766 ±0.059 0.756 ±0.058 0.791 ±0.038 0.796 ±0.036 0.794 ±0.062
+page-blocks
+0.576 ±0.086 0.630 ±0.060 0.447 ±0.083 0.689 ±0.041 0.645 ±0.063 0.588 ±0.051 0.678 ±0.046 0.667 ±0.059 0.693 ±0.034 0.635 ±0.061
+parkinsons
+0.517 ±0.125 0.580 ±0.119 0.528 ±0.109 0.571 ±0.083 0.573 ±0.095 0.589 ±0.078 0.587 ±0.128 0.581 ±0.119 0.623 ±0.130 0.606 ±0.102
+seeds
+0.892 ±0.027 0.888 ±0.023 0.890 ±0.026 0.901 ±0.028 0.880 ±0.032 0.884 ±0.034 0.897 ±0.024 0.894 ±0.023 0.902 ±0.026 0.877 ±0.046
+bank-marketing
+0.120 ±0.077 0.133 ±0.078 0.191 ±0.094 0.161 ±0.112 0.229 ±0.048 0.128 ±0.090 0.138 ±0.046 0.144 ±0.057 0.144 ±0.062 0.136 ±0.083
+adult
+0.296 ±0.064 0.384 ±0.065 0.285 ±0.061 0.369 ±0.060 0.350 ±0.045 0.286 ±0.100 0.376 ±0.060 0.363 ±0.062 0.360 ±0.124 0.363 ±0.038
+covertype
+0.357 ±0.021 0.374 ±0.033 0.349 ±0.030 0.370 ±0.038 0.331 ±0.034 0.343 ±0.038 0.378 ±0.030 0.386 ±0.027 0.396 ±0.023 0.371 ±0.027
+kc1
+0.389 ±0.139 0.331 ±0.092 0.306 ±0.077 0.349 ±0.097 0.339 ±0.084 0.381 ±0.107 0.383 ±0.087 0.358 ±0.070 0.382 ±0.113 0.405 ±0.099
+jm1
+0.102 ±0.063 0.061 ±0.057 0.073 ±0.049 0.111 ±0.046 0.069 ±0.058 0.080 ±0.061 0.068 ±0.035 0.054 ±0.045 0.042 ±0.026 0.062 ±0.056
+blood-transfusion 0.078 ±0.064 0.160 ±0.062 0.163 ±0.059 0.158 ±0.070 0.074 ±0.025 0.121 ±0.055 0.074 ±0.041 0.119 ±0.052 0.116 ±0.060 0.114 ±0.027
+diabetes
+0.345 ±0.058 0.338 ±0.056 0.314 ±0.050 0.376 ±0.024 0.395 ±0.046 0.351 ±0.070 0.345 ±0.110 0.328 ±0.075 0.369 ±0.040 0.360 ±0.061
+tic-tac-toe
+0.080 ±0.033 0.109 ±0.043 0.060 ±0.047 0.141 ±0.049 0.168 ±0.056 0.074 ±0.055 0.178 ±0.050 0.149 ±0.098 0.164 ±0.098 0.139 ±0.062
+credit-g
+0.117 ±0.067 0.131 ±0.091 0.143 ±0.029 0.172 ±0.072 0.120 ±0.072 0.098 ±0.057 0.099 ±0.063 0.114 ±0.059 0.124 ±0.090 0.145 ±0.068
+steel-plates
+0.450 ±0.030 0.463 ±0.030 0.340 ±0.066 0.487 ±0.024 0.333 ±0.055 0.463 ±0.040 0.476 ±0.035 0.499 ±0.031 0.449 ±0.049 0.474 ±0.025
+phoneme
+0.462 ±0.041 0.472 ±0.043 0.405 ±0.036 0.461 ±0.051 0.456 ±0.052 0.461 ±0.073 0.482 ±0.046 0.513 ±0.039 0.464 ±0.065 0.504 ±0.035
+ilpd
+0.085 ±0.047 0.095 ±0.047 0.039 ±0.039 0.070 ±0.041 0.101 ±0.097 0.113 ±0.070 0.151 ±0.117 0.066 ±0.041 0.071 ±0.063 0.114 ±0.061
+Mean
+0.419
+0.437
+0.382
+0.456
+0.435
+0.427
+0.446
+0.444
+0.450
+0.447
+Mean rank ↓
+7.10
+5.90
+7.30
+3.75
+5.70
+6.60
+4.80
+5.05
+4.10
+4.70
+Table 13. TabPFN: label reduction on 8 datasets (pools of 1,358 to 7,000 rows): Cohen’s κ with a fraction of the pool labelled, relative to
+TabPFN with the fully labelled pool (in %, mean over datasets of the seed means; 100% = full-context performance). In parentheses:
+datasets reaching at least 95% of the full-context κ out of those where the fraction is defined.
+Rule
+Labelled fraction of the pool
+1%
+2%
+5%
+10%
+Random 47.3 (0/8) 56.6 (0/8) 70.1 (0/8) 78.4 (0/8)
+Margin
+44.0 (0/8) 57.7 (0/8) 73.3 (1/8) 81.9 (2/8)
+Hybrid
+57.0 (0/8) 63.4 (0/8) 74.9 (0/8) 80.8 (1/8)
+TANN
+41.3 (0/8) 59.3 (0/8) 73.6 (1/8) 80.7 (2/8)
+EPIC
+48.2 (0/8) 59.6 (0/8) 75.5 (1/8) 84.5 (2/8)
+Therefore, all three findings hold with TabPFN as the backbone: diversity leads in the cold start and prediction-oriented
+acquisition at the budget, choosing the targets to be served is essential, and EPIC and TANN yield the best models at the
+budget with labels that transfer to other models. The effect sizes and significance levels are of the same order as with
+TabICL.
+18
+
+
+When, Where, How: AICL4TFMs
+2
+4
+6
+8
+10
+Mean rank (1 = best)
+Hybrid
+TANN
+EPIC
+Target-Coverage
+TANN-feat
+Proxy-Hybrid
+Margin
+Target-Random
+Random
+Coreset
+3.75
+4.10
+4.70
+4.80
+5.05
+5.70
+5.90
+6.60
+7.10
+7.30
+(a) AULC of κ
+2
+4
+6
+8
+10
+Mean rank (1 = best)
+EPIC
+TANN-feat
+Proxy-Hybrid
+TANN
+Margin
+Hybrid
+Target-Coverage
+Random
+Target-Random
+Coreset
+3.95
+4.05
+4.15
+4.22
+5.15
+5.55
+6.00
+7.03
+7.03
+7.88
+(b) κ at the budget
+Figure 8. TabPFN as the backbone: mean rank of every acquisition rule over the twenty datasets (1 is best).
+1%
+2%
+5%
+10%
+Labelled fraction of the pool
+40
+50
+60
+70
+80
+90
+100
+κ relative to full context (%)
+95%
+Random
+Margin
+Hybrid
+TANN
+EPIC
+Figure 9. TabPFN as the backbone: Cohen’s κ with a fraction of the pool labeled, relative to TabPFN with the fully labeled pool, on the
+eight datasets with pools of 1,358 to 7,000 rows (mean over datasets of the means over ten seeds). The dotted line marks 95% of the
+full-context performance.
+19
+
+
+When, Where, How: AICL4TFMs
+Table 14. TabPFN: pairwise comparison across the 20 datasets: wins/ties/losses of the row method against each rule (tie: |∆| ≤0.005),
+mean difference ∆of the dataset means, and the p-value of a two-sided Wilcoxon signed-rank test (p < 0.05 in bold).
+AULC κ
+Final κ
+Method vs.
+W/T/L
+∆
+p
+W/T/L
+∆
+p
+EPIC
+Random
+16/0/4 +0.027 0.004 15/2/3 +0.040 0.001
+Margin
+10/5/5 +0.010 0.123 11/3/6 +0.016 0.064
+Coreset
+13/2/5 +0.065 0.003 15/3/2 +0.070 0.000
+Hybrid
+5/2/13
+-0.009 0.330 14/1/5 +0.024 0.017
+Proxy-Hybrid
+11/1/8 +0.012 0.245
+7/5/8
++0.007 0.729
+Target-Random
+15/1/4 +0.020 0.006 14/2/4 +0.033 0.001
+Target-Coverage
+9/3/8
++0.001 0.648 13/3/4 +0.022 0.007
+TANN-feat
+8/2/10 +0.003 0.756
+7/7/6
++0.005 0.546
+TANN
+8/3/9
+-0.003 0.927
+8/5/7
++0.004 0.452
+TANN
+Random
+14/3/3 +0.031 0.002 14/4/2 +0.036 0.002
+Margin
+13/0/7 +0.013 0.133 10/3/7 +0.012 0.202
+Coreset
+14/0/6 +0.068 0.004 16/1/3 +0.065 0.000
+Hybrid
+5/5/10
+-0.006 0.430 12/4/4 +0.020 0.040
+Proxy-Hybrid
+10/4/6 +0.015 0.189
+8/4/8
++0.003 0.809
+Target-Random
+14/3/3 +0.023 0.012 16/0/4 +0.028 0.002
+Target-Coverage 11/2/7 +0.005 0.349 12/4/4 +0.018 0.030
+TANN-feat
+11/6/3 +0.006 0.097
+6/8/6
++0.001 0.778
+EPIC
+9/3/8
++0.003 0.927
+7/5/8
+-0.004 0.452
+Table 15. Label transfer: final κ of models trained on the labels acquired by each TabPFN rule (mean over datasets and seeds). The
+diagonal reference rows give the same model with its own margin-based acquisition.
+Labels acquired by
+TabPFN
+CatBoost
+XGBoost
+Random
+0.518
+0.500
+0.487
+Margin
+0.542
+0.526
+0.507
+Hybrid
+0.534
+0.520
+0.501
+TANN
+0.554
+0.532
+0.519
+EPIC
+0.558
+0.541
+0.530
+CatBoost-Margin (own labels)
+–
+0.525
+–
+XGBoost-Margin (own labels)
+–
+–
+0.498
+20
+
+
+When, Where, How: AICL4TFMs
+16
+32
+64
+128
+all
+shortlist size s (mr = 256)
+−0.020
+−0.015
+−0.010
+−0.005
+0.000
+0.005
+0.010
+AULC κ − default
+*
+*
+16
+32
+64
+128
+all
+shortlist size s (mr = 256)
+−0.04
+−0.03
+−0.02
+−0.01
+0.00
+0.01
+Final κ − default
+Hybrid
+TANN
+EPIC (±1 s.e.)
+default
+Figure 10. Ablation of the shortlist size s of EPIC (mr = 256, TabICL) on the eight datasets with the smallest pools: difference of AULC
+κ (left) and final κ (right) to the default s = 64 (circled), averaged over datasets (±1 standard error); “all” scores every unlabeled row.
+The horizontal lines mark Hybrid and TANN; ∗: two-sided Wilcoxon p < 0.05 against the default.
+F. Ablation of EPIC’s Approximations
+EPIC approximates the information gain over all targets and all unlabeled rows in two ways (Section 3.4): it averages over
+mr = min(m, 256) targets drawn per round instead of all m = |T | targets, and it scores only a shortlist of s candidates
+instead of every unlabeled row. We vary one of the two at a time with TabICL as the backbone, keeping the other at its
+default (s = 64, mr = 256) and the protocol unchanged (batch size b = 10, ten seeds). The shortlist size is varied on
+the eight datasets with the smallest pools (101 to 437 pool rows), on which scoring every unlabeled row is affordable; the
+number of sampled targets is varied on all twenty datasets (44 to 3,000 targets).
+Shortlist size. Final κ is insensitive to the shortlist size: for s ∈{16, 32, 128} and for scoring every unlabeled row, it stays
+within 0.01 of the default without any significant difference, and every configuration remains well above TANN and Hybrid
+(Figure 10, Table 16). Over the trajectory, however, larger shortlists are worse: with s = 128 the AULC decreases by 0.014
+(0/4/4 datasets, p = 0.04) and with every unlabeled row scored by 0.017 (0/1/7, p = 0.008), below the level of Hybrid
+and TANN, whereas s = 16 and s = 32 match the default. The shortlist is thus not only a reduction of cost. A plausible
+explanation is its composition: two thirds of it consist of rows with uncertain predictions and of rows near uncertain targets,
+and the remaining third is drawn at random, so it restricts the greedy top-b selection to a diverse set of candidates; without
+this restriction, the b highest-scoring rows of a round tend to carry overlapping information (Section 3.4), which matters
+most in the cold start. In addition, with TabICL the shortlist rows enter the fit of the preprocessing statistics, so a larger
+shortlist also changes the statistics shared among the hypothetical contexts. The cost grows linearly with s, from 15 s per run
+for s = 16 to 108 s when every unlabeled row is scored.
+Number of sampled targets. The number of sampled targets has no measurable effect on the twenty datasets (Figure 11,
+Table 17): for mr ∈{16, 32, 64, 1024}, the mean final κ and AULC stay within 0.005 of the default mr = 256, and no
+difference is significant (p ≥0.08); all configurations remain above Hybrid and TANN at the budget. This also holds on the
+eight datasets with more than 256 targets (583 to 3,000), on which the default uses a genuine subsample: averaging over four
+times as many targets (mr = 1024) changes final κ by +0.004 (p = 0.46) and AULC by −0.004 (p = 0.64), and averaging
+over only mr = 16 by +0.003 (p = 1.00) and +0.006 (p = 0.31). On datasets with at most 256 targets, the default uses
+every target, so mr = 1024 coincides with it there. The cost, in contrast, grows with mr; averaged over all twenty datasets,
+it ranges from 49 s per run for mr = 16 to 87 s for the default and 157 s for mr = 1024.
+Therefore, both approximations are benign at the budget: a few dozen sampled targets suffice to rank the candidates, and
+smaller shortlists are cheaper at equal quality, whereas larger ones reduce the quality over the trajectory. The defaults are
+therefore conservative, and EPIC could be run at a fraction of the reported cost.
+21
+
+
+When, Where, How: AICL4TFMs
+16
+32
+64
+256
+1024
+sampled targets mr (s = 64)
+−0.008
+−0.006
+−0.004
+−0.002
+0.000
+0.002
+0.004
+AULC κ − default
+16
+32
+64
+256
+1024
+sampled targets mr (s = 64)
+−0.03
+−0.02
+−0.01
+0.00
+0.01
+Final κ − default
+Hybrid
+TANN
+EPIC (±1 s.e.)
+default
+Figure 11. Ablation of the number of sampled targets mr of EPIC (s = 64, TabICL) on the twenty datasets: difference of AULC κ (left)
+and final κ (right) to the default mr = 256 (circled), averaged over datasets (±1 standard error). On datasets with at most 256 targets, the
+default uses every target and mr = 1024 coincides with it. The horizontal lines mark Hybrid and TANN.
+Table 16. Ablation of the shortlist size s at mr = 256 sampled targets of EPIC with TabICL on 8 datasets (101–437 pool rows, 44–188
+targets; default in bold). Mean Cohen's κ over datasets; ∆: mean difference to the default (wins/ties/losses over datasets, tie |∆| ≤0.005,
+two-sided Wilcoxon p). Time: mean seconds per acquisition run over the datasets of the table. With s = all, every unlabeled row is
+scored.
+Final κ
+AULC κ
+s
+mean ∆
+mean ∆
+Time
+16
+0.742 ±0.000 (4/1/3, 1.00) 0.645 +0.004 (6/0/2, 0.64)
+15
+32
+0.733 −0.009 (1/4/3, 0.56) 0.641 ±0.000 (2/3/3, 0.84)
+24
+64
+0.743 –
+0.641 –
+41
+128
+0.740 −0.003 (2/2/4, 0.46) 0.627 −0.014 (0/4/4, 0.04)
+65
+all
+0.737 −0.005 (2/3/3, 0.25) 0.624 −0.017 (0/1/7, 0.01)
+108
+Hybrid 0.700 −0.043
+0.632 −0.009
+–
+TANN
+0.717 −0.026
+0.630 −0.011
+–
+Table 17. Ablation of the number of sampled targets mr at s = 64 shortlisted candidates of EPIC with TabICL on 20 datasets (101–7,000
+pool rows, 44–3,000 targets; default in bold). Mean Cohen's κ over datasets; ∆: mean difference to the default (wins/ties/losses over
+datasets, tie |∆| ≤0.005, two-sided Wilcoxon p). Time: mean seconds per acquisition run over the datasets of the table. Where a dataset
+has at most min(mr, 256) targets, the configuration uses every target, as the default does, and coincides with the default run.
+Final κ
+AULC κ
+mr
+mean ∆
+mean ∆
+Time
+16
+0.580 +0.002 (7/2/11, 0.84) 0.480 ±0.000 (7/6/7, 0.96)
+49
+32
+0.574 −0.004 (6/4/10, 0.26) 0.475 −0.004 (3/5/12, 0.08)
+52
+64
+0.581 +0.003 (4/10/6, 0.47) 0.478 −0.002 (5/8/7, 0.53)
+58
+256
+0.578 –
+0.479 –
+87
+1024
+0.579 +0.001 (4/12/4, 0.59) 0.478 −0.001 (4/11/5, 0.59)
+157
+Hybrid 0.549 −0.030
+0.482 +0.003
+–
+TANN
+0.570 −0.008
+0.479 ±0.000
+–
+22

@@ -1,0 +1,2273 @@
+2026-11-9
+NVIDIA Kumo Tabular: Pushing the
+Accuracy–Efficiency Frontier for Tabular Prediction
+Jingang Qu1, Valter Hudovernik1, Martin Jurkovič1, Cedric Lorenz1, David Holzmüller1,2,
+Federico Lopez1, Dmitry Gordeev1, Akihiro Nitta1, Ramona Bendias1, Ardrian Wong1, Vedaant
+Jain1, Vignesh Kothapalli1,3, Gilberto Titericz Junior1, Jure Leskovec1,3 and Matthias Fey1
+1NVIDIA, 2INRIA, 3Stanford University
+Abstract.
+We introduce Kumo Tabular, a family of open tabular foundation models for classification and regression,
+in three sizes: Kumo Tabular-S (27M parameters), Kumo Tabular-M (61M), and Kumo Tabular-L (214M).
+Pretrained only on artificial tables from the Kumo prior, they can make predictions on new tables without
+any training. In our approach, a table encoder compresses each row into an embedding, and an in-context
+learning transformer predicts the unlabeled rows from the labeled ones. Kumo Tabular introduces architectural
+innovations that improve both training stability and predictive performance, enabling the model to scale up
+to 150M cells on modern GPUs. Kumo Tabular-L ranks first on eight benchmarks: TabArena, TALENT,
+BeyondArena, ScoringBench, STRABLE, MulTaBench, RamanBench, and TabBench-Bio.
+These cover
+probabilistic regression, tables with over 1M rows or 100K columns, and tables with strings, text, or images.
+Accuracy improves with model size in all tested comparisons. All three sizes lie on the accuracy–speed
+frontiers of TabArena and BeyondArena. Kumo Tabular-L predicts faster than the runners-up, LimiX-2 on
+TabArena (36×) and TabPFN-3.5 on BeyondArena (1.7×). Weights and pretraining code are released under
+OpenMDW-1.1 and Apache 2.0, respectively.
+Code: Pretraining, inference, Kumo prior
+github.com/NVIDIA/structured-data-models
+Apache-2.0
+Weights: Classifier and regressor in all sizes
+huggingface.co/nvidia/Kumo-Tabular
+OpenMDW-1.1
+1. Introduction
+Tables are among the most common forms of data in industry and science, from bank transactions, credit
+histories, and online orders to factory sensor logs, patient records, census data, and laboratory measure-
+ments (Benjelloun et al., 2020; Shwartz-Ziv and Armon, 2022; Borisov et al., 2024; van Breugel and van der
+Schaar, 2024).
+For two decades, the strongest predictors on such data were gradient-boosted decision
+trees (Friedman, 2001; Chen and Guestrin, 2016; Ke et al., 2017; Prokhorenkova et al., 2018), tuned for each
+task and often ensembled by AutoML systems (Erickson et al., 2020). Tabular foundation models (TFMs) have
+changed this picture. They can make predictions on a new table without training or tuning on it. Pretrained
+on a large number of predictive tasks, they read the labeled train rows of the table as context and predict
+the labels of its test rows in one forward pass (Müller et al., 2022; Hollmann et al., 2023). The strongest
+TFMs now rank well ahead of tuned and ensembled gradient-boosted trees and deep tabular networks on
+TabArena (Erickson et al., 2025) and BeyondArena (Purucker et al., 2026), two broad benchmarks of real-world
+tabular datasets (Figure 1).
+TabPFN established the TFM paradigm but handled only relatively small classification tables (Hollmann et al.,
+2023). Later models extended it to regression and to tables with hundreds of thousands of rows (Hollmann
+et al., 2025; Qu et al., 2025), learned from richer artificial priors and from real tables (Ma et al., 2025; Zhang
+et al., 2025; Qu et al., 2026), and began to exploit column names with semantics-aware designs (Spinaci et al.,
+2025). TabICLv2 showed that a fully open model can reach the state of the art (Qu et al., 2026), launching
+a new wave of innovation. Several models have since pushed accuracy on standard i.i.d. benchmarks even
+further (Grinsztajn et al., 2026; Kong et al., 2026; Eo et al., 2026; Tao et al., 2026; Cho et al., 2026; Zhang
+et al., 2026; Jäger et al., 2026).
+Here, we present Kumo Tabular, a family of fully open TFMs for classification and regression that combine
+frontier performance with computational efficiency. It comes in three sizes, Kumo Tabular-S, Kumo Tabular-M,
+© 2026 NVIDIA. All rights reserved.
+arXiv:2611.23001v1  [cs.LG]  17 Nov 2026
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+0.01
+0.1
+1
+10
+100
+Median prediction time per 1,000 rows (s)
+1000
+1200
+1400
+1600
+1800
+2000
+Elo
+0.1
+0.3
+1
+3
+10
+Median prediction time per 1,000 rows (s)
+800
+1000
+1200
+1400
+Elo
+Pareto frontier
+95% CI
+Other entries
+(a) TabArena: Elo vs. prediction time
+(b) BeyondArena: Elo vs. prediction time
+Figure 1 | Kumo Tabular is accurate and fast. On (a) TabArena and (b) BeyondArena, all three sizes lie on the
+Pareto frontier of Elo and prediction time.
+and Kumo Tabular-L (27M, 61M, and 214M parameters), each as a classifier and a regressor. Its architecture
+extends TabICL (Qu et al., 2025) and TabICLv2 (Qu et al., 2026) with innovations that improve both training
+stability and predictive performance (cf. Section 2). The pretraining data is provided by the Kumo prior, a
+generator of artificial tables that builds on the prior of TabICLv2 (cf. Section 3). For each table, the prior
+draws a random causal graph, the functions that link its nodes, and how the columns are observed from them.
+The prior also includes realistic noise patterns and missing values. Pretraining runs in three stages, from
+tables of 1,024 rows to tables of up to 60K rows, all with up to 100 columns (cf. Section 4). We release both
+the pretraining and inference code in our open-source library structured-data-models (SDM)1.
+Kumo Tabular-L ranks first on eight benchmarks, while the strongest entry other than Kumo Tabular varies
+by benchmark (cf. Figure 2). They span broad suites of real tables (TALENT, TabArena, and BeyondArena;
+Ye et al., 2024; Erickson et al., 2025; Purucker et al., 2026), probabilistic regression (ScoringBench; Landsgesell
+et al., 2026), tables with strings (STRABLE; Blayer et al., 2026), text or images (MulTaBench; Arazi et al.,
+2026b), and wide scientific tables (RamanBench and TabBench-Bio; Koddenbrock et al., 2026; Kreuer et al.,
+2026). The benchmark datasets reach more than 1M rows and more than 100K columns. On an H100
+GPU our models may attend to large tables effectively, scaling up to 280M cells for Kumo Tabular-S and
+150M for the larger variants. On TabArena and BeyondArena, all three sizes lie on the accuracy–speed
+frontiers (cf. Figure 1). Kumo Tabular-L also predicts faster than the runner-up on each: LimiX-2 (36×) and
+TabPFN-3.5 (1.7×).
+2. Model Architecture
+Kumo Tabular predicts the labels of the unlabeled test rows of a table from its labeled training rows in a
+single forward pass. It processes a table at two granularities: a table encoder builds a fixed-size embedding for
+every row by attending within columns and rows of a table, and an in-context learning (ICL) transformer
+then reasons across rows, allowing test rows to learn from labeled training examples (cf. Figure 3):
+Cell Embedding.
+Each cell is represented by a token together with two neighboring cells in its row,
+following the feature grouping design of TabICLv2 (Qu et al., 2026). As in Kong et al. (2026), values are
+expanded into sine and cosine features at learned frequencies and projected based on column type (numerical
+vs. categorical) into 𝑑-dimensional embeddings. Missing values are represented by learned embeddings added
+to their imputed numerical representations. For training rows, the token also holds an embedding of the row’s
+label.
+1GitHub: https://github.com/NVIDIA/structured-data-models
+2
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+(a)
+1st
+2nd
+3rd
+(b)
+TabArena
+Elo ↑
+Kumo Tabular-L
+1962
+LimiX-2
+1952
+Kumo Tabular-M
+1902
+51 datasets
+TALENT
+Elo ↑
+Kumo Tabular-L
+1633
+Kumo Tabular-M
+1593
+LimiX-2
+1576
+261 datasets
+BeyondArena
+Elo ↑
+Kumo Tabular-L
+1426
+TabPFN-3.5
+1376
+Kumo Tabular-M
+1376
+142 datasets
+ScoringBench
+mean CRPS rank ↓
+Kumo Tabular-L
+1.84
+Kumo Tabular-M
+3.22
+LimiX-2
+4.96
+101 datasets
+STRABLE
+median R²/AUC ↑
+Kumo Tabular-L
+0.8325
+Causilo
+0.8190
+TabPFN-3.5
+0.8132
+108 datasets
+MulTaBench
+Elo ↑
+Kumo Tabular-L
+2227
+LimiX-2
+2159
+Kumo Tabular-M
+2094
+80 datasets
+RamanBench
+Elo ↑
+Kumo Tabular-L
+1558
+Kumo Tabular-M
+1531
+Chakra-Tab full
+1512
+61 datasets
+TabBench-Bio
+Elo ↑
+Kumo Tabular-L
+1265
+Kumo Tabular-M
+1215
+TabPFN-3.5
+1198
+43 datasets
+rows
+columns
+10
+1K
+100K
+10
+1K
+100K
+10
+1K
+100K
+10
+1K
+100K
+10
+1K
+100K
+10
+1K
+100K
+10
+1K
+100K
+10
+1K
+100K
+10
+1K
+100K
+Figure 2 | Kumo Tabular-L tops all eight leaderboards. (a) Entries and scores under each leaderboard’s main
+metric, Kumo Tabular in green. (b) Row and column counts of each dataset (log scale). ScoringBench subsamples to
+3,000 rows, and STRABLE and MulTaBench count columns before encoding. Tables of each benchmark are colored
+black over all tables in gray. Above the dashed line, tables have more columns than rows. See Table 3 for benchmark
+versions, evaluation protocols, ranking procedures, and subsampling limits.
+Table Encoder.
+In most two-stage tabular in-context learning architectures, the encoder first runs several
+column attention layers (attention between cells in the same column), followed by several row attention
+layers (attention between cells in the same row), which prevents the column attention layers from accessing
+information across columns. Instead, we alternate column and row attention four times in Kumo Tabular-S
+and six times in Kumo Tabular-M and Kumo Tabular-L. Interleaving has a similar runtime to staged column
+and row attention, but it makes memory optimizations such as row chunking more expensive (Grinsztajn
+et al., 2026). Column attention runs through learned inducing points (Lee et al., 2019), so its cost grows
+linearly with the number of rows. These points attend only to the column’s training cells, while every cell
+attends to the inducing points. Row attention runs over the cell tokens of a row, which it tells apart by rotary
+position embeddings (Su et al., 2024). Four learned readout tokens join each row in row attention but skip
+column attention. They serve as readout to obtain the final fixed-size row embeddings.
+ICL Transformer.
+A separate transformer processes the obtained row embeddings. Label embeddings
+are added to the training row embeddings before the first layer. Train rows attend only to one another,
+so their keys and values can be computed once and cached. To shrink this cache, we use Test-GQA in
+Kumo Tabular-M and Kumo Tabular-L. Test rows thus only read the first two key/value heads of each layer,
+making the cache 4-fold smaller per train row in Kumo Tabular-M and 8-fold smaller in Kumo Tabular-L.
+After the final layer, a two-layer MLP maps each test row to ten class logits or to 999 quantiles of the target.
+At inference, tasks with more than ten classes are split into ten-class subtasks.
+Model Development.
+We build on the open design of TabICLv2 (Qu et al., 2026). We progressively modify
+the architecture to improve training stability, efficiency, and predictive performance, then scale up the model.
+TabICLv2 introduced query-aware scalable softmax (QASSMax), which scales logits with the logarithm of the
+number of keys to counter attention dilution as tables grow. We revised attention normalization and scaling
+after observing instabilities in longer training runs and larger models. We also apply length-dependent scaling
+to row attention to retain sharp attention on wider tables. We interleave column and row attention to allow
+interactions across columns throughout the encoder, refine the transformer blocks, and add missing-value-aware
+embeddings to support our expanded prior. With the resulting efficiency gains, we increase the encoder
+capacity and scale the ICL transformer to obtain the three model sizes below. We evaluate this progression
+through an additive ablation study in Section 7 and report our development observations in Section B.
+Model Family.
+Kumo Tabular comes in three sizes, each with a classifier and a regressor (cf. Table 1).
+Kumo Tabular-S closely matches TabICLv2 in parameter count and ICL transformer shape. Kumo Tabular-M
+has a wider and deeper table encoder and twice as many ICL layers, and Kumo Tabular-L doubles the width
+3
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Kumo Tabular
+features
+label
+num num num cat
+cat
+1.2 0.4 3.0
+a
+b
+0
+0.7 2.1 NaN
+b
+a
+1
+2.5 1.8 0.9
+a
+a
+1
+0.3 1.1 2.2
+b
+b
+?
+1.9 0.6 1.4
+a
+b
+?
+train
+labeled rows
+test
+new rows
+1 Cell embedding
+numeric
+2.1
+categorical
+b
+missing
+NaN
+token
+every cell becomes
+a token
+2 Table encoder
+column attention
+row attention
+\( \times K \)
+row
+compression
+column and row attention alternate
+\( K \) times, then every row is
+compressed into one embedding
+3 In-context learning
+0
+1
+1
+train rows
++ label
+embeddings
+test
+read by
+test rows attend to the labeled
+train rows, never to each other
+prediction
+0
+1
+1
+$$\hat{y}_4$$
+$$\hat{y}_5$$
+predicted
+labels
+probabilities
+(classification)
+quantiles
+(regression)
+one forward pass:
+no training loop
+no hyperparameter search
+no feature engineering
+1 Cell embedding
+row \( i \)
+num
+0.7
+num
+2.1
+num
+NaN
+cat
+b
+cat
+a
+\( j \)
+\( j{+}1 \)
+\( j{+}3 \)
+2.1
+NaN
+a
+shifted group
+of cell \( (i, j) \)
+offsets 0, 1, 3
+wrap around the row
+Fourier features
+num
+own Linear
+cat
+own Linear
+sin, cos of learned frequencies
++
++
+Embed
+\( y_i \)
+label embedding
+(train rows only)
+$$e_{ij} \in \mathbb{R}^{d}$$
+2 Table encoder
+4 learnable
+[CLS]
+cell tokens \( E \)
+Column attn 1
+Row attn 1
+Column attn 2
+Row attn 2
+Column attn \( K \)
+Row attn \( K \)
+queries: [CLS] only
+\( \vdots \)
+[CLS] skip column attention
+[CLS] readout
+Linear
+only if \( 4d \neq w \)
+$$h_i \in \mathbb{R}^{w}$$
+Column attention
+induced self-attention · linear in \( n \)
+column \( j \)
+\( \tau(n) \)
+1
+2
+inducing points
+1
+train rows → inducing points
+2
+inducing points → every row
+Row attention
+across the tokens of one row
+\( \tau(n, q) \)
+1 2 3 4 5 6 7 8
+rotary positional
+encoding
+Row attn \( K \): readout
+queries: [CLS] only
+3 In-context learning
+$$h_1$$
+$$h_2$$
+$$h_3$$
+$$h_4$$
+$$h_5$$
+train rows
++ label embeddings
+test
+Transformer
+\( \times L \)
+width \( w \)
+\( \tau(n) \)
+Test-GQA for test rows
+Head
+classification or regression
+$$\hat{y}_4$$
+$$\hat{y}_5$$
+classes
+quantiles
+Attention Masking Pattern
+keys
+train
+test
+train
+test
+queries
+all K/V heads
+Test-GQA
+no attention
+Test-GQA (Kumo-M, Kumo-L)
+query head
+K/V head
+train rows
+one K/V per head
+test rows
+2 shared K/V heads
+Length-aware attention temperature
+$$\mathrm{softmax}\!\left(\frac{(\tau \odot q)\, k^{\top}}{\sqrt{d_h}}\right)$$
+$$\tau(n, q) = \alpha_h \log n \cdot {\color{#8E5BB5}{\gamma(q)}}$$
+\( n \) number of keys
+\( \alpha_h \) learned, one per head
+\( \gamma(q) \) learned query gate, optional:
+row attention only
+elsewhere \( \gamma = 1 \)
+attention weights over the keys
+few keys
+sharp
+many keys, plain
+diluted
+many keys, with \( \tau \)
+sharp again
+used in
+attention
+\( n \) = number of
+\( \tau \)
+2
+Column attention
+1
+train rows
+\( \tau(n) \)
+2
+Row attention
+columns + 4 [CLS]
+\( \tau(n, q) \)
+3
+In-context attention
+train rows
+\( \tau(n) \)
+keeps attention sharp as tables grow longer or wider
+NaN mask
+0
+1
+0
+Linear
+one projection per cell, then summed
+NaN → column mean,
+then flagged by the mask
+Figure 3 | Architecture of Kumo Tabular. (1) The token of cell (𝑖, 𝑗) encodes the cells in columns 𝑗, 𝑗+1, and
+𝑗+3 of row 𝑖, their missingness flags, and, for train rows, the label. (2) Column and row attention alternate 𝐾
+times. Column attention passes through inducing points that read the train cells of each column. Four readout
+tokens ([CLS]) form the row embedding, which enters the ICL transformer as ℎ𝑖. (3) Test rows attend only to train
+rows. In Kumo Tabular-M and Kumo Tabular-L, they read two shared key/value heads (Test-GQA). Length-aware
+temperature keeps attention sharp as tables grow longer or wider.
+4
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Table 1 | The Kumo Tabular family. Model configurations of Kumo Tabular across model sizes and task types.
+Kumo Tabular-S
+Kumo Tabular-M
+Kumo Tabular-L
+Parameters, classifier / regressor
+27.46M / 28.47M
+61.49M / 62.49M
+213.67M / 215.68M
+ICL share of parameters, classifier / regressor
+93.8% / 94.1%
+82.9% / 83.2%
+95.3% / 95.4%
+Table
+Encoder
+Stages (column block →row block)
+4
+6
+6
+Cell width 𝑑
+128
+256
+256
+Heads × head width
+4 × 32
+4 × 64
+4 × 64
+Inducing points 𝑀
+128
+256
+256
+Row embedding 4𝑑→𝑤
+512
+1,024 →512
+1,024
+ICL
+Transformer
+Layers
+12
+24
+24
+Width 𝑤
+512
+512
+1,024
+Heads × head width
+8 × 64
+8 × 64
+16 × 64
+Key/value heads read by test rows
+all 8
+2 of 8
+2 of 16
+and heads of the ICL transformer of Kumo Tabular-M. Around 83% to 95% of the parameters sit in the ICL
+transformer.
+3. Pretraining Data
+A TFM trained on tables drawn from a prior learns to approximate the posterior predictive distribution under
+that prior (Müller et al., 2022), so the prior must produce both the varied dependencies and the imperfections
+of real tables. The Kumo prior builds on the causal generator of TabICLv2 (Qu et al., 2026): each table comes
+from its own random structural causal model (SCM; Pearl, 2009) and is generated in six steps (cf. Figure 4).
+It adds mechanisms that model properties of real tables that random causal models alone do not reliably
+reproduce: noisy measurements, groups of correlated features, coarse or code-like columns, targets derived
+from a subset of features, skewed targets, and missing values. Section A provides a detailed specification of
+our changes and newly added components.
+1. Hyperparameters.
+Each table draws its own hyperparameters: its shape, column types, and individual
+parameters for subsequent generation steps. Within a table, these draws follow per-SCM preferences, so its
+nodes tend to use related mechanisms and hyperparameter settings.
+2. Causal Graph.
+Features and target are assigned to random nodes of a random directed acyclic graph,
+sparse in some tables and dense in others. A feature can thus be a cause or an effect of the target, and nodes
+without a column stay hidden.
+3. Propagation.
+Values flow through the graph in topological order: roots initialize random points, and
+every other node combines its parents’ outputs using random functions and a merging method. The functions
+come from eight families, such as small neural networks, tree ensembles, and Gaussian processes.
+4. Readout.
+Each node holds a vector of hidden channels, and converters read each column and the
+target out of the channels of their corresponding node. Converters can also update these channels with
+the generated column or target values before passing them to child nodes. A new distributional numerical
+converter samples numerical features and regression targets from distributions whose parameters depend on
+the node channels. Three channels control the location, noise scale, and probability of belonging to a shifted
+subgroup. The sampled values can then be transformed or rounded to counts. This produces numerical
+columns representing noisy measurements or counts, with noise levels and subgroup probabilities that vary
+across rows. For categorical features and classification targets, the converter maps node channels to a score
+for each category, then either samples from the resulting softmax distribution or deterministically selects the
+highest-scoring category.
+5
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+1 Sample hyperparameters
+each table gets its own shape and mechanisms
+num
+cat
+num
+num
+target
+x1
+x2
+x3
+x4
+y
+n rows
+k columns
+C classes
+types  numerical or categorical
+mechanisms  a random mix of
+functions, activations and readouts
+joint knobs  depth, width,
+hidden channels, …
+each knob keeps one
+distribution per table
+2 Sample a causal graph
+features and target are assigned
+to nodes of a random DAG
+hidden
+hidden
+unused
+x1
+y
+x2
+x3
+x4
+edges  i → j with probability
+σ(A + Bi + Cj)
+A, B, C ~ Cauchy: sparse to dense
+node  a vector of
+1 – 32 hidden channels
+x1
+y
+x4 target  anywhere: features are
+causes or effects
+3 Run the SCM, root → leaf
+noise enters at the roots;
+each node applies a random function
+noise
+each node draws its function f from
+linear
+MLP
+tree
+discretize
+quadratic
+cluster
+GP
+×
+product
+merge
+f
+normalize
+read out
+table
+rescale → children
+merge  concatenate the parents,
+or apply f to each and take +, × or max
+roots  normal, uniform, ball or
+correlated points
+4 Read out the table
+each column and y are decoded
+from their node's channels
+x1
+x2
+x3
+x4
+y
+0.82
+B
+14
+0.31
+1
+-1.30
+A
+3
+0.95
+0
+2.41
+C
+27
+0.12
+2
+0.07
+A
+8
+0.66
+1
+1.15
+B
+11
+0.48
+0
+every row is an independent draw
+numerical
+0.8 pass-through  a channel's value
+distributional  noisy, with subgroups;
+may round to counts
+warp  identity or Kumaraswamy
+categorical
+nearest  of k random centers
+softmax  sample: skewed class sizes
+argmax  keeps every class
+5 Post-process the table
+standardize, shuffle, add random
+transformations and NaNs
+x2
+x4
+x1
+x3
+y
+B
+-0.6
+0.1
+0
+1
+A
+1.5
+-1.4
+-1
+0
+NaN
+-1.2
+1.5
+1
+2
+A
+0.4
+NaN
+0
+1
+B
+0.0
+0.5
+0
+0
+always
+clip outliers,
+standardize
+shuffle columns
+0 1 2 shuffle class ids
+at random
+correlated
+columns
+y
+relabeled
+target
+coarse
+levels
+> 200
+categories
+heavy-tailed
+target
+missing values (NaN)
+structured
+near-empty
+random cells
+hidden factor
+6 Keep learnable tables
+tables with nothing to learn are redrawn
+can a small tree ensemble
+predict y from x?
+no
+yes
+discard
+keep
+redrawn from
+1
+with the same shape
+1
+0
+2
+train rows
+with labels
+?
+?
+test rows
+each kept table becomes one training task
+Figure 4 | The Kumo prior combines causal dependencies with measurement noise and missing values.
+Building on TabICLv2 (Qu et al., 2026), steps 1–3 sample the table dimensions, variable types, causal graph, and
+node functions. Step 4 maps the resulting node representations to numerical or categorical features and targets.
+Our extensions to the readout and post-processing stages introduce noisy measurements, correlated features, varied
+feature and target distributions, and missingness patterns (steps 4–5). A small tree ensemble filters tables by target
+predictability (step 6). Retained tables are split into labeled train rows and test rows, whose targets supervise
+pretraining. Section A specifies the new and modified components.
+6
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+5. Post-Processing.
+As in TabICLv2, outliers are clipped, columns are standardized, class codes are
+permuted, and rows and columns are shuffled. Three new kinds of transformations apply at random:
+• Correlated feature blocks: Real tables often hold groups of related columns, such as the items of a
+questionnaire. In 30% of the tables, we introduce correlations within randomly selected blocks of feature
+columns. For each block, we draw one shared random value per row and blend it into the numerical
+columns (Synthefy et al., 2026). For categorical columns, we use this shared value together with the existing
+categories to reorder category assignments across rows, preserving each category’s frequency.
+• Realism augmentations: Different augmentations can modify a fraction of generated tables: target
+relabeling makes targets depend on only a few features; feature coarsening allows identical feature rows to
+have different targets; high-cardinality codes introduce more than 200 categories to mimic identifiers; and,
+from stage 3 onward, heavy-tailed regression targets mimic quantities such as prices.
+• Missing values: Missing values can reflect how data are collected. A failed source leaves whole rows
+incomplete, a lab value may be recorded only for patients with a particular diagnosis, and an instrument
+may not report values outside its measurement range. In about a quarter of generated tables, we introduce
+missing values through one or more patterns (Synthefy et al., 2026): missingness across rows, dependence
+on other features, values outside specified ranges, nearly empty columns, blocks of missing values governed
+by a shared hidden factor for each row, or independent random missingness.
+6. Learnability Filter.
+A table is redrawn with the same shape if a small ensemble of extremely randomized
+trees (Geurts et al., 2006) cannot reliably beat predicting the mean. Additionally, the filter flags too-easy
+tables (Pfeiffer et al., 2026), which a tree ensemble predicts with at most 5% of the error of predicting the
+mean.
+4. Pretraining
+We train each checkpoint from scratch on fresh draws from the Kumo prior in three stages, following TabICLv2
+(Qu et al., 2026). Each stage teaches the model to use longer, more challenging tables (cf. Table 2):
+Table 2 | Training recipe by stage, for the classifier and the regressor of every model size. Kumo Tabular-S,
+Kumo Tabular-M, and Kumo Tabular-L use 8, 32, and 64 NVIDIA H100 80 GB GPUs, respectively, in all stages.
+Stage 1
+Stage 2
+Stage 3
+Rows per table
+1,024
+400–10,240
+200–60,000
+Train rows (share)
+30–90%
+79–81%
+79–81%
+Features
+2–100
+2–100
+2–100 (M/L: fewer above
+32K/25K rows)
+Realism augmentations
+none
++relabeled targets
++heavy-tailed targets
++coarsened features
++high-cardinality codes
++argmax classes
+Too-easy tables kept
+none
+half
+half
+Learning rate, peak to end
+3 × 10−4 to 0
+4 × 10−5 to 4 × 10−8
+1 × 10−5 to 1 × 10−7
+Gradient-norm clipping
+10
+10
+1
+Precision
+BF16; FP16 for regressors
+BF16
+BF16
+Steps × tables per step
+Kumo Tabular-S
+500K × 64
+40K × 128
+12K × 128
+Kumo Tabular-M
+500K × 128
+40K × 128
+12K × 128
+Kumo Tabular-L
+1M × 128
+60K × 128
+18K × 128
+GPU-hours, classifier / regressor
+Kumo Tabular-S
+369 / 361
+227 / 225
+196 / 195
+Kumo Tabular-M
+1,935 / 1,931
+946 / 969
+749 / 656
+Kumo Tabular-L
+7,212 / 7,074
+2,285 / 2,285
+2,120 / 2,172
+7
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Training Setup.
+Training cost grows with the number of rows, so stages move from many short tables to
+fewer, longer ones. The first stage trains on tables of 1,024 rows. It takes over 90% of the steps but at most
+62% of the GPU-hours. The second stage draws 400 to 10,240 rows per table, while the third stage draws
+200 to 60K rows, with fewer features on its longest tables to bound memory. In stages 2 and 3 we also lower
+the learning rate and add the realism augmentations described in Section 3. Each stage starts from the final
+weights of the previous stage. The three model sizes differ in the number of steps, the batch size, and the
+feature cap on the long tables: Kumo Tabular-L takes twice as many training steps as the smaller variants
+in stage 1 and 1.5 times as many in later stages, with fewer features in its longest tables. Training a single
+checkpoint took about 800, 3,600, and 11,600 GPU-hours for the three sizes of Kumo Tabular (Table 2).
+Objectives.
+Classifiers minimize the cross-entropy of the test labels over classes present in the context up
+to at most ten classes. Regressors minimize the pinball loss (Koenker and Bassett, 1978), averaged over 999
+quantile levels, on targets standardized using the mean and standard deviation of context targets.
+Optimization.
+Most weight matrices are optimized with Muon (Jordan et al., 2024), while the remaining
+parameters are optimized with AdamW (Loshchilov and Hutter, 2019). We apply decoupled weight decay of
+0.01 to most parameters, which pulls the temperature coefficients 𝛼ℎtoward zero. Classifiers train in BF16
+throughout; regressors use FP16 with dynamic loss scaling (Micikevicius et al., 2018) in the first stage and
+BF16 in later stages. BF16 caused the first ICL layer’s mean temperature coefficient to grow to about 30
+times its FP16 value, degrading prediction quality in the first stage. In stages 2 and 3, regression checkpoints
+trained with BF16 had lower RMSE than their FP16 counterparts on most development datasets.
+5. Inference
+Kumo Tabular predicts on new tables without further training. Each forward pass uses the table’s training
+rows to predict its test rows. The inference stack adds preprocessing, ensembling, and key/value caching:
+Preprocessing.
+We identify each column as numerical or categorical and fit all preprocessing steps on
+training rows only. Categorical values are integer-encoded in lexicographic order and treated as numerical
+values downstream. As in pretraining, all input features are standardized and clipped.
+Estimators.
+Preprocessing affects the computation of a forward pass: (1) the scale of a feature changes
+its sine and cosine representation, (2) the column order sets the rotary positions and feature groups of a
+token, and (3) the encoding of the classes sets the label embeddings. We therefore average 𝐸estimators
+that each make these choices differently, with 𝐸= 8 for Kumo Tabular-S and Kumo Tabular-M and 𝐸= 16
+for Kumo Tabular-L. For feature scaling, the estimators take turns among four monotone maps, namely the
+identity, the Yeo–Johnson transform (Yeo and Johnson, 2000), the squashing scaler (Holzmüller et al., 2024),
+and a rank-Gaussian map. Estimators may also flip the signs of numerical features and regression targets at
+random. For the column order, each estimator orders the columns by its own row of a Latin square and keeps
+the first 500. For the classes, each estimator shifts the class codes cyclically. Additionally, on datasets with
+more than 200K rows, each estimator subsamples its training set to 200K rows.
+Averaging.
+For classification, SDM averages the estimators’ logits and then applies the softmax. Unlike
+other models, we set our default softmax temperature to 1. With more than ten classes, each estimator first
+splits the task into ten-class subtasks with error-correcting output codes (Dietterich and Bakiri, 1995). For
+regression, each estimator predicts 999 quantiles. At each quantile level, SDM drops the highest and lowest
+20% of the estimators and averages the rest.
+Cache.
+Training rows never attend to test rows, so keys and values of each transformer block can be cached
+for fast batch inference. With several estimators, we keep the caches in pinned host memory and copy the
+next estimator’s cache to the GPU while the current one runs.
+8
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+6. Benchmark Results
+We evaluate Kumo Tabular on eight tabular benchmarks, covering broad suites of real-world tabular
+datasets (TALENT, TabArena, and BeyondArena; Ye et al., 2024; Erickson et al., 2025; Purucker et al., 2026),
+probabilistic regression (ScoringBench; Landsgesell et al., 2026), tables with strings, text, or images (STRABLE
+and MulTaBench; Blayer et al., 2026; Arazi et al., 2026a), and wide scientific tables (RamanBench and
+TabBench-Bio; Koddenbrock et al., 2026; Kreuer et al., 2026).
+Kumo Tabular-L ranks first on all benchmarks (cf. Figure 2), with predictive performance improving across
+model sizes on each of the benchmarks (Figure 5). Its lowest ranks occur on grouped splits and tables with
+more than 100K training rows, identifying two limitations beyond the pretraining distribution.
+Protocol.
+Kumo Tabular runs with the released weights without per-dataset tuning. Each benchmark
+determines the data splits and evaluation metrics, summarized with the leaderboard snapshots in Table 3.
+Unless noted otherwise, we use FP16 autocast with 8 estimators for Kumo Tabular-S and Kumo Tabular-M
+and 16 for Kumo Tabular-L.2 Six leaderboards rank by Elo, a rating fitted to pairwise comparisons between
+entries on each split or target (Bradley and Terry, 1952; Elo, 1978). ScoringBench ranks by mean rank
+in the continuous ranked probability score (CRPS), and STRABLE by the median score over table-folds,
+𝑅2 for regression and ROC AUC for classification. Each Elo ranking is fitted separately, so ratings are
+comparable only within that ranking. TabArena, BeyondArena, and RamanBench replace missing results with
+RandomForest scores. MulTaBench does not impute missing results. We report median runtimes per 1,000
+rows on each benchmark’s hardware. Comparisons on matched hardware are identified explicitly, since entries
+may use different devices. For Kumo Tabular, fit time includes processing the train rows, and prediction time
+covers the test rows.
+Uncertainty.
+The statistical evidence for a lead varies across benchmarks and tests. The first-place rankings
+are point estimates, and on all six Elo leaderboards, the 95% confidence interval of Kumo Tabular-L overlaps
+that of the highest-ranked entry outside the Kumo Tabular family. Against that entry, paired comparisons
+favor Kumo Tabular-L on TALENT, ScoringBench, STRABLE, and TabBench-Bio under exact two-sided sign
+tests (unadjusted 𝑝< 0.05, Table 4). Against TabPFN-3.5, a strong competitor across all eight benchmarks,
+Kumo Tabular-L wins more comparisons than it loses on every benchmark. All five benchmarks with paired
+results by dataset, table, or target favor Kumo Tabular-L under the same exact two-sided sign test (unadjusted
+𝑝< 10−3). For the remaining three, the reported win rates are 74% on TabArena, 67% on BeyondArena, and
+71% on RamanBench.
+6.1. Broad Suites of Real Tables
+TabArena
+contains 51 curated datasets with up to 150K rows. Kumo Tabular-L ranks first among the
+97 single-model entries and retains first place in rankings that include AutoML systems. The strongest
+tuned and ensembled networks and trees rank more than 300 Elo below every Kumo Tabular model size.
+Kumo Tabular-L and LimiX-2 have a nearly even head-to-head record, while Kumo Tabular-L predicts about
+36× faster when both are timed on NVIDIA RTX PRO 6000 GPUs. The protocol fits eight bagged fold
+models for each Kumo Tabular entry and refits a model on all training rows. Prediction uses the refitted
+model and its cached context.
+TALENT
+provides one fixed split per dataset. Our main evaluation covers 261 datasets after following
+TabICLv2’s selection and requiring results from every entry. We exclude TabICLv2’s 26 development datasets,
+evaluate the 12 datasets with more than ten classes separately, and omit one further dataset on which LimiX-2
+did not finish. We fit Kumo Tabular on the training split without TALENT’s imputation step and compute
+Elo with TabArena’s leaderboard code. Kumo Tabular-L and Kumo Tabular-M rank first and second of 41
+entries, ahead of 25 models that are tuned over 100 trials per dataset with results averaged over 15 seeds.
+Paired by dataset, the lead over LimiX-2 comes from regression, where Kumo Tabular-L has the lower error
+2The MulTaBench and RamanBench leaderboards do not report the estimator counts or numerical precision of their
+Kumo Tabular entries. In our TALENT and TabBench-Bio runs, classes were assigned codes in order of first appearance. The
+predicted class probabilities therefore depend slightly on the order of the train rows.
+9
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Table 3 | The eight benchmarks. Under each name, the leaderboard version and the date of access in 2026 (TALENT
+and TabBench-Bio: the date we scored them). Datasets: classification/regression. Rows: per dataset (TALENT and
+BeyondArena: training rows), with the most a model sees in parentheses where the benchmark subsamples. Columns:
+features (BeyondArena: after preprocessing). Entries: each configuration of a method counted once.
+Benchmark
+Datasets
+(cls./reg.)
+Rows
+Columns
+Splits
+Metrics
+Ranking;
+uncertainty
+Entries
+TabArena
+v0.1.9.8, 19 Oct
+51 (38/13) 748–150,000
+4–1,776
+3-fold CV, 10 or 3 repeats;
+816 splits
+ROC AUC,
+log-loss,
+RMSE
+Elo, RandomForest
+= 1000; bootstrap
+97
+TALENT
+scored 25 Sep
+261
+(172/89)
+323–97,922
+3–308
+one fixed split
+accuracy,
+RMSE
+Elo, RandomForest
+= 1000; 200
+bootstrap rounds
+41
+BeyondArena
+v0.1.9.8, 19 Oct
+142
+(98/44)
+104–
+1,000,350
+3–22,215
+random (103), temporal
+(21), grouped (18); 2,000
+splits
+ROC AUC,
+log-loss,
+RMSE
+Elo, XGBoost =
+1000; bootstrap
+40
+ScoringBench
+9 Oct ledger,
+19 Oct
+101
+(0/101)
+240–107
+(≤3,000)
+3–1,024
+5-fold CV
+CRPS (51
+metrics)
+mean CRPS rank;
+Friedman and
+Nemenyi tests
+62
+STRABLE
+v0.1.6, 23 Oct
+108
+(32/76)
+550–75,000
+4–61, with
+strings
+3-fold CV
+ROC AUC,
+𝑅2
+median score over
+324 table-folds; no
+intervals
+94
+pipelines
+MulTaBench
+v1.9, 19 Oct
+80 (40/40) 400–114,000
+(≤10,000)
+2–248,
+with text
+or images
+3-fold CV, 2 repeats
+1−AUC,
+log-loss,
+RMSE
+Elo, RandomForest
+= 1000; 1,000
+bootstrap rounds
+26
+RamanBench
+v1.4, 19 Oct
+61; 135
+targets
+(21/114)
+12–130,061
+(≤10,000)
+114–11,689
+3-fold CV, group-aware
+ROC AUC,
+log-loss,
+RMSE
+Elo, Random Forest
+= 1000; 200
+bootstrap rounds
+63
+TabBench-Bio
+v0.3.0, 25 Oct
+43 (30/13) 71–51,859
+1,142–
+244,781
+5 folds; 28 settings of
+training rows and features
+macro-F1,
+RMSE
+Elo, Random Forest
+= 1000; 2,000
+bootstrap rounds
+33
+Table 4 | Benchmark results. Brackets show 95% uncertainty intervals where available. The strongest other
+entry reports the highest-ranked model outside the Kumo Tabular family. Head-to-head reports Kumo Tabular-L’s
+wins–losses against that model, excluding ties, with exact two-sided sign-test 𝑝-values in parentheses. Comparisons are
+across datasets, except for STRABLE (tables) and TabBench-Bio (targets). TabArena and BeyondArena instead report
+win rates across splits, counting ties as half a win. Each dataset contributes equally to these win rates. For STRABLE,
+the reported score is the median over 324 table-folds, using 𝑅2 for regression and ROC AUC for classification. Both
+compared pipelines use the TILE encoder. S/M/L gives the leaderboard ranks of Kumo Tabular-S, Kumo Tabular-M,
+and Kumo Tabular-L variants. Dashes indicate unavailable results.
+Benchmark
+Metric
+Kumo
+Strongest other entry
+Head-to-head
+S/M/L
+Tabular-L
+Name
+Score
+TabArena
+Elo (↑)
+1962 [1862, 2124] LimiX-2
+1952 [1866, 2082] 49% win rate
+5 / 3 / 1
+TALENT
+Elo (↑)
+1633 [1585, 1679] LimiX-2
+1576 [1536, 1614] 132–95 (0.02)
+6 / 2 / 1
+BeyondArena
+Elo (↑)
+1426 [1382, 1468] TabPFN-3.5
+1376 [1341, 1416] 67% win rate
+5 / 3 / 1
+ScoringBench
+CRPS rank (↓)
+1.84
+LimiX-2
+4.96
+68–33 (6×10−4)
+4 / 2 / 1
+STRABLE
+Median score (↑) 0.8325
+Causilo
+0.8190
+95–13 (< 10−15) – / – / 1
+MulTaBench
+Elo (↑)
+2227 [2155, 2316] LimiX-2
+2159 [2081, 2249] 40–40 (1.0)
+7 / 3 / 1
+RamanBench
+Elo (↑)
+1558 [1514, 1603] Chakra-Tab (full) 1512 [1472, 1557] –
+5 / 2 / 1
+TabBench-Bio Elo (↑)
+1265 [1204, 1332] TabPFN-3.5
+1198 [1151, 1245] 32–9 (4×10−4)
+4 / 2 / 1
+on 58 of the 89 datasets. In classification, the two do not separate by accuracy, but Kumo Tabular-L has the
+lower log-loss on 102 of the 172 datasets (𝑝= 0.018).
+BeyondArena
+applies TabArena’s protocol to 142 datasets with up to 1M training rows, using random,
+temporal, or grouped splits. We use the official core2k subset, which allocates 2,000 splits across the datasets,
+with the same bagging and refitting procedure as on TabArena.3 Kumo Tabular-L leads TabPFN-3.5 and
+Kumo Tabular-M by 50 Elo and predicts about 1.7× faster.
+3For tables with more than 10K training rows, the fit limit was 16 hours for Kumo Tabular and 4 hours for other TFMs. The
+longest Kumo Tabular runs took around 4 hours.
+10
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+27M
+61M
+214M
+1800
+1900
+2000
+2100
+Elo
+27M
+61M
+214M
+1500
+1550
+1600
+1650
+27M
+61M
+214M
+1300
+1350
+1400
+1450
+27M
+61M
+214M
+1
+3
+5
+7
+27M
+61M
+214M
+1900
+2000
+2100
+2200
+2300
+Elo
+27M
+61M
+214M
+1450
+1500
+1550
+1600
+27M
+61M
+214M
+1100
+1150
+1200
+1250
+1300
+Kumo Tabular-S (27M)
+Kumo Tabular-M (61M)
+Kumo Tabular-L (214M)
+95% interval
+TabPFN-3.5
+(a) TabArena
+Elo ↑ · 51 datasets
+(b) TALENT
+Elo ↑ · 261 datasets
+(c) BeyondArena
+Elo ↑ · 142 datasets
+(d) ScoringBench
+CRPS rank ↓ · 101 datasets
+(e) MulTaBench
+Elo ↑ · 80 datasets
+(f) RamanBench
+Elo ↑ · 135 targets
+(g) TabBench-Bio
+Elo ↑ · 42 targets
+Parameters (log scale)
+Figure 5 | Benchmark scores by model size. Elo with 95% interval, or mean CRPS rank of each model size plotted
+against its number of model parameters.
+6.2. Probabilistic Regression
+ScoringBench
+scores predictive distributions with proper scoring rules (Gneiting and Raftery, 2007) on
+101 regression datasets, each subsampled to at most 3,000 rows.4 By mean CRPS rank, Kumo Tabular-L and
+Kumo Tabular-M take the first two of 62 places, and Kumo Tabular-L has a lower CRPS than LimiX-2 on 68
+of the 101 datasets. The magnitude of the difference is often small, with the two models’ CRPS values within
+1% on 59 of the 101 datasets. Kumo Tabular-L ranks first on 28 of the 37 scoring rules and point metrics,
+including every interval score and point metric, while TabPFN-3.5 and LimiX-2 lead the other nine, which
+score the predicted density itself or approximate the log score.
+6.3. Tables with Strings, Text, or Images
+Kumo Tabular reads text and images through separate encoders. With off-the-shelf general-purpose encoders,
+Kumo Tabular-L leads on string and free-text tables, making this combination a strong default.
+STRABLE
+ranks 94 pipelines on 108 tables with raw string columns. With the TILE string encoder (Lefeb-
+vre et al., 2026), Kumo Tabular-L ranks first and beats the second pipeline, TILE + Causilo, on 95 of the 108
+tables. Even with cheap term frequency–inverse document frequency (Tf-Idf) features, Kumo Tabular-L has
+the highest median 𝑅2 on regression tables and ROC AUC on classification tables. Across the five encoders
+it ran with, its median 𝑅2 varies by less than 0.01, against 0.03 for TabPFN-3.5, which it beats with every
+encoder on 96 to 102 of the 108 tables.
+MulTaBench
+contains 80 datasets with free-text or image columns. For Kumo Tabular, these columns
+are embedded with frozen e5-small text and DINOv3-small image encoders (Wang et al., 2022; Siméoni
+et al., 2026), then reduced to 30 principal components per column. Entries are evaluated without bagging.
+Kumo Tabular-L ranks first, above every model that reads the raw text end to end. Paired by dataset, it
+is even with LimiX-2. By Elo, it ranks first on the datasets with text columns, alone or with images, and
+second on the 18 whose extra columns are images.
+4Our rankings include the 22 fine-tuned variants omitted from the website’s default view. Of the 51 recorded metrics, 37 are
+scoring rules or point metrics and 14 are diagnostics. The benchmark’s shared conversion routine maps Kumo Tabular’s 999
+predicted quantiles to predictive distributions.
+11
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+6.4. Wide Scientific Tables
+Kumo Tabular ranks first on tables with thousands of features, even though it was pretrained on at most 100
+columns.
+RamanBench
+contains 135 targets from 61 datasets of Raman spectra (median 270 rows and 1,836 features).
+The benchmark evaluates default model configurations through AutoGluon, using three-fold bagging and
+a 10-minute budget for each fit. Kumo Tabular-L and Kumo Tabular-M rank first and second, ahead of
+Chakra-Tab, and all three sizes rank above RamanPFN, a model built for Raman spectra and developed on
+an earlier version of the benchmark that contained 52 of its 61 current datasets.
+TabBench-Bio
+contains 43 biomedical datasets (median 546 rows and 12,968 features) in 28 settings that fix
+the number of training rows and cap the number of features a model reads. We follow the benchmark’s feature
+limits and 48 GB memory budget, removing Kumo Tabular’s default cap of 500 columns per estimator.5 We use
+the strict ranking, in which failed runs receive the score of a constant predictor. At the benchmark’s reference
+setting (100 training rows, at most 10K features), Kumo Tabular-L and Kumo Tabular-M rank first and second,
+and Kumo Tabular-L beats TabPFN-3.5 on 32 of the 42 targets that this setting scores. A Kumo Tabular
+model ranks first in each of the 28 settings, with Kumo Tabular-L leading in 18, Kumo Tabular-S in nine,
+and Kumo Tabular-M in one. The nine settings led by Kumo Tabular-S use at least 200 training rows or all
+available rows. In none of these settings is its paired advantage over Kumo Tabular-L statistically significant.
+7. Ablation Study
+We conduct an ablation study on the changes that distinguish Kumo Tabular from TabICLv2. Figure 6
+presents the results. We start from our reimplementation of the TabICLv2 model and prior, trained with
+our optimization setup (Section 4) and a peak learning rate of 3 × 10−4. This setting is the same across
+the ablations, and we do not expect it to alter our findings. Because we observed instabilities in longer
+development runs, we train the TabICLv2 reimplementation in FP32.
+Architecture.
+Our first change targets training stability: it adds query-key normalization and replaces
+QASSMax with SSMax (Nakanishi, 2025), applying weight decay to the attention scales. This makes the runs
+stable and allows us to perform the rest of the ablations in BF16, which also reduces the training time of the
+100K-step runs from 6.95 to 5.08 hours. Next, we change the layout of the encoder from 3 column-attention
+layers followed by 3 row-attention layers to our interleaved variant. This represents the most significant
+architectural improvement. We attribute this to the model being better equipped to handle interactions
+between columns. Next, we slightly adjust the transformer blocks by changing the normalization to RMSNorm
+and zero-initializing residual connections. We also reduce the number of attention heads in the encoder to 4
+and double their size to increase training efficiency. Finally, we introduce bounded QASSMax along the row
+attention axis.
+Prior.
+We next measure the effect of the prior. To account for the missing values added to the data, we
+also switch to our missing-value-aware embeddings. The prior change marginally improves performance. Our
+implementation also speeds up the training across all three stages (from 4.95 to 4.51 hours for the 100K-step
+runs). During development, we observed that the prior changes matter more with longer training. Some of
+them only start in stage 2, which brings the largest improvement in our ablation study.
+Scaling.
+Next, we look into scaling up the model. With the efficiency gains from our architecture and
+prior changes, we invest more parameters into the encoder, which we identified during development as a key
+bottleneck in two-stage ICL architectures. We first increase the layer count from three row and column layers
+5The published Kumo Tabular-M results use an L40S GPU. We evaluated Kumo Tabular-S and Kumo Tabular-L with the
+same harness and adapter on H100 GPUs limited to 48 GB. Including these entries changes the Elo of each entry covering all
+targets by at most 3 points.
+12
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+1 - Min-max normalized log loss
+TabICLv2 reimplementation
+(stage 1, 100K steps, FP32)
+QK norm + SSMAX + BF16
+Interleaved encoder
+RMSNorm, zero-init res., 8→4 enc. heads
+Row scaling
+Kumo prior + NaN-aware Fourier emb.
+4 encoder layers
+500K training steps
+Stage 2
+(Kumo-S)
+Stage 3
+(Kumo-M)
+Larger enc., 2× ICL layers, test-GQA
+(Kumo-L)
+2× ICL width and heads
+Softmax temperature 1
+Categorical recipe
+Random sign flips
+Larger transform pool
+(Kumo-L default)
+16 estimators
+Architecture
+Prior
+Scaling
+Inference
+single-seed checkpoints below
+Pretrain (h)
+6.95 ± 0.05
+5.08 ± 0.12
+5.01 ± 0.08
+4.98 ± 0.20
+4.95 ± 0.07
+4.51 ± 0.02
+4.72 ± 0.04
+Figure 6 | Additive ablation from a TabICLv2 reimplementation to Kumo Tabular-L. Each row builds on
+the row above it and reports one minus the min-max normalized log loss on 36 TabArena classification datasets with
+fewer than 1,000 features (higher is better). On every outer split, the log losses of all models in the figure are rescaled
+to [0, 1] between the best and the worst, and the result is averaged over splits and datasets. The light part of a bar
+is the score of the row it builds on, and the dark part is the change of the row, hatched if the change is negative.
+The first six rows are runs of 100K steps, with the mean and standard deviation over three pretraining seeds. The
+remaining rows are single checkpoints from our pretraining runs. All models are evaluated on all TabArena outer splits
+(576 in total). The inference rows change only the inference recipe of Kumo Tabular-L. Pretrain (h) is the wall-clock
+pretraining time on eight RTX PRO 6000 GPUs.
+to four, which brings a small improvement at a small cost in training time (from 4.51 to 4.72 hours). In our
+development runs we observe that this is more pronounced when paired with an interleaved architecture.
+We then report the full stage-1 and stage-2 checkpoints, which are a significant jump from the 100K-step
+ablation setup and also carry some of the gains of our prior. Stage 3 lowers the score in Figure 6. We analyze
+long-context performance in more depth in Figure 7. After stage 3, we arrive at the released Kumo Tabular-S
+checkpoint, which we still run with the TabICLv2 inference recipe, with the single modification of not imputing
+missing values. We then further scale the encoder and the ICL stack of our model, doubling the channel
+dimension and number of inducing points, increasing the encoder depth to 6 layers and the ICL depth to 24
+layers. This represents a significant improvement in performance (winning on 34 of 36 datasets), changing the
+parameter count of the model from one matching TabICLv2 to one closer to TabPFN-3 (Grinsztajn et al., 2026),
+which also includes Test-GQA, allowing for a deeper ICL stack. Here we also note that Kumo Tabular-M
+doubles the batch size of stage 1 relative to Kumo Tabular-S, and Kumo Tabular-L doubles both the batch
+size and the number of steps, to account for the increase in parameter count. For Kumo Tabular-M, we also
+introduce a down-projection layer to keep the width of the ICL stack matching the smaller model. We remove
+this layer for Kumo Tabular-L, doubling both the number of channels and attention heads.
+Inference.
+Up to here, we use the TabICLv2 preprocessing recipe adjusted for missing values. Finally, we
+ablate the inference recipe changes. For classification with log loss, we observe that changing the softmax
+temperature to 1 provides the biggest gains. This matches training, where the cross-entropy loss uses an
+unscaled softmax. The gains are larger on binary than on multiclass datasets. We observe that the changes
+to our categorical recipe are somewhat detrimental to performance on TabArena. However, we found them
+useful in practice and helpful across a broader array of datasets. Randomly flipping the signs of numerical
+features (and labels for regression) results in a small boost for classification and a more pronounced one for
+regression in our development runs. Next, we increase the diversity of numerical preprocessing transforms,
+which also allows the model to benefit further from more estimators due to the increased diversity of dataset
+13
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Stage 1
+1K rows
+Stage 2
+up to 10K rows
+Stage 3
+up to 60K rows
+Pretraining stage
+1600
+1700
+1800
+1900
+2000
+2100
+Elo
+(a)
+TabArena
+Stage 1
+1K rows
+Stage 2
+up to 10K rows
+Stage 3
+up to 60K rows
+Pretraining stage
+1200
+1250
+1300
+1350
+1400
+1450
+Elo
+(b)
+BeyondArena
+100
+1K
+10K
+100K
+1M
+Training rows
+1
+10
+20
+30
+Rank (1 = best)
+(c)
+BeyondArena: earlier stages fall behind on longer tables
+Kumo Tabular-L, stage 1
+Kumo Tabular-L, stage 2
+Kumo Tabular-L, stage 3
+TabPFN-3.5
+RealMLP (tuned + ens.)
+CatBoost (tuned + ens.)
+Kumo Tabular-S
+Kumo Tabular-M
+Kumo Tabular-L
+LimiX-2
+TabPFN-3.5
+Figure 7 | Benchmark scores after each pretraining stage. Elo with 95% intervals on (a) TabArena and (b)
+BeyondArena. (c) Rank on each BeyondArena dataset by number of training rows. Dotted lines report the mean
+ranks with 95% intervals shaded.
+views. By increasing the number of estimators to 16, we end up with the official Kumo Tabular-L default
+checkpoint and recipe.
+Long Context Performance.
+We analyze the effects of pretraining on longer artificial input tables. On
+TabArena and BeyondArena, stage 2 brings most of the gain in Elo: at every size, stage 2 adds 65 to 170
+points, and stage 3 adds at most 23 (cf. Figure 7). On BeyondArena, each stage improves Kumo Tabular-L
+mainly on datasets with more training rows than the tables of the stage before: its stage-1 checkpoint keeps
+pace with the released model up to about 1K training rows, and its stage-2 checkpoint up to about 10K.
+8. Accuracy–Efficiency Performance
+On a table with 𝑛training rows and 𝑚columns, the runtime complexity for fitting Kumo Tabular is
+𝑂(𝑛2 + 𝑛𝑚2), while prediction with KV-caching takes 𝑂(𝑛+ 𝑚2) per test point. Hence, as long as 𝑚≪√𝑛,
+the number of columns 𝑚does not matter much w.r.t. runtime.
+Figure 8 shows the accuracy, runtime, and memory usage of Kumo Tabular across different dataset sizes
+under FP16 autocast with at most 200K train rows and 500 columns per estimator. We measure the costs on
+one NVIDIA H100 80GB, on tables with random numerical features and 1,000 test rows. Regression differs
+from binary classification by at most 1.5 GiB of memory and 10% of time. We find that the improvement of
+Kumo Tabular-L over Kumo Tabular-M is most pronounced on tables between 1K and 100K rows. Larger
+14
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+0.5 s
+1 s
+2 s
+5 s
+10 s
+30 s
+1 min 2 min
+5 min
+Fit time (100 features)
+3
+6
+9
+12
+15
+18
+Gap to the best entry (%)
+up to 1K rows
+1K–10K
+10K–100K
+over 100K
+↑ smaller gap
+(a)
+Kumo Tabular-S
+Kumo Tabular-M
+Kumo Tabular-L
+0.2 s
+0.5 s
+1 s
+2 s
+Time to predict
+1,000 test rows
+(b)
+1K
+10K
+100K
+Training rows
+0
+20
+40
+60
+80
+Peak GPU
+memory (GiB)
+500 features
+24 GB
+48 GB
+80 GB
+(c)
+Figure 8 | Accuracy, runtime, and memory across model sizes. (a) Average gap to the best entry on the
+BeyondArena datasets in four ranges of training rows, against the fit time of a table with 1,000, 5,000, 50K, or 200K
+training rows, respectively. For each dataset, the gap is 100(𝑒−𝑒best)/𝑒, where 𝑒and 𝑒best are the errors of the
+evaluated model and the best entry. We report the mean gap over datasets. (b) Time to predict 1,000 test rows on one
+H100 with 80 GB VRAM and (c) peak GPU memory over fit and prediction with 100 features, including the model
+weights. The shaded area spans the memory for the three sizes with 500 features. Costs: binary classification with 100
+features, recommended estimators, and FP16 autocast on one H100 80GB.
+context does not yet show a clear lift, potentially due to the global pretraining limit of 60K rows.
+During fitting of the model, the main memory usage typically comes from the table encoder, which holds
+one token per train cell in memory at once. During prediction, the GPU also holds the KV-caches of the
+running and the next estimator (inducing vectors in the encoder, regular KV cache in the ICL layers). With
+Kumo Tabular-L and 100 features, a 24 GB GPU holds every size up to 100K training rows. With 500 features,
+a 24 GB GPU can hold 20K training rows, a 48 GB GPU can hold 50K training rows, and an 80 GB GPU can
+hold 200K training rows. At 200K training rows and 100 features, Kumo Tabular-S, Kumo Tabular-M, and
+Kumo Tabular-L take 48, 26, and 51 GiB of host memory, respectively.
+Prediction stays cheap: with up to ten classes, 1,000 test rows take under 4 s at every measured table shape.
+For tasks with more than ten classes, an estimator runs its ten-class subtasks together as one batch of relabeled
+copies of the table.
+9. Limitations
+Generalization beyond the pretraining distribution remains uneven. Pretraining uses i.i.d. tables with at
+most 60K rows and therefore does not cover grouped or temporal dependencies, or longer contexts. On
+BeyondArena’s grouped splits, Kumo Tabular-L ranks fourth, behind tuned and ensembled RealMLP, TabM,
+and LightGBM. On tables with more than 100K training rows, it ranks ninth, behind seven tuned or tuned
+and ensembled networks and tree ensembles, together with TabPFN-3.5. The gap on temporal splits is smaller,
+with Kumo Tabular-L ranking third and trailing the leader, TabPFN-3.5, by 3 Elo. The strongest limitations
+in this evaluation thus concern generalization to unseen groups and very large contexts.
+Large tables also come with large runtime and memory requirements, especially when subsampling is disabled.
+Additionally, Kumo Tabular can only process single tables, and handles semantic information like text and
+images through separate encoders. For distributional regression, Kumo Tabular excels in quantile-based
+metrics like CRPS but trails density-native methods on ScoringBench rules that score the predicted density
+itself. We used subsets of the TabArena, BeyondArena, and TALENT benchmarks for validation during
+development of Kumo Tabular, but as Kumo Tabular also tops five other benchmarks, benchmark overfitting
+does not seem to be a problem.
+15
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+10. Conclusion
+Kumo Tabular combines strong predictive performance with efficient inference in a fully open family of tabular
+foundation models pretrained entirely on synthetic data. Kumo Tabular-L ranks first on the eight evaluated
+benchmarks under their primary metrics, and all three model sizes lie on the Pareto frontiers of accuracy
+and prediction time on TabArena and BeyondArena. The remaining gaps on grouped splits and very large
+tables motivate further study of generalization beyond the pretraining distribution. By releasing the model
+weights, synthetic prior, and pretraining and inference code, we provide the community with an experimental
+foundation for developing more accurate, efficient, and broadly applicable tabular models.
+Acknowledgements
+We thank the maintainers of TabArena, BeyondArena, ScoringBench, STRABLE, MulTaBench, RamanBench,
+and TabBench-Bio for including Kumo Tabular in their benchmarks and publishing the results. We thank
+Sascha Marton for help with writing. David Holzmüller thanks Ingo Steinwart for providing computational
+resources funded by Deutsche Forschungsgemeinschaft (DFG, German Research Foundation) under Germany’s
+Excellence Strategy – EXC 2075 – 390740016, acknowledges HPC resources from GENCI–IDRIS (Grant 2024
+AD011014864R2), and thanks Probabl for providing Claude API access.
+References
+Julie Alberge, Linus Bleistein, Judith Abécassis, Marine Le Morvan, Gaël Varoquaux, and David Holzmüller. Survicl:
+a foundation model for in-context survival analysis. arXiv preprint arXiv:2610.22242, 2026.
+Alan Arazi, Eilam Shapira, Shoham Grunblat, Mor Ventura, Elad Hoffer, Gioia Blayer, David Holzmüller, Lennart
+Purucker, Gaël Varoquaux, Frank Hutter, and Roi Reichart. MulTaBench: Benchmarking multimodal tabular
+learning with text and image. arXiv preprint arXiv:2605.10616, 2026a.
+Alan Arazi, Eilam Shapira, Shoham Grunblat, Mor Ventura, Elad Hoffer, Gioia Blayer, David Holzmüller, Lennart
+Purucker, Gaël Varoquaux, Frank Hutter, and Roi Reichart. MulTaBench: Benchmarking multimodal tabular
+learning with text and image. arXiv preprint arXiv:2605.10616, 2026b. Leaderboard https://huggingface.co/
+spaces/multabench/leaderboard, version 1.9 of 18 October 2026.
+Vahid Balazadeh, Hamidreza Kamkari, Valentin Thomas, Junwei Ma, Bingru Li, Jesse C. Cresswell, and Rahul Krishnan.
+CausalPFN: Amortized causal effect estimation via in-context learning. In Advances in Neural Information Processing
+Systems, 2025.
+Omar Benjelloun, Shiyu Chen, and Natasha Noy. Google Dataset Search by the numbers. In International Semantic
+Web Conference, volume 12507 of Lecture Notes in Computer Science, pages 667–682. Springer, 2020.
+Gioia Blayer, Myung Jun Kim, Félix Lefebvre, Lennart Purucker, Alan Arazi, Eilam Shapira, Roi Reichart, Frank
+Hutter, Marine Le Morvan, David Holzmüller, and Gaël Varoquaux. Strable: Benchmarking tabular machine
+learning with strings. arXiv preprint arXiv:2605.12292, 2026.
+Samuel Böhm, Lennart Purucker, Frank Hutter, and Pascal Schlosser. SurvPFN: Towards foundation models for
+survival predictions. In 2nd ICML Workshop on Foundation Models for Structured Data, 2026.
+Vadim Borisov, Tobias Leemann, Kathrin Seßler, Johannes Haug, Martin Pawelczyk, and Gjergji Kasneci. Deep
+neural networks and tabular data: A survey. IEEE Transactions on Neural Networks and Learning Systems, 35(6):
+7499–7519, 2024.
+Ralph Allan Bradley and Milton E. Terry. Rank analysis of incomplete block designs: I. the method of paired
+comparisons. Biometrika, 39(3/4):324–345, 1952.
+Tianqi Chen and Carlos Guestrin. XGBoost: A scalable tree boosting system. In ACM SIGKDD International
+Conference on Knowledge Discovery and Data Mining, 2016.
+Minyong Cho, Minho Jeong, Dooho Lee, Jinmo Lee, and Jaemin Yoo. Causilo technical report. arXiv preprint
+arXiv:2609.22866, 2026.
+Thomas G. Dietterich and Ghulum Bakiri. Solving multiclass learning problems via error-correcting output codes.
+Journal of Artificial Intelligence Research, 2:263–286, 1995.
+16
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Arpad E. Elo. The Rating of Chessplayers, Past and Present. Arco Publishing, 1978.
+Moonjung Eo, Min-Kook Suh, Hye-Seung Cho, Jiwon Kim, Seoyoon Kim, Sangjun Nam, and Soonyoung Lee. EXAONE
+Tabular 1.0: Technical report. arXiv preprint arXiv:2608.25774, 2026.
+Nick Erickson, Jonas Mueller, Alexander Shirkov, Hang Zhang, Pedro Larroy, Mu Li, and Alexander Smola. AutoGluon-
+Tabular: Robust and accurate AutoML for structured data. arXiv preprint arXiv:2003.06505, 2020.
+Nick Erickson, Lennart Purucker, Andrej Tschalzev, David Holzmüller, Prateek Desai, David Salinas, and Frank Hutter.
+TabArena: A living benchmark for machine learning on tabular data. In Advances in Neural Information Processing
+Systems, 2025.
+Jerome H. Friedman. Greedy function approximation: A gradient boosting machine. The Annals of Statistics, 29(5):
+1189–1232, 2001.
+Pierre Geurts, Damien Ernst, and Louis Wehenkel. Extremely randomized trees. Machine Learning, 63(1):3–42, 2006.
+Tilmann Gneiting and Adrian E. Raftery. Strictly proper scoring rules, prediction, and estimation. Journal of the
+American Statistical Association, 102(477):359–378, 2007.
+Léo Grinsztajn, Klemens Flöge, Oscar Key, Felix Birkel, Philipp Jund, Brendan Roof, Mihir Manium, Shi Bin Hoo,
+Magnus Bühler, Anurag Garg, et al. TabPFN-3: Technical report. arXiv preprint arXiv:2605.13986, 2026.
+Noah Hollmann, Samuel Müller, Katharina Eggensperger, and Frank Hutter. TabPFN: A transformer that solves
+small tabular classification problems in a second. In International Conference on Learning Representations, 2023.
+Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo, Robin Tibor
+Schirrmeister, and Frank Hutter. Accurate predictions on small data with a tabular foundation model. Nature, 637:
+319–326, 2025. doi: 10.1038/s41586-024-08328-6.
+David Holzmüller, Léo Grinsztajn, and Ingo Steinwart. Better by default: Strong pre-tuned MLPs and boosted trees
+on tabular data. In Advances in Neural Information Processing Systems, 2024.
+Benjamin Jäger, Nick Erickson, Léo Grinsztajn, Felix Birkel, Klemens Flöge, Oscar Key, Kürşat Kaya, Jonas Kübler,
+Adèle Frankel, Tobias Schröder, et al. TabPFN-3.5: Technical report. arXiv preprint arXiv:2609.17895, 2026.
+Keller Jordan, Yuchen Jin, Vlado Boza, Jiacheng You, Franz Cesista, Laker Newhouse, and Jeremy Bernstein. Muon:
+An optimizer for hidden layers in neural networks. https://kellerjordan.github.io/posts/muon/, 2024.
+Guolin Ke, Qi Meng, Thomas Finley, Taifeng Wang, Wei Chen, Weidong Ma, Qiwei Ye, and Tie-Yan Liu. LightGBM:
+A highly efficient gradient boosting decision tree. In Advances in Neural Information Processing Systems, 2017.
+Mario Koddenbrock, Christoph Lange, Robin Legner, Martin Jäger, Martin Kögler, Mariano N Cruz Bournazou, Peter
+Neubauer, Felix Biessmann, and Erik Rodner. RamanBench: A large-scale benchmark for machine learning on
+Raman spectroscopy. arXiv preprint arXiv:2605.02003, 2026.
+Roger Koenker and Gilbert Bassett. Regression quantiles. Econometrica, 46(1):33–50, 1978.
+Weihao Kong, Erez Louidor Ilan, Shuxin Nie, Taman Narayan, Rajat Sen, Yichen Zhou, Deqing Fu, Samet Oymak, and
+Abhimanyu Das. TabFM: A zero-shot foundation model for tabular data. arXiv preprint arXiv:2609.37959, 2026.
+Jules Kreuer, Sofiane Ouaari, Julia Hellmig, Julius Braitinger, and Nico Pfeifer. TabBench-Bio: A living benchmark
+for machine learning on high-dimensional biomedical tables. arXiv preprint arXiv:2609.07441, 2026. Leaderboard
+https://tabbench-bio.eu, version 0.3.0 of 14 October 2026.
+Jonas Landsgesell, Pascal Knoll, and Tizian Wenzel. ScoringBench: A benchmark for evaluating tabular foundation
+models with proper scoring rules. arXiv preprint arXiv:2603.29928, 2026.
+Juho Lee, Yoonho Lee, Jungtaek Kim, Adam Kosiorek, Seungjin Choi, and Yee Whye Teh. Set transformer: A
+framework for attention-based permutation-invariant neural networks. In International Conference on Machine
+Learning, 2019.
+Félix Lefebvre, David Holzmüller, Gioia Blayer, Myung Jun Kim, Marine Le Morvan, and Gaël Varoquaux. TILE:
+Bridging llms and table foundation models for tabular learning with strings. arXiv preprint arXiv:2610.17065, 2026.
+Ilya Loshchilov and Frank Hutter. Decoupled weight decay regularization. In International Conference on Learning
+Representations, 2019.
+17
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Junwei Ma, Valentin Thomas, Rasa Hosseinzadeh, Alex Labach, Hamidreza Kamkari, Jesse C. Cresswell, Keyvan
+Golestan, Guangwei Yu, Anthony L. Caterini, and Maksims Volkovs. TabDPT: Scaling tabular foundation models
+on real data. In Advances in Neural Information Processing Systems, 2025.
+Yuchen Ma, Dennis Frauen, Emil Javurek, and Stefan Feuerriegel. Foundation models for causal inference via prior-data
+fitted networks. In International Conference on Learning Representations, 2026.
+Paulius Micikevicius, Sharan Narang, Jonah Alben, Gregory Diamos, Erich Elsen, David Garcia, Boris Ginsburg,
+Michael Houston, Oleksii Kuchaiev, Ganesh Venkatesh, and Hao Wu. Mixed precision training. In International
+Conference on Learning Representations, 2018.
+Samuel Müller, Noah Hollmann, Sebastian Pineda Arango, Josif Grabocka, and Frank Hutter. Transformers can do
+Bayesian inference. In International Conference on Learning Representations, 2022.
+Ken M Nakanishi. Scalable-softmax is superior for attention. arXiv preprint arXiv:2501.19399, 2025.
+Judea Pearl. Causality: Models, Reasoning, and Inference. Cambridge University Press, 2nd edition, 2009.
+Pascal Pfeiffer, Dmitry Gordeev, Mathias Müller, Laura Fink, Joan Salvà Soler, Mark Landry, Branden Murray,
+Marcos V Conde, and Sri Satish Ambati. TabH2O: A unified foundation model for tabular prediction. arXiv preprint
+arXiv:2605.18383, 2026.
+Liudmila Prokhorenkova, Gleb Gusev, Aleksandr Vorobev, Anna Veronika Dorogush, and Andrey Gulin. CatBoost:
+Unbiased boosting with categorical features. In Advances in Neural Information Processing Systems, 2018.
+Lennart Purucker, Andrej Tschalzev, Nick Erickson, Gioia Blayer, David Holzmüller, Alan Arazi, Alexander Pfefferle,
+Mustafa Tajjar, Gaël Varoquaux, Frank Hutter, et al. Beyond IID: How general are tabular foundation models,
+really? arXiv preprint arXiv:2606.30410, 2026.
+Shi-ang Qi, Vahid Balazadeh, Michael Cooper, Russell Greiner, and Rahul G Krishnan. SurvivalPFN: Amortizing
+survival prediction via in-context bayesian inference. In 2nd ICML Workshop on Foundation Models for Structured
+Data, 2026.
+Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. TabICL: A tabular foundation model for
+in-context learning on large data. In International Conference on Machine Learning, 2025.
+Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. TabICLv2: A better, faster, scalable, and
+open tabular foundation model. In International Conference on Machine Learning, 2026.
+Jake Robertson, Arik Reuter, Siyuan Guo, Noah Hollmann, Frank Hutter, and Bernhard Schölkopf. Do-PFN: In-context
+learning for causal effect estimation. In Advances in Neural Information Processing Systems, 2025.
+Dmitrii Seletkov, Paul Hager, Georgios Kaissis, Rickmer Braren, Daniel Rueckert, and Raphael Rehms. Survival
+in-context: Amortized bayesian survival analysis via prior-fitted networks. arXiv preprint arXiv:2603.29475, 2026.
+Ravid Shwartz-Ziv and Amitai Armon. Tabular data: Deep learning is not all you need. Information Fusion, 81:84–90,
+2022.
+Oriane Siméoni, Huy V. Vo, Maximilian Seitzer, Federico Baldassarre, Maxime Oquab, Cijo Jose, Vasil Khalidov, Marc
+Szafraniec, Seung Eun Yi, Michael Ramamonjisoa, Francisco Massa, Daniel HAZIZA, Luca Wehrstedt, Jianyuan
+Wang, Timothée Darcet, Théo Moutakanni, Leonel Sentana, Claire Roberts, Andrea Vedaldi, Jamie Tolan, John
+Brandt, Camille Couprie, Julien Mairal, Herve Jegou, Patrick Labatut, and Piotr Bojanowski. DINOv3. Transactions
+on Machine Learning Research, 2026. ISSN 2835-8856.
+Marco Spinaci, Marek Polewczyk, Maximilian Schambach, and Sam Thelin. ConTextTab: A semantics-aware tabular
+in-context learner. In Advances in Neural Information Processing Systems, 2025.
+Jianlin Su, Murtadha Ahmed, Yu Lu, Shengfeng Pan, Wen Bo, and Yunfeng Liu. RoFormer: Enhanced transformer
+with rotary position embedding. Neurocomputing, 568:127063, 2024.
+Synthefy, Po-han Li, Aditya Narayanan, Sai Shankar Narasimhan, Raghav Mallampalli, Aahan Agrawal, Bekzat Ajan,
+Raimi Shah, and Shubhankar Agarwal. Synthefy Nori: Tabular foundation model for regression. Zenodo, software
+version 0.6.0, 2026.
+Yefan Tao, Xiyuan Zhang, Xinyi Liu, Boran Han, Danielle Maddix, Haoyang Fang, Zhen Han, Jiading Gai, Xuanqing
+Liu, Michael Bohlke-Schneider, et al. Mitra-v2 technical report. arXiv preprint arXiv:2609.04540, 2026.
+18
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Boris van Breugel and Mihaela van der Schaar. Position: Why tabular foundation models should be a research priority.
+In International Conference on Machine Learning, 2024.
+Liang Wang, Nan Yang, Xiaolong Huang, Binxing Jiao, Linjun Yang, Daxin Jiang, Rangan Majumder, and Furu Wei.
+Text embeddings by weakly-supervised contrastive pre-training. arXiv preprint arXiv:2212.03533, 2022.
+Han-Jia Ye, Si-Yang Liu, Hao-Run Cai, Qi-Le Zhou, and De-Chuan Zhan. A closer look at deep learning methods on
+tabular datasets. arXiv preprint arXiv:2407.00956, 2024.
+In-Kwon Yeo and Richard A. Johnson. A new family of power transformations to improve normality or symmetry.
+Biometrika, 87(4):954–959, 2000.
+Xingxuan Zhang, Gang Ren, Hao Yuan, Hao Zou, Hongze Tan, Hui Wang, Jianhao Song, Jiansheng Li, Jiayao Zhang,
+Jinghan Zhang, et al. LimiX-2: A contextual mechanism network towards general structured-data intelligence. arXiv
+preprint arXiv:2609.17488, 2026.
+Xiyuan Zhang, Danielle C. Maddix, Junming Yin, Nick Erickson, Abdul Fatir Ansari, Boran Han, Shuai Zhang,
+Leman Akoglu, Christos Faloutsos, Michael W. Mahoney, et al. Mitra: Mixed synthetic priors for enhancing tabular
+foundation models. In Advances in Neural Information Processing Systems, 2025.
+19
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Appendix Contents
+A The Kumo Prior
+20
+A.1 Changes to the TabICLv2 Prior . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+20
+A.2 Numerical Columns as Noisy Measurements . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+21
+A.3 Correlated Feature Blocks . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+22
+A.4 Realism Augmentations
+. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+22
+A.5 Missing Value Patterns . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .
+23
+A.6 Data Quality Checks and the Learnability Filter
+. . . . . . . . . . . . . . . . . . . . . . . . .
+24
+B Training Stability
+24
+A. The Kumo Prior
+This appendix gives the sampling rules, equations, and stage settings for the prior introduced in Section 3.
+Table A.1 | Differences between the Kumo prior and the TabICLv2 prior. Step refers to the generation steps
+in Figure 4.
+Mechanism
+Difference to TabICLv2
+Step
+Section
+Every stage
+Distributional numerical
+converter
+row-dependent noise, hidden subgroups, bounded values, and
+counts
+4
+A.2
+Correlated feature blocks
+groups of columns that share the same noise
+5
+A.3
+Missing values
+missing rows, feature-dependent missingness, values outside
+selected ranges, and random missing cells; stages 2 and 3 also
+add nearly empty columns and blocks controlled by a latent
+factor per row
+5
+A.5
+Trivial examples
+a test for nearly deterministic tables; rejected in stage 1, half
+kept in stages 2 and 3
+6
+A.6
+Realism augmentations, stages 2 and 3
+Argmax classes
+categorical columns and class labels that are a deterministic
+function of their node
+4
+A.4
+Relabeled targets
+targets recomputed from a few features
+5
+A.4
+Coarsened features
+features with few levels, so identical rows can carry different
+labels
+5
+A.4
+High-cardinality codes
+categorical codes with hundreds of levels of power-law sizes
+5
+A.4
+Heavy-tailed targets
+skewed regression targets with extreme values, in stage 3 only
+5
+A.4
+Changed parts of TabICLv2, every stage
+Per-SCM preferences
+per-table probabilities for discrete choices, such as the
+function family of each node
+1
+A.1
+Unconnected targets
+graphs in which no feature shares an ancestor with the target
+are kept, and the learnability filter rejects most of their tables
+2
+A.1
+Clusters and products
+cluster distances in the 𝐿1 or 𝐿2 norm, with widths of
+random spread; products of any two other functions
+3
+A.1
+Kumaraswamy warp
+a warp of the column itself, instead of the node channel that
+the children read
+4
+A.1
+A.1. Changes to the TabICLv2 Prior
+Table A.1 summarizes the additions and changes relative to TabICLv2 (Qu et al., 2026). The changes to
+the base generator affect hyperparameter sampling, graph selection, node functions, and numerical readout
+20
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+−2
+0
+2
+−2
+0
+2
+Column value
+(a)
+TabICLv2
+Pass-through
+−2
+0
+2
+−2
+0
+2
+(b) Varying noise
+−2 0
+2
+channel z1
+−2
+0
+2
+−2
+0
+2
+4
+in subgroup
+outside
+(c) Latent subgroup
+−2
+0
+2
+0
+2
+4
+6
+8
+(d) Logistic link
+−2
+0
+2
+0
+2
+4
+6
+8
+(e) Rounded counts
+Node channel z0 (location)
+Figure A.1 | Numerical columns read from one node’s channels. Each panel converts the same 1,000 rows of
+three standard normal channels. (a) The pass-through converter of TabICLv2. (b–e) Individual components of the
+distributional converter: noise that grows with 𝑧1 (𝑤= 0.7, 𝛾= 0.5), a hidden subgroup (𝑤= 0.9, 𝛿= 2), the logistic
+link (𝑤= 0.9, 𝑎= 1.5, 𝑏= −0.5, 𝑐= 8), and the link with rounding.
+(steps 1–4 in Figure 4).
+Per-SCM correlated sampling replaces the independent sampling of categorical choices used during TabICLv2
+pretraining (Qu et al., 2026, Appendix E.2). These choices include function families, activations, and converters.
+A separate probability vector is sampled from a Dirichlet distribution for each choice type and reused for
+all selections of that type within the SCM. The shared probabilities can favor repeated use of a few options
+across nodes or columns, or produce a broader mix. New probability vectors are sampled for each table.
+Unlike TabICLv2 (Qu et al., 2026, Section 5), graphs with no shared ancestor between any feature and
+the target are retained during graph sampling. Their generated tables are passed to the learnability filter
+(Section A.6), so rejection is based on predictive performance rather than graph structure.
+Two node-function families are modified relative to TabICLv2 (Qu et al., 2026, Appendix E.8). Cluster
+functions use either 𝐿1 or 𝐿2 distances, which are fast to compute, whereas TabICLv2 samples 𝑝between
+1 and 4 for its 𝐿𝑝distance. The spread of log cluster widths is sampled instead of fixed at 0.1. Product
+functions apply two sampled functions to the same input and multiply their outputs elementwise. The two
+functions can be selected from any of the seven non-product families, including MLPs and cluster functions,
+which TabICLv2 excludes from this selection.
+The optional Kumaraswamy warp is applied to the observed numerical column in the Kumo prior, leaving
+the hidden channels passed to child nodes unchanged. In TabICLv2, the hidden channel is warped while the
+observed column retains its unwarped value (Qu et al., 2026, Appendix E.6).
+A.2. Numerical Columns as Noisy Measurements
+TabICLv2 introduced converters as mechanisms to extract columns of different data types from graph
+nodes. While its categorical converter contains different sub-mechanisms to extract categoricals, its numerical
+converter simply reads out the values of a single dimension on the node (and optionally warps the value on
+the node afterwards), see Figure A.1a. With the distributional numerical converter, we diversify this process
+by introducing noise that is controlled by multiple dimensions of a graph node. The goal is to create a variety
+of typical noise distributions. While TabPFNv1 used Gaussian noise in the causal graph (Hollmann et al.,
+2023), foundation models for causal inference and survival analysis have already used larger families of noise
+distributions (e.g., Balazadeh et al., 2025; Robertson et al., 2025; Ma et al., 2026; Seletkov et al., 2026; Qi
+et al., 2026; Böhm et al., 2026; Alberge et al., 2026). We bring a flexible family of noise distributions to
+tabular foundation models for classification and regression.
+The distributional converter is parameterized by three channels 𝑧0, 𝑧1, and 𝑧2 for location, noise scale, and
+subgroup probability (Figure A.1b–e). These channels are standardized and clipped with 𝑧↦→5 tanh(𝑧/5).
+Subgroup membership 𝑔and standard normal noise 𝜀are sampled for each row. The latent value 𝜂and
+observed value 𝑣are computed as
+𝑔∼Bernoulli
+(︀
+𝜎(𝑧2)
+)︀
+,
+𝜂= √𝑤(𝑧0 + 𝛿𝑔) +
+√
+1 −𝑤𝑒𝛾𝑧1−𝛾2/2 𝜀,
+𝜀∼𝒩(0, 1),
+𝑣= 𝑐𝜂(identity link)
+or
+𝑣= 𝑐𝜎(𝑎𝜂+ 𝑏) (logistic link),
+(1)
+21
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+16 features, blocks first
+(a) Before
+16 features, blocks first
+½ = 0:54
+½ = 0:44
+½ = 0:45
+(b) After the blocks
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Absolute correlation
+−2
+0
+2
+First feature (standardized)
+−3
+−2
+−1
+0
+1
+2
+3
+Second feature (standardized)
+(c)
+before, r = ¡0:01
+after, r = 0:80
+Two features of the first block
+Figure A.2 | Correlated feature blocks. Absolute correlations between the 16 numerical features of one drawn table
+(a) before and (b) after three blocks with strengths 𝜌of 0.54, 0.44, and 0.45; (c) two features of the first block.
+where 𝜎is the logistic function.
+The signal fraction 𝑤controls the balance between signal and noise. The parameter 𝛾controls how noise scales
+with 𝑧1, and 𝛿shifts the subgroup’s location. The scale 𝑐controls the output magnitude. The logistic link has
+slope parameter 𝑎, offset 𝑏, and output range (0, 𝑐). The output is rounded to an integer with probability 0.3.
+A small 𝑐with the logistic link produces counts with few levels.
+The distributional converter is selected for a column when a correlated draw is below 0.1, so with roughly
+10% probability. The number of columns using this converter can range from zero to all numerical columns in
+a table. Optional feedback is implemented by writing the sampled value back into the node channels used by
+its children.
+A.3. Correlated Feature Blocks
+Correlated feature blocks are introduced in 30% of tables (Figure A.2). Between 2 and 𝑚columns are selected
+and divided into 1 to 4 blocks, where 𝑚is the number of features. A strength 𝜌∈(0.2, 0.7) and one shared
+factor 𝑧per row are sampled for each block containing at least two columns. Numerical values are transformed
+as 𝑥↦→(1 −𝜌) 𝑥+ 𝜌𝑧(Synthefy et al., 2026). Categorical labels are reordered to follow 𝑧, preserving the count
+of each category. The transformation is applied before standardization. The shared factor has a stronger
+effect on columns with low variance, which can closely follow 𝑧after standardization (Figure A.2b, 𝜌= 0.44).
+Its effect is weaker for columns with high variance.
+A.4. Realism Augmentations
+Realism augmentations are enabled from stage 2, except for the heavy-tail transformation, which is enabled in
+stage 3 (Figure A.3).
+• Argmax classes. Argmax selection is used with probability 0.15 in softmax converters for categorical
+features and classification targets (Figure A.3a). The category with the highest score is selected instead of
+sampling from the softmax probabilities.
+• Relabeled targets. Targets are recomputed from 1 to 4 features in 10% of tables using a sampled linear
+map, MLP, or Gaussian process (Figure A.3b). Rows are assigned to classes by thresholding their scores,
+with thresholds chosen to produce randomly sized classes. Optional noise in the score ranks can change
+labels near class boundaries.
+• Coarsened features. A random share of columns is reduced to 2 to 8 levels in 10% of tables using
+equal-frequency bins or rounding to fixed steps (Figure A.3c).
+• High-cardinality codes. Rank-based recoding is applied to 1 to 3 columns in 5% of tables with at least
+201 rows (Figure A.3d). Each column is split into more than 200 categories with power-law category sizes
+and marked as categorical.
+• Heavy-tailed targets. A power or exponential transformation is applied to the standardized target in
+22
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+Root point u1
+Root point u2
+(a) Sampled classes
+Root point u1
+Argmax classes
+−4
+−2
+0
+2
+4
+Score of the chosen features (standardized)
+relabeled, with flips
+relabeled, exact
+SCM target
+(b) Relabeled target
+−2
+0
+2
+Feature before (standardized)
+−2
+0
+2
+After (re-standardized)
+(c) Coarsened feature
+before
+equal-frequency bins
+rounding to a step
+100
+101
+102
+103
+Level rank (largest first)
+100
+101
+102
+103
+Rows per level
+(d) High-cardinality codes
+before: one row per value
+448 levels
+457 levels
+460 levels
+10−2
+10−1
+100
+101
+102
+Threshold t
+10−3
+10−2
+10−1
+100
+Share of rows with jyj > t
+(e) Heavy-tailed target
+before
+power warp
+exponential warp
+Figure A.3 | Realism augmentations of stages 2 and 3. Each panel forces one augmentation on; gray: before,
+green: after. (a) Sampled and argmax classes of 1,500 rows from the same softmax logits, at their two-dimensional root
+points (𝑢1, 𝑢2); 82% agree. (b) Classes before and after relabeling, against the score of the chosen features; circled:
+flipped labels. (c) One column coarsened to six levels in each mode. (d) Level sizes of three recoded columns. (e) Tails
+of a regression target under each warp.
+20% of regression tables in stage 3 (Figure A.3e).
+A.5. Missing Value Patterns
+Missing values are introduced after target generation and before the split into train and test sets. Each selected
+mechanism samples the amount of missingness and the affected rows or columns. Near-empty missingness is
+selected first and creates columns with high missingness (Figure A.4g). If selected, structured missingness
+(Figure A.4a–e) is skipped for the entire table. Random and latent-factor masking are selected independently
+(Figure A.4f,h). Structured and random missingness are used in every stage, while near-empty and latent-factor
+masking are added in stages 2 and 3. At least one missingness mechanism is selected for about 21% of
+generated tables in stage 1 and 27% in stages 2 and 3. The target is not masked. Missing feature values are
+passed to the network as NaN.
+• Structured missingness (probability 0.2, in tables without near-empty columns). One of four masks is
+applied with probability 1/2. The same rows are masked in most columns under row dropout (Figure A.4a)
+or in a few columns under block masking (Figure A.4b). A few columns are masked in rows from one target
+tail or one class under target-dependent masking (Figure A.4c). Values are removed from a few categorical
+columns under categorical masking (Figure A.4d). Subsequent censoring is based on the upper or lower tail
+of a column’s own values or another column’s values (Figure A.4e). Censoring is applied to a few columns
+with probability 1 if no cells are missing yet, or with probability 1/2 otherwise.
+• Completely at random (probability 0.01). A probability between 1% and 8% is sampled once per table.
+Each feature cell is masked independently with this probability (Figure A.4f).
+• Near-empty column families (probability 0.05). Observations are restricted to 1–10% of rows for
+50–80% of columns. The same observed rows are used for columns in the same family (Figure A.4g).
+• Latent driver (probability 0.03). A score is computed for each row as a randomly weighted sum of a
+few columns, then standardized and perturbed with Gaussian noise. Rows with the highest scores form a
+group in which selected other columns are more likely to be missing (Figure A.4h).
+23
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+120 rows
+same rows, many columns
+(a)
+Row dropout
+same rows, a few columns
+(b)
+Block
+rows sorted by target
+(c)
+Target-dependent
+categorical columns only
+(d)
+Categorical
+16 num. j 8 cat. columns
+120 rows
+rows sorted by the source
+(e)
+Censoring
+16 num. j 8 cat. columns
+independent cells
+(f)
+Completely at random
+24 columns by family
+columns grouped by family
+(g)
+Near-empty families
+16 num. j 8 cat. columns
+rows sorted by proxy score
+(h)
+Latent driver
+observed
+missing
+Figure A.4 | Missing-value patterns of the Kumo prior. Each panel applies one pattern, with the prior’s settings,
+to the same drawn regression table of 120 rows and 24 features, 16 numerical and then 8 categorical (dashed line).
+In (e), rows are sorted by the numerical column whose tail censors a categorical column; the other censored columns
+follow other sources, so their missing cells look scattered.
+A.6. Data Quality Checks and the Learnability Filter
+Table generation combines data quality checks with a learnability filter to select tables for training. First,
+constant columns are removed. Classification tables are then checked for matching classes across the train
+and test sets, while regression tables are checked for sufficient target variation. Tables that pass these checks
+are also evaluated by the learnability filter during the first five generation attempts. If generation fails or a
+table is rejected, another table is drawn with the same sampled shape. Generation continues until a table is
+accepted or 100 attempts have been made.
+The learnability filter uses a predictive model consisting of 25 extremely randomized trees (Geurts et al.,
+2006) with a maximum depth of 6, following TabICLv2 (Qu et al., 2026, Appendix E.14). Out-of-bag error is
+compared with the error of predicting the mean, using one-hot labels for classification. Tables on which the
+trees do not reliably beat this baseline are rejected in every stage. Tables with at most 5% of the baseline
+error are considered too easy. These tables are rejected in stage 1; half are retained in stages 2 and 3 to
+include some nearly deterministic tasks. The fraction of tables classified as unlearnable is 27–37% for tables
+with 1,024 rows. The too-easy rate is 7–8% for classification and 12% for regression.
+B. Training Stability
+During development we encountered excessive growth in the attention scales, the learned factors that multiply
+the attention logits, in longer runs and larger models. We added query–key normalization (QK-norm),
+which helped stabilize training by removing the direct dependence of logit scale on query and key projection
+magnitudes. However, QK-norm with learned affine gains still allowed the unbounded attention scales to grow.
+As the query and key gains multiply with the scales, their growth could compound even after normalization.
+Figure B.1 illustrates the behavior we encountered. Without QK-norm, scale growth was followed by abrupt
+increases in gradient norm and training loss. With QK-norm, the learned gains and separate per-channel
+query scale continued growing in the first ICL layer, while the training loss remained nearly constant and the
+gradient norm rose only later. Monitoring these parameters and gradient norms exposed changes that were
+not apparent from the loss alone.
+24
+
+
+NVIDIA Kumo Tabular: Pushing the Accuracy–Efficiency Frontier for Tabular Prediction
+0
+100K
+200K
+Training step
+0
+3
+6
+spikes
+Training loss
+100
+109
+1018
+explodes
+Gradient norm
+1
+100
+10K
+first column-
+attention block
+ICL layers
+other encoder blocks
+(a) Without QK-norm
+Scale proxy
+growth (×)
+0
+100K
+200K
+Training step
+0
+0.5
+1
+stays flat
+Training loss
+0.1
+1
+rises only late
+Gradient norm
+1
+10
+100
+1K
+first ICL layer £107
+11 later ICL layers ∙1:8 £
+(b) With QK-norm and learned scales
+Scale proxy
+growth (×)
+Figure B.1 | Two signatures of training instability. Two BF16 classification runs from development, without
+QK-norm (a) and with QK-norm and additional learned scales (b). Top: parameter-based scale proxies relative to step
+10K; middle: pre-clip gradient norm; bottom: training loss. (a) Without QK-norm, the proxy is the product of the
+largest singular values of the query and key projections. (b) With QK-norm, it is constructed from the RMS values of
+the learned query and key gains and per-channel query-scale parameters. Gradient norms and losses are shown as
+rolling medians.
+Attention Parameterization.
+These observations led us to remove the learned QK-norm gains and the
+separate per-channel query scale. In the released model, QK-norm has no learned gains, and length-dependent
+scaling has one learned coefficient 𝛼ℎper head. We apply weight decay to this coefficient to discourage
+unchecked growth. Heads can still learn different attention scales, and the length dependence helps maintain
+concentrated attention as contexts grow. This combination was stable in our training runs and enabled us to
+train with mixed precision using FP16 and BF16.
+Possible Feedback Mechanism.
+Some ICL heads may benefit from concentrating attention on a few
+relevant training rows, providing a reason for attention scales to grow even in stable runs. We suspected
+that this concentration could also lead to a feedback loop through attention output magnitude. When diffuse
+attention averages value vectors that partially cancel, concentrating the weights can increase the output
+norm. In a pre-norm block, that output is added to the residual stream without further normalization. If
+the larger contribution reduces the loss, optimization may favor still larger attention scales, reinforcing the
+concentration and output growth. We hypothesized that cutting this feedback loop would restore stability.
+Our parameterization does so simply, without sacrificing performance.
+We also tested normalizing the attention output before the residual addition to limit its magnitude indepen-
+dently of attention concentration. This stabilized development runs but lowered accuracy in short ablations,
+so we did not retain it in the released model.
+25

@@ -1,0 +1,2460 @@
+KNOW WHEN THE EQUATION IS WRONG: STRUCTURAL UNCERTAINTY FOR
+LLM-GUIDED SYMBOLIC REGRESSION UNDER EXTRAPOLATION
+Mostafa Cham 1 Bayu Adhi Tama 1 Jianwu Wang 1
+ABSTRACT
+Large language models (LLMs) can help discover mathematical equations from data, but most LLM-guided
+symbolic regression methods focus on a single best equation without quantifying uncertainty over alternative
+functional forms. This is challenging because distinct equations can fit the observed data similarly while producing
+substantially different extrapolations. Our experiments on the LLM-SRBench dataset show that standard conformal
+intervals achieve nominal in-distribution coverage but frequently fail under extrapolation. To tackle this challenge,
+we introduce LLM-SR-UQ, a framework that retains competing equation structures and uses their disagreement to
+characterize uncertainty about the underlying functional form. We extend the standard fixed-width conformal
+approach to quantify structural intervals, which measure disagreement among candidate equations and identify
+where prediction intervals should widen. Extensive experiments show our framework substantially improves
+coverage attainment by incorporating structural disagreement while preserving in-distribution coverage. Our
+approach also shows good generalizability when it is applied to other symbolic-regression methods. The code for
+this paper is available at https://github.com/MostafaCham/LLM-SR-UQ
+1
+INTRODUCTION
+Symbolic regression aims to discover interpretable mathe-
+matical equations that describe observed data and, ideally,
+remain valid beyond the observed range. Recent advances
+in large language models (LLMs) have improved symbolic
+regression by enabling the generation and refinement of can-
+didate equations using scientific context and iterative feed-
+back (Shojaee et al., 2025a; Grayeli et al., 2024; Wang et al.,
+2025; Xia et al., 2025). Despite these advances, current
+LLM-guided symbolic regression systems typically focus
+on identifying a single best equation, leaving an important
+question unanswered: when several equations can explain
+the observed data, how certain are we that the selected equa-
+tion is the appropriate functional form, and how reliable are
+its predictions outside the observed range?
+Different mathematical equations can fit the observed data
+equally well while representing different hypotheses about
+the underlying relationship. These differences may be dif-
+ficult to detect within the observed range but can lead to
+substantially different predictions under extrapolation. As a
+result, selecting only the highest-scoring equation can hide
+whether it is uniquely supported by the data or is one of
+several plausible alternatives. Classical symbolic regres-
+1Department of Information Systems, University of Mary-
+land, Baltimore County, Baltimore, MD, USA. Correspondence to:
+Mostafa Cham <mcham2@umbc.edu>.
+Preprint. Under review
+sion has explored this problem through Bayesian model
+selection, ensembles, and other approaches that retain infor-
+mation about competing equations (Guimer`a et al., 2020;
+Fasel et al., 2022; Hirsh et al., 2022; Bartlett et al., 2024).
+However, quantifying such structural uncertainty remains
+relatively unexplored in LLM-guided symbolic regression.
+Evaluating the accuracy of a discovered equation is not suf-
+ficient to establish the reliability of its uncertainty estimates.
+Existing symbolic regression benchmarks primarily assess
+point-prediction accuracy and symbolic recovery (La Cava
+et al., 2021; Shojaee et al., 2025b). but these metrics do
+not indicate whether prediction intervals contain the true
+outcomes at the expected frequency. In particular, an equa-
+tion may achieve low prediction error within the observed
+range while producing unreliable uncertainty estimates un-
+der extrapolation. For scientific applications, it is therefore
+important to evaluate not only predictive accuracy but also
+whether uncertainty estimates remain calibrated under the
+conditions in which the equation is applied.
+Conformal prediction offers a practical approach to estimat-
+ing predictive uncertainty by constructing prediction inter-
+vals from observed prediction errors (Vovk et al., 2005; Lei
+et al., 2018; Angelopoulos & Bates, 2021). It provides finite-
+sample marginal coverage guarantees when calibration and
+test data are exchangeable, even if the underlying model
+is incorrect. However, when applied to a single equation
+selected through symbolic regression, conventional confor-
+mal prediction does not explicitly account for alternative
+arXiv:2610.42024v1  [cs.LG]  30 Oct 2026
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+equations discarded during the search. This limitation is
+particularly important under extrapolation, where equations
+that fit the observed data similarly may produce substan-
+tially different predictions. Even when the coefficients of
+a selected equation are well estimated, uncertainty about
+its functional form may remain. Once competing equa-
+tions have been discarded, their disagreement can no longer
+inform the uncertainty estimate. Consequently, post-hoc cal-
+ibration may produce reliable intervals within the observed
+distribution while failing to capture structural ambiguity
+under extrapolation.
+To address these limitations, we introduce LLM-SR-UQ,
+which retains competing equation structures throughout the
+search rather than selecting a single best equation. Evidence-
+weighted model averaging produces a point predictor, while
+disagreement among retained equations determines how
+uncertainty varies across inputs. We extend fixed-width
+split-conformal intervals by normalizing held-out calibra-
+tion errors using this structural scale and applying the re-
+sulting conformal quantile to construct prediction intervals.
+These structural intervals widen where candidate predictions
+diverge and remain narrower where they agree.
+We also test whether uncertainty-related feedback improves
+equation discovery.
+An optional LLM critic examines
+fitting diagnostics and coefficient identifiability, with its
+extrapolation-aware setting additionally using disagreement
+among candidates on unlabeled inputs beyond the training
+range. The critic guides proposals without accessing shifted
+test data or altering retained candidates. Ablations compare
+it with rule-based feedback.
+Our main contributions are summarized as follows: (1)
+Structural uncertainty framework. We introduce LLM-SR-
+UQ, a framework that retains multiple candidate equation
+structures during symbolic regression and combines their
+disagreement with conformal calibration to construct input-
+dependent prediction intervals that reflect ambiguity in the
+underlying functional form (Section 3). (2) Evaluation of
+uncertainty under extrapolation. We systematically evaluate
+prediction accuracy, coverage, and interval sharpness under
+both in-distribution (ID) and extrapolative settings. Our
+experiments demonstrate that incorporating structural dis-
+agreement improves empirical coverage under extrapolation,
+including when applied to independent symbolic-regression
+methods (Sections 3 and 5). (3) Calibration-aware search
+feedback. We investigate whether uncertainty-related infor-
+mation can improve equation discovery through controlled
+ablations of rule-based feedback and an LLM-based critic.
+Our results show that the critic does not improve calibration
+or equation recovery beyond rule-based feedback, highlight-
+ing the importance of retaining structural alternatives rather
+than introducing additional LLM-guided search mechanisms
+(Section 3 and Appendix C).
+2
+RELATED WORK
+LLM-guided symbolic regression. Recent advances in
+LLM-guided symbolic regression have focused on improv-
+ing how mathematical equations are generated and refined
+during search. LLM-SR (Shojaee et al., 2025a) introduced
+LLM-driven program synthesis for equation discovery, with
+performance evaluated through prediction accuracy and
+equation recovery. Subsequent studies have explored differ-
+ent search strategies, including reusable concept libraries
+(Grayeli et al., 2024), in-context iteration (Merler et al.,
+2024), reasoning over data and previous experience (Wang
+et al., 2025), tool-using agents (Xia et al., 2025; Yang et al.,
+2026), tree search (Saveliev et al., 2026), structure-guided
+evolution (Xia et al., 2026), and hierarchical agent systems
+(Zhao et al., 2026). Other studies have examined the role
+of LLMs in this process, suggesting that improvements
+may arise primarily from effective search control Xie et al.
+(2026), while selecting equations from a fixed dictionary
+can sometimes outperform LLM-based evolution Li (2026).
+Despite these advances, the emphasis remains largely on im-
+proving equation discovery and predictive accuracy rather
+than quantifying uncertainty arising from alternative func-
+tional forms.
+Recent studies have addressed the reliability of LLM-guided
+symbolic regression by improving equation robustness.
+STRIDE combines critic–executor feedback with diversity-
+preserving memory to improve out-of-distribution (OOD)
+robustness (Su et al., 2026). LLM-PDESR addresses obser-
+vation noise and memorization by evaluating candidate equa-
+tions through a Pareto frontier (Du et al., 2026). However,
+improving equation robustness does not establish whether
+the resulting prediction intervals achieve reliable coverage
+under extrapolation.
+Structural uncertainty in classical symbolic regression.
+Classical symbolic regression has long explored methods
+for representing uncertainty over alternative equation struc-
+tures. Ensemble-SINDy (Fasel et al., 2022) uses bootstrap
+sampling to estimate the inclusion probabilities of candi-
+date terms, while sparsifying-prior model discovery (Hirsh
+et al., 2022) uses Bayesian priors to quantify uncertainty
+over model terms. Other approaches, such as the Bayesian
+machine scientist (Guimer`a et al., 2020) and exhaustive sym-
+bolic regression (Bartlett et al., 2024), explore alternative
+mathematical expressions through Bayesian sampling and
+minimum description length, respectively. These methods
+characterize uncertainty through quantities such as term-
+inclusion probabilities, distributions over candidate expres-
+sions, or relative model scores, rather than necessarily pro-
+ducing prediction intervals with a specified coverage tar-
+get. Building on this perspective, our work investigates
+how disagreement among retained equations can be used
+to construct calibrated prediction intervals in LLM-guided
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+symbolic regression, particularly under extrapolation.
+Distribution-free calibration. Conformal prediction con-
+structs prediction intervals with finite-sample marginal cov-
+erage guarantees when calibration and test data are ex-
+changeable (Vovk et al., 2005; Lei et al., 2018; Angelopou-
+los & Bates, 2021). Weighted conformal prediction ex-
+tends this approach to certain forms of covariate shift by
+accounting for differences between the calibration and test
+distributions (Tibshirani et al., 2019). In symbolic regres-
+sion, Conformal-SINDy (Fasel, 2025) applies conformal
+calibration to predictions from SINDy models. However,
+to our knowledge, conformal calibration has not been sys-
+tematically evaluated for LLM-guided symbolic regression
+under extrapolation, where standard coverage guarantees
+no longer apply. Existing approaches characterize uncer-
+tainty over candidate structures or calibrate predictions from
+fitted models, but these objectives are typically studied sep-
+arately. Our work combines disagreement among retained
+symbolic equations with conformal calibration to construct
+input-dependent prediction intervals and evaluates their em-
+pirical coverage under extrapolation.
+3
+METHODOLOGY
+3.1
+Problem setup
+Given a dataset of observations {(xi, yi)}N
+i=1, where xi ∈
+Rd represents the input variables and yi is a scalar target,
+together with brief descriptions of each variable, the goal
+is to discover a closed-form equation describing their re-
+lationship, and uncertainty measurements under both ID
+and OOD. An equation is characterized by its structure
+M, which defines its functional form, and its coefficients
+θ = (c0, c1, . . .), which determine the numerical values
+within that form. For example, M(x; θ) = c0x1e−c1x2 rep-
+resents a structure with two unknown coefficients, c0 and
+c1. For each candidate structure, these coefficients are es-
+timated by minimizing the squared prediction error on the
+training data. The greater challenge lies in selecting the
+appropriate structure, since different functional forms may
+fit the observations similarly well but behave differently un-
+der extrapolation. Expressions differing only in coefficient
+names are considered members of the same structural family.
+The objective is to obtain both a point predictor ˆy(x) and
+a prediction interval Cα(x) that reflects uncertainty arising
+from competing equation structures.
+3.2
+Dataset
+We use the LLM-SRBench dataset (Shojaee et al., 2025b)
+and organize the data into separate subsets for equation fit-
+ting, uncertainty calibration, and evaluation (Table 2). For
+each problem, the training data are randomly divided into
+Dfit (80%), used to fit and score candidate equations, and
+Dcal-ID (20%), used to calibrate prediction intervals. We
+evaluate the resulting models on two benchmark test sets:
+Dtest, containing inputs within the training range (interpo-
+lation), and DOOD, containing inputs beyond that range
+(extrapolation). Both test sets are reserved for final evalua-
+tion. In addition, we construct an unlabeled extrapolation
+region, Dcal-EXT, just beyond the training range to examine
+how candidate equations behave outside the observed data.
+This region provides information about disagreement among
+equations without revealing the true target values. Thus, no
+extrapolation labels are used during equation search or un-
+certainty calibration.
+3.3
+Overview
+LLM-SR-UQ consists of an iterative equation search fol-
+lowed by prediction and uncertainty calibration, organized
+into four stages (Figure 1). In Stage A, an LLM proposes
+candidate equation structures. In Stage B, each candidate
+is fitted and scored, and the highest-scoring structures are
+retained in a buffer with associated weights. In Stage C,
+when enabled, a second LLM acts as a critic, examining nu-
+merical diagnostics of the retained candidates and providing
+feedback to guide subsequent proposals. Finally, in Stage
+D, the retained equations are combined to form a single pre-
+dictor, while their disagreement determines how prediction
+intervals vary across the input space. Conformal calibration
+then adjusts the overall interval width based on observed
+prediction errors. To measure what each component con-
+tributes, we switch Stage C on in four steps, which we call
+rungs: A0 gives the proposer only the problem description;
+A1 adds a fixed, rule-based summary of the current fits; A2
+adds the critic; and A3 additionally shows the critic label-
+free evidence about extrapolation from Dcal-EXT. All rungs
+use the same budget of LLM calls (Section 4.4).
+3.4
+Stage A: proposing structures
+At each proposal round, the LLM receives the problem
+description and information about the input variables, and
+generates K = 8 candidate equation structures with free
+coefficients c0, c1, . . .. Starting with configuration A1, the
+proposer also receives a fixed summary of the current search
+results, including the leading equations and their fitting
+errors, poorly identified coefficients, unused input variables,
+and systematic residual patterns. In configurations A2 and
+A3, the latest critic guidance is additionally provided to help
+refine subsequent proposals. The proposer does not directly
+access the numerical training data. The feedback rules and
+prompt templates are provided in Appendices A and D.
+3.5
+Stage B: scoring and retaining structures
+Each proposed equation structure Mk is evaluated by fitting
+its coefficients on Dfit using least squares. This produces
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+Data splits
+x
+𝒟fit
+→ B
+𝒟cal-ID
+→ D
+𝒟cal-EXT
+→ C
+𝒟test
+→ eval
+𝒟OOD
+→ eval
+A. Prompted Hypothesis Generation
+B. Fitting, Scoring and Retention
+C. Critic (A2/A3 only)
+D. Prediction and Calibration
+mode: explore
+ban: M3
+edit: drop c2 term
+Problem
+Context
+variable
+descriptions
+Prompt Builder
+Leading equations
++ fit diagnostics
+A1+
+Critic guidance
+A2/A3
+LLM
+Proposer
+Candidates
+M1 : c0x1 + c1x2
+M2 : c0x1e−c1x2
+M3 : c0x1
+c1
+⋮
+MK
+Coefficient Fitting
++ Evidence Approx.
+• least-squares k
+• approx. covariance Σk
+• BIC-based log Zk
+θˆ
+𝒟fit
+Weighted Candidate Buffer
+ℓk = log Zk − λ dk
+wk ∝ exp(ℓk / τ)
+k = wk at τ = 1
+w˜
+critic: read-only
+fit results
+A2/A3 guidance
+after search
+Diagnostics
+“residual trend in x1”
+“c2 not identifiable”
+“stagnation flag”
+“A3: σS grows on 𝒟cal-EXT”
+𝒟cal-EXT
+Critic LLM
+Point prediction
+(x) = Σk 
+k Mk(x; k)
+yˆ
+w˜
+θˆ
+Structural spread
+σS
+2(x) = Σk wk(Mk(x) − (x))2
+yˆ
+𝒟cal-ID
+Conformal calibration
+si = |yi − (xi)| / σS(xi)
+yˆ
+Cα(x) = (x) ± α σS(x)
+yˆ
+qˆ
+Output
+(x) and Cα(x)
+yˆ
+Final evaluation
+coverage, attainment,
+width (ID/OOD)
+𝒟test, 𝒟OOD
+A1+ feedback
+Figure 1. Overview of LLM-SR-UQ. Candidate equations are proposed (A), fitted and retained in a weighted buffer (B). An optional
+critic guides subsequent proposals without modifying the buffer (C). The retained equations are combined for prediction, while their
+disagreement informs conformally calibrated structural intervals (D).
+the estimated coefficients ˆθk, from which we calculate the
+residual sum of squares (RSSk) and the estimated noise
+variance ˆσ2
+k:
+RSSk =
+X
+i∈Dfit
+
+yi −Mk(xi; ˆθk)
+2
+,
+ˆσ2
+k = RSSk
+n
+, (1)
+where n is the number of observations in Dfit. Although
+more flexible equations may achieve lower training error,
+they can also overfit the observed data. We therefore eval-
+uate candidate structures using an approximation to their
+Bayesian evidence, which accounts for both fitting quality
+and model complexity.
+To compare candidate structures, we use the Bayesian In-
+formation Criterion (BIC), which balances fitting accuracy
+against model complexity (MacKay, 1992). For each struc-
+ture Mk, we compute
+BICk = n log ˆσ2
+k+dk log n,
+log Zk ≈−1
+2BICk, (2)
+where dk is the number of free coefficients. A lower residual
+variance improves the BIC score, while additional coeffi-
+cients increase the complexity penalty.
+We use BIC to approximate the log Bayesian evidence
+log Zk, which measures how well a structure explains the
+observed data after accounting for uncertainty in its coeffi-
+cients (MacKay, 1992). Finally, each candidate receives the
+score
+ℓk = log Zk −λdk,
+(3)
+where λ = 0.05 introduces a small additional penalty for
+model complexity, favoring simpler structures when their
+evidence is similar.
+The buffer retains up to B = 24 highest-scoring candidate
+equations. Duplicate equation structures are removed, but
+distinct structures belonging to the same structural fam-
+ily may coexist in the buffer. However, directly assigning
+weights according to Bayesian evidence can cause nearly all
+the weight to concentrate on a single equation, particularly
+when the dataset is large. This limits the contribution of
+alternative structures, even when their predictions differ sub-
+stantially under extrapolation. To preserve their influence,
+we introduce temperature-controlled weights:
+wk =
+exp(ℓk/τ)
+PB
+j=1 exp(ℓj/τ)
+,
+(4)
+where τ > 0 controls how strongly differences in model
+scores affect the weights. At τ = 1, the weights are propor-
+tional to the Bayesian evidence multiplied by the structural
+prior; we denote these untempered weights by ˜wk. Increas-
+ing τ distributes weight more evenly among the retained
+equations.
+Because score differences depend on the dataset size, a
+fixed temperature may produce different levels of weight
+concentration across problems. We therefore adjust τ to
+control the effective number of structures contributing to the
+weighted ensemble, using the measure introduced by (Kish,
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+1965):
+Beff =
+ B
+X
+k=1
+w2
+k
+!−1
+.
+(5)
+Here, wk is the tempered weight of the k-th retained struc-
+ture, and B is the number of retained structures. The effec-
+tive model count Beff ranges from 1, when a single structure
+dominates, to B, when all structures receive equal weight.
+We select τ to achieve a target of Beff = 0.35B ≈8.4,
+allowing multiple structures to contribute to the uncertainty
+estimate. Our sensitivity analysis shows that the results re-
+main stable across a broad range of target effective model
+counts, provided Beff > 1 (Appendix B).
+In our experiments, the untempered weights concentrate al-
+most entirely on the highest-scoring equation, with a median
+effective model count of 1.00 across configurations. Con-
+sequently, evidence-proportional model averaging provides
+little structural disagreement. We therefore use tempered
+weights to measure disagreement among the retained equa-
+tions, treating this spread as an empirical measure of struc-
+tural uncertainty rather than a calibrated Bayesian posterior.
+3.6
+Stage C: the critic
+The critic examines the current search results and provides
+feedback to guide subsequent equation proposals. Every
+fifth language-model call is allocated to the critic instead of
+the proposer. The critic receives numerical diagnostics of
+the retained candidates, including residual patterns, poorly
+identified coefficients, repeatedly proposed structural fami-
+lies, and signs of search stagnation. In configuration A3, it
+additionally receives label-free information from Dcal-EXT,
+describing disagreement among the three leading equations
+and changes in prediction-interval width beyond the ob-
+served range.
+Based on these diagnostics, the critic recommends struc-
+tures to avoid, alternative directions to explore, and up to
+three modifications of existing candidates. Each suggested
+modification must be supported by the available diagnostics
+and validated before use. Importantly, the critic only in-
+fluences subsequent proposals; candidate retention remains
+determined by the score ℓk. The critic’s output format and
+validation rules are provided in Appendices A and D.
+3.7
+Stage D: Structural Intervals and Conformal
+Calibration
+After completing the search, we combine the retained equa-
+tions into a single predictor using Bayesian model averaging
+(BMA) (Hoeting et al., 1999). The prediction at input x is
+computed as the weighted average:
+ˆy(x) =
+B
+X
+k=1
+˜wkMk(x; ˆθk),
+(6)
+where Mk(x; ˆθk) is the prediction of the k-th fitted structure
+and ˜wk is its untempered evidence weight. Because these
+weights are strongly concentrated on the highest-scoring
+structure, the resulting prediction is typically close to that
+of the single best equation.
+To measure structural disagreement, we examine how much
+the retained equations differ from the final prediction at each
+input x. We define the structural spread using the tempered
+weights as
+σ2
+S(x) =
+B
+X
+k=1
+wk
+
+Mk(x; ˆθk) −ˆy(x)
+2
+.
+(7)
+Here, wk is the tempered weight of the k-th retained struc-
+ture, Mk(x; ˆθk) is its prediction, and ˆy(x) is the final pre-
+dictor defined in Equation 6. The structural spread is small
+when candidate equations make similar predictions and
+increases when their predictions diverge. We use untem-
+pered weights for the point predictor to emphasize the best-
+supported equation, while tempered weights allow alterna-
+tive structures to contribute more substantially to the dis-
+agreement measure.
+Structural disagreement alone does not guarantee that pre-
+diction intervals achieve the desired coverage. We therefore
+use split conformal prediction (Vovk et al., 2005; Lei et al.,
+2018) to calibrate the structural spread using the held-out
+set Dcal-ID, containing m observations. For each calibration
+point, we compute the normalized prediction error
+si = |yi −ˆy(xi)|
+σS(xi)
+,
+i ∈Dcal-ID.
+(8)
+Here, |yi−ˆy(xi)| is the absolute prediction error, and σS(xi)
+is the structural spread at the same input. The normalized
+score measures the prediction error relative to the disagree-
+ment among candidate equations. We then select the calibra-
+tion quantile ˆqα as the ⌈(m + 1)(1 −α)⌉-th smallest score,
+where α = 0.1 corresponds to a nominal coverage level of
+90%. The prediction interval for a new input x is defined as
+C(x) = [ˆy(x) −ˆqασS(x), ˆy(x) + ˆqασS(x)] .
+(9)
+The conformal quantile ˆqα determines the overall scale of
+the intervals, while σS(x) adjusts their width according to
+the disagreement among retained equations. Consequently,
+intervals expand where candidate predictions diverge and
+remain narrower where they agree. Under exchangeability
+between calibration and test observations, this construction
+provides finite-sample marginal coverage of at least 1 −α,
+regardless of whether the candidate equations are correctly
+specified. However, this guarantee does not generally ex-
+tend to DOOD, where predictions are evaluated beyond the
+observed input range. We examine empirical coverage under
+this extrapolation setting in Section 5.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+To assess the contribution of structural disagreement, we
+compare two interval constructions centered on the same pre-
+dictor ˆy(x). The proposed structural intervals (S), defined
+in Equation 9, use the input-dependent structural spread
+σS(x) to scale interval widths according to disagreement
+among retained equations. In contrast, the split conformal
+baseline (split) uses a constant unit scale, yielding absolute-
+residual calibration scores si = |yi −ˆy(xi)| and intervals
+of fixed width across inputs, determined by the conformal
+quantile.
+Both constructions use the same fitting and calibration data
+and provide finite-sample marginal coverage guarantees
+under exchangeability. Since they share the same point
+predictor, their comparison isolates the effect of using struc-
+tural disagreement to determine interval width. Structural
+intervals are independent of the algorithm used to discover
+candidate models. Given multiple fitted candidates, their
+prediction disagreement provides an input-dependent un-
+certainty scale that can be calibrated using held-out ob-
+servations without modifying the underlying search pro-
+cedure. We demonstrate this transfer with LLM-SR and
+Ensemble-SINDy in Section 5.2. In all cases, we report the
+highest-weight structure as the discovered equation, while
+the retained ensemble is used for prediction and uncertainty
+estimation.
+4
+EVALUATION AND EXPERIMENT SETUP
+We evaluate prediction accuracy and uncertainty reliability
+at the problem level, focusing on performance under ex-
+trapolation. All prediction intervals target 90% coverage.
+Because distribution shifts vary across domains, we report
+domain-specific results alongside pooled summaries where
+appropriate.
+4.1
+Accuracy
+We evaluate prediction accuracy using median normalized
+mean squared error (NMSE) on both in-distribution and out-
+of-distribution test sets, along with accuracy-to-tolerance
+(Acc0.1) and symbolic accuracy. The metric Accτ measures
+the fraction of problems for which all test predictions have
+relative errors within a specified tolerance τ. We use τ = 0.1
+and count non-finite predictions as failures.
+To evaluate symbolic accuracy (SA@k) we replace numer-
+ical constants and free coefficients in the discovered and
+reference equations with canonical placeholders, then com-
+pare the resulting using SymPy. Because different symbolic
+expressions can represent the same function, we separately
+evaluate functional recovery after refitting candidate coef-
+ficients. A candidate is recovered if its predictions match
+the reference within specified tolerances across training,
+in-distribution, out-of-distribution, and additional extrap-
+olation points. We report functional recovery at ranks 1
+and 3, alongside SA@k for the highest-weight candidate
+structures. The numerical thresholds and detailed recovery
+criteria are provided in Appendix A.
+4.2
+Uncertainty
+We evaluate predictive uncertainty using coverage attain-
+ment, interval sharpness, and interval score. Coverage alone
+is insufficient, since wider prediction intervals can achieve
+higher coverage without providing useful precision. We
+therefore assess both how often intervals contain the true
+outcomes and how narrow they remain.
+Coverage attainment. We define the attainment rate as
+Aα = 1
+N
+N
+X
+p=1
+1
+
+covOOD
+p
+≥1 −α −ϵ
+
+,
+(10)
+where N is the number of benchmark problems and covOOD
+p
+is the empirical coverage on the shifted test set for problem p.
+With a nominal coverage level of 1−α = 0.90, the tolerance
+ϵ = 0.02 allows problems with at least 88% coverage to
+count as attaining the target.
+Sharpness at coverage. To assess interval width among
+successfully covered problems, we define
+Sα =
+median
+p:covOOD
+p
+≥1−α−ϵ
+|Cp|
+sd(ytrain
+p
+).
+(11)
+Here, |Cp| is the mean interval width for problem p, normal-
+ized by the standard deviation of its training targets. Lower
+values indicate narrower intervals, but Sα is computed only
+over problems meeting the coverage threshold and must
+therefore be interpreted alongside the attainment rate.
+Interval score. To jointly evaluate interval width and cov-
+erage errors, we use the interval score (Gneiting & Raftery,
+2007):
+ISα(C, y) = (u −ℓ) + 2
+α(ℓ−y)+ + 2
+α(y −u)+,
+(12)
+where ℓand u are the lower and upper bounds of prediction
+interval C, y is the observed target, and (z)+ = max(z, 0).
+The score penalizes both wider intervals and observations
+falling outside their bounds, with lower values indicating
+better performance.
+We additionally report ID coverage, absolute calibration
+error, OOD coverage distributions, Wilson confidence inter-
+vals for attainment rates, and interval-width ratios between
+ID and OOD. Search diversity is measured using distinct
+structural families and repeated-family rates rather than the
+effective model count, which is controlled by temperature.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+4.3
+Simplicity and cost
+We measure equation complexity using expression-tree node
+counts and free-parameter counts, and computational cost
+using language-model calls and estimated cost per prob-
+lem. We additionally report a plateau statistic measuring
+the fraction of proposer rounds after the last improvement
+in the best evidence score. Detailed metric definitions and
+token-usage limitations are provided in Appendix A.
+4.4
+Experimental setup
+Benchmark and splits. We evaluate on the LSR-Synth sub-
+set of LLM-SRBench (Shojaee et al., 2025b), comprising
+129 problems across reaction kinetics, population dynam-
+ics, stress–strain, and physical oscillators. Each problem
+provides 4,000 training observations and separate 500-point
+test sets for interpolation and extrapolation beyond the train-
+ing range. We exclude LSR-Transform because it lacks
+an extrapolation split. Data partitions and the unlabeled
+extrapolation region are described in Section 3.2 and Ap-
+pendix A. Each problem has a three-hour wall-clock limit,
+with timeouts recorded as failures and excluded from paired
+comparisons.
+Development discipline. We reserve 20 problems (five per
+domain) for prompt development and use the remaining 109
+for held-out evaluation. All prompts are frozen before final
+evaluation, and the critic prompt’s fingerprint is recorded.
+Each held-out problem is evaluated once per configuration,
+with paired comparisons restricted to problems completed
+by both configurations.
+The ablation ladder. To assess the contribution of search
+feedback, we compare configurations A0–A3 (Section 3.3)
+under a fixed budget of 125 LLM calls per problem. Ad-
+jacent comparisons evaluate the effects of rule-based diag-
+nostics (A1 vs. A0), LLM critic guidance (A2 vs. A1), and
+additional label-free extrapolation information (A3 vs. A2).
+In A2 and A3, 24 calls are allocated to the critic, leaving
+101 proposer calls, compared with 125 proposer calls in
+A0 and A1. Thus, all configurations have the same total
+LLM-call budget, although the number of equation-proposal
+rounds differs. The complete ablation configurations and
+their corresponding experimental comparisons are detailed
+in Appendix C, Table 6.
+4.5
+Baselines
+We compare LLM-SR-UQ with three complementary base-
+lines under a common evaluation protocol.
+For LLM-
+based comparisons, we use GPT-4o-mini and Llama-3.1-
+8B-Instruct.
+The first baseline is LLM-SR (Shojaee et al., 2025a), and
+we use its official implementation and published 1k-sample
+configuration. We compare its single best equation with
+split-conformal intervals against the top 24 distinct equa-
+tions from its experience buffer, which we refit and evidence-
+weight using our procedure. Applying both split-conformal
+and structural intervals to the same top-24 predictor isolates
+the effect of structural disagreement without changing the
+underlying search.
+Direct prompting. Each LLM generates a single equation
+without iterative search or diagnostic feedback. We apply
+split-conformal intervals because no alternative equation
+structures are retained. This baseline tests the benefit of
+iterative equation search relative to direct generation.
+Ensemble-SINDy.
+As a non-LLM baseline, we use
+Ensemble-SINDy (Fasel et al., 2022), which generates mul-
+tiple sparse-regression models from a shared candidate li-
+brary. We apply split-conformal and structural intervals to
+its ensemble to test transfer beyond LLM-guided search.
+This baseline is relevant because LSR-Synth targets are the
+right-hand sides of ordinary differential equations, which de-
+scribe how dynamical systems evolve over time. SINDy is
+specifically designed to recover such governing expressions
+from data.
+All baselines evaluated in our experiments use the same
+fitting set Dfit and calibration set Dcal-ID as LLM-SR-UQ.
+Because only 80% of the available training data are used
+for fitting, their results may differ from those originally
+reported.
+5
+RESULTS
+Unless stated otherwise, results are reported on 109 held-out
+problems using one search seed, with paired comparisons
+restricted to problems completed by both methods.
+5.1
+Structural disagreement improves uncertainty
+under shift
+Table 1 compares structural and split-conformal intervals on
+held-out problems using identical point predictors, fitting
+data, and calibration data. Both maintain approximately
+90% in-distribution coverage, but their performance dif-
+fers substantially under extrapolation. Structural intervals
+increase OOD coverage attainment from 0.58 to 0.83 for
+A0 and from 0.53 to 0.92 for A1. Because both construc-
+tions use identical point predictions, these improvements
+arise from incorporating structural disagreement into the
+prediction intervals rather than from improved predictive
+accuracy.
+Figure 2 compares problem-level OOD coverage under split-
+conformal and structural intervals for A0, A1, LLM-SR
+top-24, and Ensemble-SINDy. Structural intervals increase
+coverage on 58 problems at A0 and 60 at A1, compared
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+0.00
+0.25
+0.50
+0.75
+1.00
+OOD coverage, split
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+OOD coverage, structural
+A0 (ours)
+58 up, 7 down; attainment +32 / 
+4
+Chemistry
+Biology
+Materials
+Physics
+0.00
+0.25
+0.50
+0.75
+1.00
+OOD coverage, split
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+A1 (ours)
+60 up, 12 down; attainment +43 / 
+1
+0.00
+0.25
+0.50
+0.75
+1.00
+OOD coverage, split
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+LLM-SR, top-24 BMA
+58 up, 7 down; attainment +41 / 
+5
+0.00
+0.25
+0.50
+0.75
+1.00
+OOD coverage, split
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Ensemble-SINDy
+80 up, 11 down; attainment +45 / 
+5
+Figure 2. Problem-level OOD coverage under split-conformal and structural intervals for A0, A1, LLM SR top-24 BMA, and Ensemble-
+SINDy. Each point represents a held-out problem, with split-conformal coverage on the horizontal axis and structural coverage on the
+vertical axis. The diagonal indicates equal coverage. Dashed lines mark the attainment threshold of 0.88, corresponding to the nominal
+target of 0.90 with tolerance ϵ = 0.02. Panel headings report counts of coverage increases and decreases and transitions into or out of
+attainment.
+with decreases on 7 and 12 problems, respectively. At the
+coverage-attainment threshold, 32 and 43 problems move
+from failure to attainment, while only 4 and 1 move in the
+opposite direction. The same pattern extends to indepen-
+dent search methods, with 41 favorable versus 5 unfavor-
+able attainment transitions for LLM-SR and 45 versus 5 for
+Ensemble-SINDy. These paired comparisons show that the
+improvements extend across many individual problems and
+are not limited to our search procedure, although structural
+intervals do not improve coverage uniformly.
+Higher OOD coverage could result from wider intervals
+rather than more informative uncertainty estimates. Because
+sharpness S0.1 is computed only for problems meeting the
+coverage-attainment threshold, it cannot be compared di-
+rectly across methods. We therefore compare OOD interval
+widths on problems where both constructions attain cover-
+age. The median structural-to-split width ratio is 1.16 at A0
+(p = 0.77) and 0.98 at A1 (p = 0.22), based on Wilcoxon
+signed-rank tests. Neither comparison shows a statistically
+significant difference, although this restricted analysis does
+not establish equivalent widths across all problems. We
+additionally use the OOD interval score to evaluate the
+coverage–width trade-off across the full benchmark.
+The OOD interval score provides a complementary evalua-
+tion of the trade-off between coverage and interval width. At
+A0, structural intervals have a slightly higher median inter-
+val score than split-conformal intervals (1.92 × 10−2 versus
+1.73 × 10−2, p = 0.19), indicating worse performance on
+this metric. At A1, structural intervals achieve a lower score
+(2.77 × 10−3 versus 5.66 × 10−3, p = 0.11). Neither dif-
+ference is statistically significant. These findings suggest
+that structural disagreement improves coverage attainment,
+although its effect on the overall coverage–width trade-off
+varies across configurations. Illustrative examples of input-
+dependent interval widening are provided in Appendix A.5
+(Figure 4).
+5.2
+The uncertainty construction transfers across
+search methods
+To assess whether structural disagreement improves uncer-
+tainty estimates beyond our search procedure, we apply
+structural intervals to candidate sets produced by LLM-
+SR and Ensemble-SINDy. For each method, we compare
+split-conformal and structural intervals using identical point
+predictions, fitting data, and in-distribution calibration data.
+This comparison isolates the effect of the interval construc-
+tion from differences in the underlying equation search.
+Table 1 compares prediction accuracy and uncertainty per-
+formance across all 109 held-out problems. The direct-
+prompting baselines produce a single equation per problem
+and are therefore evaluated only with split-conformal inter-
+vals. In contrast, Ensemble-SINDy and the top-24 LLM-
+SR variant retain multiple candidate equations, allowing
+both split-conformal and structural intervals to be evaluated.
+We also include LLM-SR’s single-best variant to distin-
+guish the effect of retaining multiple equations from the
+effect of using their structural disagreement. Within each
+method, both interval constructions use identical point pre-
+dictions, as reflected in their unchanged NMSE values. The
+comparison therefore evaluates whether structural disagree-
+ment improves coverage and attainment under extrapolation,
+while sharpness and interval score characterize the associ-
+ated trade-off in interval width.
+The LLM-SR results provide a controlled comparison of
+retaining multiple equations and using their structural dis-
+agreement to construct uncertainty intervals.
+With the
+single-best LLM-SR equation, split-conformal intervals at-
+tain the OOD coverage target on 57 of 109 problems (0.52).
+Retaining the top 24 equations while using split conformal
+intervals produces only a marginal improvement, reaching
+58 problems (0.53). In contrast, applying structural intervals
+to the same top-24 candidate set increases OOD coverage
+from 0.635 to 0.928 and coverage attainment from 0.53 to
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+Table 1. Prediction accuracy and uncertainty performance across symbolic-regression methods.
+NMSE
+Coverage
+OOD attainment OOD sharpness OOD IS
+Method
+Interval
+ID
+OOD
+ID OOD
+A0.1
+S0.1
+IS
+Direct, Llama-8B
+split
+2.1e-2
+2.84 0.902 0.629
+0.55 (60/109)
+4.45e-1
+9.08e-1
+Direct, GPT-4o-mini
+split
+2.0e-2
+2.76 0.894 0.646
+0.57 (62/109)
+3.83e-1
+7.94e-1
+Ensemble-SINDy
+split
+3.2e-7 6.3e-2 0.899 0.365
+0.26 (28/109)
+2.03e-4
+5.58e-2
+Ensemble-SINDy
+structural 3.2e-7 6.3e-2 0.900 0.762
+0.62 (68/109)
+9.29e-3
+1.89e-2
+LLM-SR, single best split
+4.2e-6 2.2e-3 0.891 0.627
+0.52 (57/109)
+4.82e-3
+1.54e-2
+LLM-SR, top-24
+split
+4.2e-6 2.2e-3 0.883 0.635
+0.53 (58/109)
+4.80e-3
+1.54e-2
+LLM-SR, top-24
+structural 4.2e-6 2.2e-3 0.891 0.928
+0.86 (94/109)
+7.28e-3
+8.26e-3
+Ours, A0
+split
+3.3e-6 2.4e-3 0.902 0.671
+0.58 (63/109)
+7.68e-3
+1.73e-2
+Ours, A0
+structural 3.3e-6 2.4e-3 0.902 0.906
+0.83 (91/109)
+1.27e-2
+1.92e-2
+Ours, A1
+split
+2.0e-8 6.0e-5 0.901 0.627
+0.53 (58/109)
+2.32e-4
+5.66e-3
+Ours, A1
+structural 2.0e-8 6.0e-5 0.902 0.964
+0.92 (100/109)
+1.12e-3
+2.77e-3
+0.86 (94/109 problems). The median OOD interval score
+also decreases from 1.54 × 10−2 to 8.26 × 10−3, while the
+point-prediction NMSE remains unchanged. These results
+show that the improvement arises from incorporating dis-
+agreement among candidate equations into the uncertainty
+intervals, rather than simply retaining multiple equations.
+Ensemble-SINDy provides a complementary test because
+it generates candidate equations through sparse regression
+rather than LLM-guided search. Structural intervals increase
+OOD coverage from 0.365 to 0.762 and coverage attainment
+from 0.26 (28/109 problems) to 0.62 (68/109 problems). In-
+distribution coverage remains approximately 0.90, and both
+ID and OOD NMSE remain unchanged because the point
+predictions are identical. The median OOD interval score
+also decreases from 5.58 × 10−2 to 1.89 × 10−2, indicating
+a better observed coverage–width trade-off. Although the
+reported sharpness statistic increases from 2.03 × 10−4 to
+9.29×10−3, these values are computed over different sets of
+problems meeting the coverage-attainment threshold and are
+not directly comparable. Together, these results show that
+structural disagreement can improve extrapolation coverage
+even when the candidate equations come from a non-LLM
+search method.
+Figure 3 provides a complementary view of uncertainty
+performance by showing the distribution of OOD cover-
+age across held-out problems. Each curve represents the
+fraction of problems with empirical coverage at or below
+a given value. Near the 0.88 attainment threshold, lower
+curves indicate fewer coverage failures. A1 achieves the
+highest attainment rate of 0.92, followed by LLM-SR top-24
+with structural intervals at 0.86 and A0 at 0.83. Ensemble-
+SINDy with structural intervals also outperforms the single-
+equation baselines in attainment. The coverage distributions
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+OOD coverage
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+share of problems with coverage 
+ x
+A1 (ours): A=0.92
+A0 (ours): A=0.83
+Direct, Llama-3.1-8B: A=0.55
+Direct, GPT-4o-mini: A=0.57
+LLM-SR, single-best: A=0.52
+LLM-SR, top-24 BMA: A=0.86
+Ensemble-SINDy: A=0.62
+Figure 3. Empirical cumulative distribution of OOD coverage
+across 109 held-out problems. Each curve shows the fraction
+of problems with empirical coverage at or below the horizontal-
+axis value. A0, A1, LLM-SR top-24 BMA, and Ensemble-SINDy
+use structural intervals. Direct-prompting baselines and LLM-SR
+single-best use split-conformal intervals. The vertical dotted line
+marks the attainment threshold of 0.88. Legend values report cov-
+erage attainment A0.1.
+reveal substantial differences across methods and show that
+none achieves the attainment target on every held-out prob-
+lem.
+The cross-method comparison also places the complete
+LLM-SR-UQ system in context. With structural intervals,
+A0 achieves OOD coverage attainment of 0.83 (91/109 prob-
+lems), slightly below LLM-SR top-24 at 0.86 (94/109), but
+above Ensemble-SINDy at 0.62 (68/109). A1 increases
+attainment to 0.92 (100/109), the highest among the eval-
+uated methods. It also achieves the lowest median ID and
+OOD NMSE, at 2.0 × 10−8 and 6.0 × 10−5, respectively,
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+together with the lowest OOD interval score of 2.77×10−3.
+These results demonstrate that A1 combines strong point-
+prediction accuracy with improved uncertainty performance
+under extrapolation.
+The difference between A0 and A1 highlights the contribu-
+tion of mechanical feedback to equation discovery. Unlike
+A0, A1 provides the proposer with fitting diagnostics and
+information about previously evaluated candidate equations,
+allowing subsequent proposals to respond to observed er-
+rors. This reduces median ID NMSE from 3.3 × 10−6 to
+2.0 × 10−8 and median OOD NMSE from 2.4 × 10−3 to
+6.0 × 10−5. These improvements indicate that mechanical
+feedback helps the search identify more accurate equations.
+Structural intervals serve a complementary purpose by us-
+ing disagreement among the retained equations to charac-
+terize uncertainty under extrapolation. The LLM-SR and
+Ensemble-SINDy results further demonstrate that this un-
+certainty construction can improve coverage independently
+of the proposed search procedure.
+Search diversity and the role of the critic. Search diver-
+sity provides further insight into the effect of mechanical
+feedback. At A1, only 22% of proposed equations belong to
+previously explored structural families, compared with 31%
+at A0. Under the same budget of approximately 1,000 candi-
+date equations, A1 explores 774 distinct structural families,
+whereas A0 explores 690. This suggests that mechanical
+feedback reduces repeated proposals and encourages explo-
+ration of new equation structures, which may contribute
+to the improved predictive accuracy observed at A1. De-
+spite this increased exploration, the discovered equations
+remain relatively compact, with 6.7–8.2 fitted coefficients
+and 20–25.5 expression-tree nodes across the evaluated con-
+figurations.
+The calibration-aware critic produces a different pattern
+of search behavior. Across critic-assisted configurations,
+repeated proposals account for 33–39% of candidates, com-
+pared with 22% at A1, while the number of distinct struc-
+tural families decreases from 774 to 494–543. However, the
+critic tends to produce simpler reported equations. Rela-
+tive to A1, expression-tree size decreases from 25.1 to 22.5
+nodes with the 8B critic (p = 0.007) and to 21.9 nodes with
+GPT-4o (p = 8 × 10−5) at A3. These results indicate that
+critic-assisted search yields more compact equations but
+does not improve uncertainty performance.
+The critic ablation indicates that adding a calibration-aware
+critic does not improve OOD coverage attainment under
+the fixed budget of 125 language-model calls. Mechanical
+feedback alone (A1) achieves the highest attainment of 0.92
+(100/109 problems), whereas the critic-assisted A2 and A3
+configurations attain 0.82–0.88 across both critic models.
+Although the critic produces valid equation edits, particu-
+larly with GPT-4o, these edits rarely outperform the leading
+candidates under the evidence criterion. Consequently, they
+have limited influence on the retained equations. Because
+critic calls replace some proposer calls within the fixed
+budget, these results characterize the overall critic-assisted
+search configuration rather than the isolated effect of the
+critic. The main uncertainty improvements are therefore
+achieved without the critic, through retaining alternative
+equations and using their disagreement to construct input-
+dependent intervals.
+6
+CONCLUSION
+LLM-guided symbolic regression often selects a single equa-
+tion, overlooking uncertainty among functional forms that
+fit observed data similarly but diverge under extrapolation.
+We introduce LLM-SR-UQ, which combines disagreement
+among retained equations with conformal calibration to con-
+struct input-dependent prediction intervals. Experiments on
+LLM-SRBench show that split-conformal intervals main-
+tain approximately nominal in-distribution coverage but
+frequently fail under extrapolation, with prediction accuracy
+alone failing to identify these errors. Across 109 held-out
+problems, structural intervals improve OOD coverage attain-
+ment from 0.58 to 0.83 at A0 and from 0.53 to 0.92 at A1,
+while preserving in-distribution calibration.
+These gains also extend to independent search meth-
+ods. Structural intervals increase OOD attainment from
+0.53 to 0.86 for LLM-SR top-24 and from 0.26 to 0.62
+for Ensemble-SINDy without changing point predictions.
+Within LLM-SR-UQ, mechanical feedback improves equa-
+tion accuracy and search diversity, whereas the calibration-
+aware critic produces simpler equations without additional
+coverage gains under the fixed computational budget. Over-
+all, the results demonstrate the value of structural disagree-
+ment for improving empirical uncertainty estimates under
+extrapolation.
+ACKNOWLEDGMENTS
+This research has been funded by the NSF HDR Institute for
+Harnessing Data and Model Revolution in the Polar Regions
+(iHARP), Award #2118285.
+REFERENCES
+Angelopoulos, A. N. and Bates, S. A gentle introduction
+to conformal prediction and distribution-free uncertainty
+quantification. arXiv preprint arXiv:2107.07511, 2021.
+Bartlett, D. J., Desmond, H., and Ferreira, P. G. Exhaustive
+symbolic regression. IEEE Transactions on Evolutionary
+Computation, 28(4):950–964, 2024. doi: 10.1109/TEVC.
+2023.3280250.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+Du, J., Ma, H., Shi, X., Yang, B., Liang, Y., Lee, H. P.,
+and Wu, C. LLM-PDESR: Robust PDE discovery via
+subdomain weighted residuals and LLM-guided symbolic
+hypothesis generation. arXiv preprint arXiv:2607.10546,
+2026.
+Fasel, U. Sparse identification of nonlinear dynamics with
+conformal prediction. arXiv preprint arXiv:2507.11739,
+2025.
+Fasel, U., Kutz, J. N., Brunton, B. W., and Brunton, S. L.
+Ensemble-SINDy: Robust sparse model discovery in the
+low-data, high-noise limit, with active learning and con-
+trol. Proceedings of the Royal Society A, 478(2260):
+20210904, 2022. doi: 10.1098/rspa.2021.0904.
+Gneiting, T. and Raftery, A. E. Strictly proper scoring
+rules, prediction, and estimation. Journal of the American
+Statistical Association, 102(477):359–378, 2007. doi:
+10.1198/016214506000001437.
+Grayeli, A., Sehgal, A., Costilla-Reyes, O., Cranmer, M.,
+and Chaudhuri, S. Symbolic regression with a learned
+concept library. In Advances in Neural Information Pro-
+cessing Systems (NeurIPS), 2024. arXiv:2409.09359.
+Guimer`a, R., Reichardt, I., Aguilar-Mogas, A., Massucci,
+F. A., Miranda, M., Pallar`es, J., and Sales-Pardo, M.
+A Bayesian machine scientist to aid in the solution of
+challenging scientific problems. Science Advances, 6(5):
+eaav6971, 2020. doi: 10.1126/sciadv.aav6971.
+Hirsh, S. M., Barajas-Solano, D. A., and Kutz, J. N. Sparsi-
+fying priors for Bayesian uncertainty quantification in
+model discovery.
+Royal Society Open Science, 9(2):
+211823, 2022. doi: 10.1098/rsos.211823.
+Hoeting, J. A., Madigan, D., Raftery, A. E., and Volinsky,
+C. T.
+Bayesian model averaging: A tutorial.
+Statis-
+tical Science, 14(4):382–401, 1999. doi: 10.1214/ss/
+1009212519.
+Kish, L. Survey Sampling. John Wiley & Sons, New York,
+1965.
+La Cava, W., Orzechowski, P., Burlacu, B., de Franc¸a, F. O.,
+Virgolin, M., Jin, Y., Kommenda, M., and Moore, J. H.
+Contemporary symbolic regression methods and their rel-
+ative performance. In NeurIPS Datasets and Benchmarks
+Track, 2021. arXiv:2107.14351.
+Lei, J., G’Sell, M., Rinaldo, A., Tibshirani, R. J., and
+Wasserman, L. Distribution-free predictive inference for
+regression. Journal of the American Statistical Associa-
+tion, 113(523):1094–1111, 2018. doi: 10.1080/01621459.
+2017.1307116.
+Li, P. Dictionaries, not Darwin: Set-level selection beats
+LLM evolution in scientific equation discovery. arXiv
+preprint arXiv:2607.04108, 2026.
+MacKay, D. J. C. Bayesian interpolation. Neural Compu-
+tation, 4(3):415–447, 1992. doi: 10.1162/neco.1992.4.3.
+415.
+Merler, M., Haitsiukevich, K., Dainese, N., and Martti-
+nen, P.
+In-context symbolic regression: Leveraging
+large language models for function discovery. In Pro-
+ceedings of the 62nd Annual Meeting of the Association
+for Computational Linguistics (ACL): Student Research
+Workshop, 2024.
+doi: 10.18653/v1/2024.acl-srw.49.
+arXiv:2404.19094.
+Saveliev, E. S., Holt, S., Seedat, N., Bentley, D. L., Weather-
+all, J., and van der Schaar, M. Influence-guided sym-
+bolic regression: Scientific discovery via LLM-driven
+equation search with granular feedback. arXiv preprint
+arXiv:2605.29184, 2026. ICML 2026.
+Shojaee, P., Meidani, K., Gupta, S., Barati Farimani, A.,
+and Reddy, C. K. LLM-SR: Scientific equation discovery
+via programming with large language models. In Interna-
+tional Conference on Learning Representations (ICLR),
+2025a. Oral. arXiv:2404.18400.
+Shojaee, P., Nguyen, N.-H., Meidani, K., Barati Farimani,
+A., Doan, K. D., and Reddy, C. K. LLM-SRBench: A new
+benchmark for scientific equation discovery with large
+language models. In International Conference on Ma-
+chine Learning (ICML), 2025b. Oral. arXiv:2504.10415.
+Su, J., Tu, S., Sun, B., and Liang, X. STRIDE: A self-
+reflective agent framework for reliable automatic equation
+discovery. arXiv preprint arXiv:2605.17790, 2026.
+Tibshirani, R. J., Barber, R. F., Cand`es, E. J., and Ramdas, A.
+Conformal prediction under covariate shift. In Advances
+in Neural Information Processing Systems (NeurIPS),
+volume 32, pp. 2526–2536, 2019. arXiv:1904.06019.
+Vovk, V., Gammerman, A., and Shafer, G. Algorithmic
+Learning in a Random World. Springer, 2005. doi: 10.
+1007/b106715.
+Wang, R., Wang, B., Li, K., Zhang, Y., and Cheng, J.
+DrSR: LLM based scientific equation discovery with
+dual reasoning from data and experience. arXiv preprint
+arXiv:2506.04282, 2025.
+Xia, S., Sun, Y., and Liu, P.
+SR-Scientist: Scientific
+equation discovery with agentic AI.
+arXiv preprint
+arXiv:2510.11661, 2025. ICLR 2026.
+Xia, Z., Zhu, J., and Yan, D. FunctionEvolve: Structure-
+guided symbolic regression with LLMs. arXiv preprint
+arXiv:2606.07704, 2026.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+Xie, Z., Li, W., Luo, M., Jiang, J., and Chen, L. Language
+models guide symbolic equation discovery by controlling
+search. arXiv preprint arXiv:2607.04156, 2026.
+Yang, J., Venkatachalam, O., Kianezhad, M., Vadgama,
+S., and Yu, R. Think like a scientist: Physics-guided
+LLM agent for equation discovery.
+arXiv preprint
+arXiv:2602.12259, 2026.
+Zhao, W., Liu, D., Xu, K., Liu, F., Zhao, Z., Ben, F.,
+Wang, S., Li, W., Wu, Y. N., Ling, F., Li, H., and Bai,
+L. A-SR: Self-evolving agentic LLMs for symbolic re-
+gression via hierarchical coordination. arXiv preprint
+arXiv:2608.04872, 2026.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+APPENDIX
+A
+IMPLEMENTATION DETAILS
+This appendix collects the implementation choices omitted from Section 3 for readability.
+A.1
+Data splits
+Table 2. Data splits. ID: in-distribution (inputs inside the training range). EXT and OOD: extrapolation and out-of-distribution (inputs
+beyond it).
+Split
+Content
+Labels
+Role
+Dfit
+80% of the training rows (n = 3,200)
+yes
+fit and score structures
+Dcal-ID
+the other 20% (m = 800)
+yes
+calibrate intervals
+Dcal-EXT
+points just beyond the training range
+no
+measure disagreement (critic only)
+Dtest
+benchmark test set, inside the range
+yes
+final evaluation
+DOOD
+benchmark test set, beyond the range
+yes
+final evaluation
+A.2
+Stage A: prompts and proposals
+In A0, the proposer receives only the problem description at every round. From A1 onward, a fixed-format feedback
+block, limited to 5, 000 characters, summarizes the three highest-weight structures, their training NMSE and coefficient
+counts, poorly identified coefficients and their associated terms, unused input variables, systematic residual patterns,
+protected-operator activations, repeated structural families, and search stagnation. The leading structures are included
+as search diagnostics rather than separate few-shot examples. In A2 and A3, the prompt also includes the critic’s latest
+guidance (Section 3.6). Because no candidates have been fitted in the first round, all configurations initially receive the same
+problem-only prompt. The complete prompt templates are provided in Appendix D.
+Each iteration generates K = 8 candidate equation structures with free coefficients named c0, c1, . . .. This convention
+distinguishes fitted coefficients from input variables and enables automatic validation of proposed expressions. For example,
+if the proposer writes z3 instead of the declared input x3, the expression is rejected rather than treating z3 as a new coefficient.
+Any variable identifier that is neither a declared input nor a valid coefficient name cj is considered invalid.
+To preserve exploration beyond the critic’s recommendations, its directives and edits may occupy at most six of the eight
+proposal slots. The remaining two slots are reserved for proposals that are not conditioned on critic guidance.
+A.3
+Stage B: fitting, tempering and feedback labels
+Fitting.
+Coefficients are fitted on Dfit by nonlinear least squares with a trust-region reflective optimiser, started from 6
+initial guesses with the best result kept; each start is limited to 2,000 function evaluations, and no new start begins after
+120 s on one candidate. The noise estimate of Equation 1 is floored at 10−12 Var(y), where Var(y) is the variance of the
+target on Dfit, so that a structure reproducing the data almost exactly does not send log ˆσ2
+k to −∞. The approximation in
+Equation 2 drops terms that are the same for every candidate.
+Coefficient uncertainty.
+We approximate the uncertainty in the fitted coefficients by a Gaussian centred at ˆθk (a Laplace
+approximation), whose covariance Σk is the inverse curvature of the fitting loss at ˆθk. Σk is used only for the feedback
+labels below, not for the score.
+Which coefficients the data determine.
+Two labels, computed from Σk, feed the feedback of Stages A and C. Each
+coefficient θ is given a broad reference scale max(10, 2|ˆθ|). A coefficient is unidentified when its standard deviation under
+the Laplace approximation is at least half that scale—the data have barely narrowed it, and insignificant when it is identified
+but its fitted value |ˆθ| is smaller than its standard deviation, so it cannot be told apart from zero. The two call for different
+repairs: an unidentified coefficient usually signals a redundant term, an insignificant one a term that may not be needed.
+Tempering.
+At each round τ is found by bisection so that Beff of Equation 5 equals 0.35B. The resulting temperatures are
+large, with medians between 700 and 1,900 across held-out configurations, reflecting BIC differences of thousands between
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+retained structures.
+Structural spread.
+The spread of Equation 7 is computed as σ2
+S(x) = P
+k wk(Mk(x; ˆθk) −ˆy(x))2 + 10−6 P
+k wkˆσ2
+k.
+The second term only keeps σS strictly positive where all structures agree. Multiplying σS by a constant has no effect,
+because the constant cancels in ˆqα; only its variation across inputs matters, which is why no sizeable constant noise term is
+included.
+A.4
+Stage C: the critic
+The diagnostics are measured from the data, not judged by a model.
+Language models reason poorly over tables of
+numbers and well over named patterns, so the analysis is computed numerically and the critic is given conclusions. For each
+candidate in the buffer we report:
+1. systematic residual trends against each input, reported when the Spearman rank correlation between residual and input
+is at least 0.2 in magnitude, or when mean residuals over five quantile bins span at least 0.5 residual standard deviations
+without being monotone;
+2. which coefficients are unidentified or insignificant (Stage B);
+3. how often the protected operators had to clamp their argument, reported when this affects at least 5% of rows;
+4. (rung A3 only) how far the three highest-weight structures diverge from one another on Dcal-EXT: for each pair, the
+NMSE between their two predictions there, beside the same quantity on the training inputs.
+At the buffer level we report, in rung A3, the median half-width of the prediction intervals of Stage D on Dcal-EXT, relative to
+the training target’s standard deviation, and how much the structural spread σS (the disagreement among retained structures,
+Equation 7) grows between the two; and, in all critic rungs, a stagnation flag. The whole summary is written in JavaScript
+Object Notation (JSON), a structured text format, and capped at 4,500 characters, about 1,500 tokens (the word pieces a
+language model reads).
+Stagnation is detected numerically, the best score has not strictly improved for 10 rounds, and stated to the critic, which
+chooses between an explore mode (ask the proposer for structures unlike the current ones) and an exploit mode (refine
+the current leaders). The mode is not forced. On the development set the critic chose explore in about 1 call in 24, and
+Appendix E shows a 62-round plateau on which the flag never fired at a critic call. We report this as a limitation (§6).
+The critic’s objective.
+The objective is stated in the critic’s system prompt rather than computed. In rung A3 it is told
+that the goal is structures that extrapolate with narrow, honest intervals; to prefer edits and directives that would make the
+leading structures agree beyond the data; and never to propose anything whose only effect would be a wider interval. In
+rung A2 the corresponding rule asks for compact, physically plausible forms that fit the data. With no labels on Dcal-EXT,
+agreement among near-equally-supported structures is the strongest available surrogate for being right there: when structures
+indistinguishable on the data diverge sharply just outside it, at most one of them can be extrapolating correctly. Ordering the
+rule this way—agreement first, narrowness second—matters, because either half on its own is degenerate. Asking only for
+narrow intervals rewards confident nonsense: a single over-fitted structure has no one to disagree with, so σS is small and the
+interval is tight wherever it is wrong. Asking only for agreement rewards a buffer of near-copies, which agree everywhere
+and say nothing. Requiring agreement among structures the evidence cannot separate, and only then preferring the narrow
+ones, is the combination neither degenerate strategy satisfies. Note that no coverage appears in this rule: Dcal-EXT has no
+labels, so coverage there cannot be computed, and the attainment-and-sharpness pair of Section 4 is an evaluation criterion,
+not the critic’s objective.
+Output, validation and memory.
+The critic runs at sampling temperature 0 (its most likely reply, so that runs are
+repeatable) with a fixed seed, and must answer in a fixed JSON format; it receives one language-model call in every five
+of the problem’s 125-call budget: 24 critic calls and 101 proposer rounds. We run it with two models: the proposer itself
+(Llama-3.1-8B-Instruct on the same local server) and GPT-4o. Its reply names a mode; up to 5 structural families the
+proposer should stop proposing (bans), which must be copied from the evidence’s list of repeatedly proposed families; 2–3
+directives, each a short instruction to the proposer (for example, “try a saturating term in t”) with the number of the 8 slots it
+should fill; and up to 3 edits, each a complete rewrite of a named buffer entry.
+Every edit and directive must cite a piece of the evidence it was shown, and that piece must actually be present; items that
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+cite something absent are dropped and counted. Edits are also checked against the action the critic says it is taking. An edit
+that claims to delete a term must remove one additive term (two from a structure of four or more), or remove the part of a
+single term holding a coefficient the evidence lists as weak; one that claims to merge coefficients must keep the same inputs
+and use fewer coefficients; one that claims to replace a term must swap out at most one term. Valid edits take slots in the
+next round’s batch of 8 and are fitted, never inserted.
+The critic’s guidance holds until its next call; a failed call spends its budget and leaves no guidance. There is no persistent
+archive: the posterior buffer, which the critic may read but never write, is the only memory. Prompt and schema are in
+Appendix D.
+A.5
+Stage D: additional notes
+A shift-aware variant that did not help. Weighted conformal intervals (Tibshirani et al., 2019), which reweight the
+calibration residuals by a logistic-regression density ratio toward the unlabelled shifted inputs, were evaluated offline on the
+development buffers. They lowered out-of-distribution coverage (A0: 0.61 →0.36–0.44), so they are not carried forward.
+Accuracy and calibration under extrapolation. Recovering the correct equation structure can reduce extrapolation error,
+but it does not guarantee calibrated uncertainty. Even with the correct functional form, residual distributions may differ
+between calibration and shifted test data because of input-dependent noise or coefficient-estimation errors. Consequently,
+accurate point predictions do not necessarily yield reliable prediction intervals under extrapolation. LLM-SR-UQ addresses
+these objectives separately: candidate structures are retained based on fitting evidence and complexity, while prediction
+intervals are calibrated using held-out observations and scaled by structural disagreement. This approach does not guarantee
+OOD coverage, which is evaluated empirically. When multiple structures fit the observations similarly, their disagreement
+provides additional information about uncertainty beyond the observed range.
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+ (strain)
+10
+10
+10
+9
+10
+8
+10
+7
+10
+6
+10
+5
+|error| / sd(ytrain)
+beyond
+training
+range
+in range: split covers 88%, structural 92%
+shifted: split covers 0%, structural 100%
+(a) materials science, stress--strain
+0
+10
+20
+30
+40
+50
+60
+t (time)
+10
+7
+10
+6
+10
+5
+10
+4
+10
+3
+|error| / sd(ytrain)
+beyond
+training
+range
+in range: split covers 89%, structural 89%
+shifted: split covers 0%, structural 100%
+(b) chemistry, reaction kinetics
+in-range test point (
+test)
+shifted test point (
+OOD)
+split half-width
+structural half-width
+training edge
+Figure 4. Two held-out problems at A1, error against the most-shifted input.
+Illustrative prediction intervals under extrapolation. Figure 4 illustrates how the two interval constructions behave on
+held-out problems from materials science and chemistry. Within the training range, prediction errors are small and both
+intervals remain narrow. Under extrapolation, the fixed-width split-conformal intervals fail to cover all shifted points in both
+examples. Structural intervals widen as the retained equations disagree and cover all shifted points in these cases. Because
+both methods use identical point predictions, these examples illustrate the effect of adapting interval widths to structural
+disagreement rather than improving predictive accuracy.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+A.6
+The loop in full
+Algorithm 1: LLM-SR-UQ. All fitting, scoring and calibration are numerical computations on the data; the two language
+models see only text.
+Input: variable descriptions; splits Dfit, Dcal-ID, Dcal-EXT; iterations T; batch K=8; level 1−α
+Output: weighted buffer {(Mk, ˆθk, wk)} and calibrated intervals
+1 buffer ←∅;
+guidance ←∅;
+2 for t ←1 to T do
+3
+A. prompt ←context (+ A1 feedback block) (+ latest critic guidance) ;
+// context only at t=1
+4
+{M1, . . . , MK} ∼Proposer(prompt);
+5
+B. foreach Mk do
+6
+fit ˆθk, Σk on Dfit; compute log Zk equation 2; ℓk ←log Zk + log p(Mk);
+7
+insert into buffer if structurally distinct and high-scoring;
+8
+end
+9
+solve for τ s.t. Beff hits target equation 5; update wk equation 4;
+10
+C. if this call is a critic call (every 5th of the budget, never the last) then
+11
+diagnostics ←Analyse(buffer, residuals, Σ, stagnation);
+12
+(+ in A3, no labels: top-3 divergence on Dcal-EXT, σS growth, half-widths);
+13
+guidance ←Critic(diagnostics); validate grounding, actions, slot limits;
+14
+end
+15 end
+16 D. ˆy ←P
+k ˜wkMk at τ=1 equation 6; σS from tempered wk equation 7; calibrate normalized scores on Dcal-ID
+equation 8; report coverage and width on Dtest and DOOD;
+All rungs have the same budget of 125 language-model calls per problem. In rungs A2 and A3 one call in five goes to the
+critic, so they run 101 proposer rounds (808 candidates) against 125 rounds (1,000 candidates) for A0 and A1. A worked
+example of one run is given in Appendix E.
+B
+THE RETAINED BUFFER: CONCENTRATION AND RECOVERY
+This appendix supports two claims made in Section3.5 and Section5.1: that the evidence weights are effectively degenerate
+at this sample size, and that the calibration gain does not depend on their being otherwise. All numbers come from the
+exported buffers of the six held-out configurations; no search was re-run and no language-model call was made.
+Concentration.
+Untempered weights are ˜wk ∝exp(ℓk), recomputed from the stored BIC score with the per-coefficient
+penalty re-applied. Effective family count is (P
+k ˜w2
+k)−1.
+Table 3. Concentration of the retained buffer. The tempered columns are pinned by construction (Beff = 8.4) and are shown only so the
+gap is visible; the untempered columns are what the evidence says.
+untempered
+tempered
+Configuration
+n
+median ˜w1
+median Beff
+median w1
+median Beff
+A0
+109
+1.0000
+1.00
+0.240
+8.40
+A1
+109
+1.0000
+1.00
+0.227
+8.40
+A2 (8B critic)
+108
+1.0000
+1.00
+0.229
+8.40
+A3 (8B critic)
+107
+1.0000
+1.00
+0.219
+8.40
+A2 (GPT-4o critic)
+107
+1.0000
+1.00
+0.243
+8.40
+A3 (GPT-4o critic)
+108
+1.0000
+1.00
+0.231
+8.40
+The untempered top-family weight exceeds 0.95 on 468 of 647 problem-configurations. The solved temperatures have
+medians between 700 and 1,900, which is the scale required to flatten log-evidence gaps of thousands of nats. Concentration
+is lowest in materials science and chemistry, where the top weight falls below 0.5 on roughly a third of problems, and
+highest in physics (35 of 39 above 0.95 at A0).
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+The gain does not require spread.
+Splitting the held-out problems by whether the untempered buffer is degenerate
+(Beff ≤1.01, i.e. the evidence picks exactly one structure):
+Table 4. Attainment under split and structural intervals, split by whether the evidence weights are degenerate. The construction delivers its
+gain in both regimes.
+Rung
+Subset
+n
+A0.1 split
+A0.1 S
+A0
+evidence degenerate
+86
+0.58
+0.86
+A0
+some spread
+23
+0.57
+0.74
+A1
+evidence degenerate
+62
+0.57
+0.88
+A1
+some spread
+47
+0.49
+0.98
+The Spearman correlation between untempered Beff and the per-problem coverage gain is −0.12 (p = 0.23) at A0 and
++0.15 (p = 0.13) at A1. Whatever σS is measuring, it is not posterior spread.
+Recovery.
+Functional recovery at k, over problems whose ground-truth structure can reproduce its own data to NMSE <
+10−8 (four chemistry problems fail this in every configuration and are excluded).
+Table 5. Functional recovery by rank cutoff. The column that matters is the last: problems on which the retained set contains a recovery
+that its top-ranked member misses.
+Configuration
+with ref.
+FR@1
+FR@3
+FR@10
+FR@3 ∧¬FR@1
+A0
+105
+8
+8
+8
+0
+A1
+104
+12
+12
+12
+0
+A2 (8B critic)
+104
+13
+14
+15
+1
+A3 (8B critic)
+103
+11
+13
+13
+2
+A2 (GPT-4o critic)
+103
+10
+10
+10
+0
+A3 (GPT-4o critic)
+104
+10
+11
+12
+1
+No McNemar test on FR@3 against FR@1 is significant (exact p = 1.0, 0.5, 1.0 where a discordant pair exists).
+Sensitivity to the tempering target.
+Since the spread is produced by tempering rather than by the evidence, the target
+Beff = 0.35B is the parameter the construction rests on, and it was fixed on the development set. We therefore re-weighted
+every exported held-out buffer at nine targets from Beff = 1 (a point mass) to Beff = 24 (uniform over a full buffer),
+re-solving τ, recomputing σS, recalibrating on Dcal-ID and re-evaluating, with the structures, fits, splits and seeds untouched.
+Because the predictive mean uses the untempered weights, the point predictions are identical at every target and the
+split-conformal reference is a single number per configuration: the sweep moves the interval scale and nothing else. At
+Beff = 8.4 the procedure reproduces the published attainment to a mean absolute per-problem coverage difference of 0.0003
+or better.
+The curve is flat, not peaked, and the value we ran is not the optimum — several larger targets do slightly better on attainment
+and on sharpness. This is worth stating plainly in both directions. It means Beff is not a tuned hyperparameter in the
+sense that would compromise the result: a quantity tuned on the development set would show a peak at or near the chosen
+value, and this one does not. It also means we cannot claim 0.35B is principled. The defensible claim is the measured one:
+attainment is insensitive to the tempering target over an order of magnitude, provided the weights are not collapsed onto a
+single structure.
+The degenerate subset makes the point most sharply. On the 86 A0 problems where the evidence is a point mass and
+tempering therefore supplies all of the spread, attainment is 50/86 at Beff = 1 — indistinguishable from split conformal’s
+50/86, as it should be — and 73 to 75 of 86 at every target from 2 to 24, with no dependence on where in that range the
+target sits. The mechanism needs a set with spread. It does not need a particular amount of it.
+Two measurement bounds.
+First, per-member evidence within a structural family is not exported, only the family’s best
+member. A family’s rank aggregates its members’ summed tempered weight, so the untempered weight computed here is a
+lower bound for multi-member families; some family has more than one member on 160 of 647 problem-configurations,
+and the exported rank 1 differs from the best-member-evidence argmax on 16. Second, distinct structural families are not
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+0
+5
+10
+15
+20
+25
+tempering target Beff
+0.5
+0.6
+0.7
+0.8
+0.9
+1.0
+A0.1  (attainment)
+split
+conformal
+Beff = 8.4, as run
+A0
+A1
+A2 (8B critic)
+A3 (8B critic)
+A2 (GPT-4o)
+A3 (GPT-4o)
+Figure 5. Attainment against the tempering target, held-out, all six configurations. The grey band spans the split-conformal reference
+across configurations. The entire effect is the step from a point mass (Beff = 1) to any genuine spread; above Beff = 2 the curves are flat
+to within 0.11 and every one of them beats split conformal by 20–40 points. Hollow rings mark targets the bisection could not reach for
+some problems, which is why the Beff = 24 column is not a clean uniform-weighting condition: it is unreachable on 9–46 problems per
+configuration, against at most 5 at every smaller target.
+Table 6. Ablation ladder. Every rung reports coverage, so uncertainty is not a late addition, and every rung has the same budget of 125
+language-model calls. A1 is the control: if A2 ≈A1, mechanical feedback was the whole story.
+Rung
+Feedback to proposer
+Critic
+Isolates
+A0
+frozen prompt (problem description only)
+—
+search + calibration
+A1
++ mechanical diagnostics (fixed template)
+—
+plumbing
+A2
++ critic guidance from point-fit diagnostics
+yes
+critic from fit alone
+A3
++ label-free calibration diagnostics (divergence
+yes
+the claim
+beyond the data, interval growth)
+necessarily distinct functions. On one held-out biology problem whose top family holds only 0.14 of the untempered weight
+— which would read as a genuinely undecided posterior — the five highest-weighted families carry identical weights and
+agree with one another to ≈10−13 at every point of a grid spanning the training range and well beyond it. They are one
+function written five ways. A low top-family weight is therefore not by itself evidence of functional diversity, and we do not
+use it as such anywhere in this paper. How often this occurs across the benchmark is not something the current export can
+answer, and we flag it as a measurement limitation rather than estimating it.
+C
+DOES THE CALIBRATION-AWARE CRITIC IMPROVE SEARCH?
+The ablation ladder isolates the critic at a fixed budget of 125 language-model calls per problem; in A2 and A3, one call in
+five goes to the critic (Table 7). We ran it twice: with the proposer model as its own critic, and with GPT-4o as critic. The
+primary evidence is held-out (109 problems, one seed, all six rungs); the development set (20 problems, five seeds) supplies
+seed replication and the mechanism counters.
+Mechanical feedback helps.
+Search dynamics are almost the same on every rung (Figure 6): each reaches 90% of its
+final score by a median of 32 to 41 calls and then spends roughly half its budget without improving, so differences between
+rungs come from what is found, not from how fast. A1 against A0: out-of-distribution NMSE improves (p = 7 × 10−9,
+paired) and attainment rises from 0.83 to 0.92. Functional recovery moves from 8 to 12 of 104, which is not significant
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+Table 7. The ablation ladder, held-out, at a matched budget of 125 language-model calls per problem (A2/A3: 101 proposer rounds and
+24 critic calls). NMSE are medians; coverage and A0.1 use structural intervals, and the split column gives A0.1 of split conformal around
+the same predictor. Parameters are the mean coefficient count of the reported equation. Plateau is the fraction of rounds after the last
+improvement of the best score.
+NMSE
+OOD
+A0.1
+Rung
+ID
+OOD
+cov.
+S
+split
+S0.1
+FR@1
+params / plateau
+A0
+3.3e-6 2.4e-3 0.906
+0.83 (91/109)
+0.58 1.27e-2
+8/105
+6.7 / 0.52
+A1
+2.0e-8 6.0e-5 0.964 0.92 (100/109) 0.53 1.12e-3 12/104
+8.2 / 0.42
+critic = the proposer model (Llama-3.1-8B-Instruct)
+A2
+9.3e-9 2.0e-5 0.924
+0.87 (91/105)
+0.52 1.87e-3 13/104
+8.1 / 0.46
+A3
+4.4e-7 4.0e-4 0.947
+0.88 (93/106)
+0.56 7.73e-3 11/103
+7.4 / 0.48
+critic = GPT-4o
+A2
+5.7e-7 1.5e-4 0.938
+0.87 (93/107)
+0.52 3.43e-3 10/103
+6.9 / 0.52
+A3
+1.1e-6 1.3e-4 0.927
+0.82 (88/107)
+0.56 2.39e-3 10/104
+6.7 / 0.43
+(McNemar p = 0.29), and the equations get somewhat larger (6.7 →8.2 coefficients, p = 2 × 10−7).
+The critic does not help, with either model.
+No critic rung matches A1. Attainment is 0.87 and 0.88 with the 8B critic
+and 0.87 and 0.82 with GPT-4o, against A1’s 0.92. Against A1, the only significant coverage changes go the wrong way:
+0.963 →0.923 at A2 with the 8B critic (p = 0.019) and 0.964 →0.930 at A3 with GPT-4o (p = 0.030), both still above
+nominal. Functional recovery, width and NMSE are otherwise flat at A2. These results suggest that mechanical feedback
+provides the main benefit of search feedback under the tested computational budget.
+Conditioning the critic on calibration evidence makes intervals wider, not sharper.
+With the 8B critic, A3 against
+A2 widens the shifted intervals (p = 0.018) and worsens NMSE in and out of distribution (p = 0.0068 and p = 0.0061),
+with coverage and recovery unchanged. With GPT-4o, A3 changes nothing beyond A2 (all p > 0.3). Thus, additional
+calibration-aware critic feedback does not improve these outcomes and, with the 8B critic, worsens interval width and
+prediction accuracy. The development set agrees (p = 0.058 on width, p = 0.009 on fit), so this is not a single-seed artifact.
+What the critic does change is simplicity, and it is paid for.
+Both critics return significantly simpler equations than
+mechanical feedback alone – 7.4 coefficients with the 8B critic (p = 0.0055) and 6.7 with GPT-4o at A3 (p = 1.4 × 10−9),
+against A1’s 8.3 — and both lose in-distribution accuracy in doing so (p = 6.5 × 10−5 and p = 2.5 × 10−4).
+The null is not a critic that never fired.
+On the development set the critic makes 24 calls and proposes about 70 edits
+per problem-run. GPT-4o’s edits pass the mechanical checks 78.5% of the time against 29.1% for the 8B model, enter the
+retained buffer about twice as often (2.4 against 1.4 per run at A2, 3.1 against 1.1 at A3), cite missing evidence on 0.3% of
+items against 8.4%, and choose exploration in most calls rather than almost none. The critic works, and works better with
+a stronger model. The outcome metrics still do not move, and the buffer explains why: an edit must beat the incumbent
+structures on evidence to be kept, and only one to three of about twenty valid edits per run do. A critic that proposes well
+but rarely displaces anything cannot change what the buffer determines.
+Reading the null.
+Two of the three hypotheses this paper set out to test were not supported, and it is worth saying plainly
+what that leaves standing. What fails is the claim that a language model, shown diagnostics about its own search, will steer
+that search toward better-calibrated equations. It does not, for either critic model, on either data set, under any metric we
+fixed in advance, and the design has the power to show it: 109 paired held-out problems, five development seeds, two critic
+models an order of magnitude apart in capability, and counters confirming the critic was active. What stands is independent
+of the critic. The mismatch between accuracy and calibration under shift is a property of the benchmark and the methods
+evaluated on it, the interval construction is what delivers calibration (Section5.1); and it works on searches we did not write
+(Section5.2). A reader who discards the critic entirely still keeps the measurement, the construction and the wrapper.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+20
+40
+60
+80
+100
+120
+language-model call
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+progress to final best score
+(a) median progress over problems
+A0
+A1
+A2 (8B critic)
+A3 (8B critic)
+A2 (GPT-4o)
+A3 (GPT-4o)
+A0
+A1
+A2
+8B
+A3
+8B
+A2
+4o
+A3
+4o
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+fraction of rounds after last gain
+(b) plateau (diamond = mean)
+Figure 6. Search behaviour across the ladder, held-out. (a) Progress of the best buffer score, normalized per problem so that 0 is the first
+round and 1 the final best, plotted against the language-model call index (critic calls included), median over problems. (b) Fraction of
+proposer rounds spent after the last improvement, per problem. The six configurations are nearly indistinguishable: every one reaches
+90% of its final score by a median of 32 to 41 calls and then spends roughly half its budget without improving.
+D
+PROMPTS AND THE CRITIC CONTRACT
+Every prompt and reply in this appendix is reported exactly as the models sent and received it. Where a value was not
+recorded, we say so rather than reconstructing it.
+D.1
+Proposer system message
+The proposer is given these instructions before every round. The one placeholder, the number of expressions requested, is
+the batch of 8 less any critic edits being fitted that round.
+You propose candidate symbolic-regression expressions for a scientific
+equation-discovery task.
+Return JSON with a single key 'expressions': a list of exactly {n} strings.
+Variables - use ONLY these, spelled exactly: {var_names}.
+Coefficients - every fitted constant must be named c0, c1, c2, ...
+Numbering restarts at c0 in each expression.
+Any identifier that is neither a listed variable nor a c<number>
+coefficient is rejected, so do not invent symbol names.
+Allowed functions: sin cos tan tanh sinh cosh exp log sqrt abs sign
+softplus minimum maximum.
+Write exponentiation as ** (Python syntax), never ˆ. Give the
+right-hand side only, with no 'y =' prefix.
+Use softplus(...) where a quantity must stay positive, such as the base
+of a fractional power or the argument of a logarithm.
+Example of the required form: c0*exp(-c1*t) + c2
+Return JSON only, with no prose and no comments.
+Responses are constrained by a JSON schema requiring exactly n strings under the key expressions. Both backbones
+are given the same schema so neither has an easier decoding task.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+D.2
+A complete rendered prompt
+Round 49 of 101 on a population-growth problem, in the calibration-aware configuration. This round directly follows a
+critic call, so the prompt shows all three of its parts at once: the problem description, the mechanical feedback block, and
+the critic’s guidance.
+Discover the mathematical equation relating the following variables:
+Output: dP_dt - Population growth rate
+Input 1: t - Time
+Input 2: P - Population at time t
+Propose candidate closed-form expressions for dP_dt in terms of t, P.
+Prefer forms that are physically plausible for this domain, and keep them
+numerically well behaved across the whole input range.
+Feedback on the candidates fitted so far (384 fitted over 48 rounds):
+Best structures so far (NMSE on the training data; lower is better):
+1. c0+c1*P**c2+c3*P**c4+c5*c6**c7/(c8+t**c9)
+NMSE=9.5e-09
+coefficients=10
+2. c0+c1*P**c2+c3*t**c4+c5*P**c6
+NMSE=2.39e-06
+coefficients=7
+3. c0+c1*P**c2+c2*P**c3/(c4+t**c5)
+NMSE=3.07e-06
+coefficients=6
+Coefficients the data does not determine; the term they sit in is doing no
+work, so remove or rewrite it:
+- structure 1: c5 in `c5 * c6 ** c7 / (c8 + t ** c9)` (not constrained by the data)
+- structure 1: c6 in `c5 * c6 ** c7 / (c8 + t ** c9)` (not constrained by the data)
+- structure 1: c7 in `c5 * c6 ** c7 / (c8 + t ** c9)` (not constrained by the data)
+Residual of structure 1 (residual scale 9.6e-05 of the target's):
+- falls with t (rank correlation -0.22): the dependence on t is missing or misshaped
+- falls with P (rank correlation -0.23): the dependence on P is missing or misshaped
+Tried repeatedly without reaching the best structures; do not propose these
+families again:
+- c0+c1*t**c2+c3*P**c4
+(24 times)
+- c0+c1*P**c2+c3*t**c4
+(18 times)
+- c0+c1*P**c2+c3*P**c4
+(13 times)
+- c0+c1*(P**c2)/(c3+t**c4)
+(10 times)
+- c0+c1*P**c2
+(9 times)
+Critic guidance:
+The search should exploit: refine the best structures rather than start over.
+These rewrites are already being fitted this round; do not repeat them:
+- c0+c1*P**c2+c3*P**c4
+- c0+c1*P**c2+c3*t**c4
+Write your 6 expressions in this order:
+- 2 expressions: propose forms with fewer coefficients
+- 2 expressions: propose forms with physically motivated terms
+- the remaining 2: your own choice.
+Do not propose these families again:
+- c0+c1*t**c2+c3*P**c4
+- c0+c1*P**c2+c3*t**c4
+- c0+c1*P**c2+c3*P**c4
+- c0+c1*(P**c2)/(c3+t**c4)
+- c0+c1*P**c2
+The model’s reply to this prompt, verbatim:
+{"expressions": ["c0+c1*P**c2", "c0+c1*t**c2+c3*P",
+"c0+c1*P**c2/(c3+t**c4)", "c0+c1*P**c2+c2*P**c3/(c4+t**c5)",
+"c0+c1*exp(-c2*t)*P**c3", "c0+c1*P**c2+c3*tanh(c4*t)*P**c5"]}
+All six parse and fit. The prompt’s structure is visible in the reply: the first two expressions are short, answering the “fewer
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+coefficients“ directive, and the later ones reuse the saturating and exponential forms already in the buffer.
+D.3
+Critic input, output, and validation
+The critic’s instructions.
+The critic receives the following system message before every call. Placeholders are filled from
+the problem: the variable list, the batch size, and—in the calibration-aware configuration only—the final rule, which is
+omitted otherwise. The text below is the version used in the runs we report, confirmed against the recorded hash of the code
+that produced them.
+You are the critic in an equation-discovery loop. A proposer writes candidate
+expressions; each is fitted to the data and scored by Bayesian evidence, and
+only the evidence decides what is kept. You never decide what is kept. You read
+the evidence JSON and write edits and directives for the proposer.
+Rules.
+1. Ground everything. Every edit and directive names an evidence_field: a path
+into the evidence JSON, with dots for keys and [n] for list positions, such as
+weak_coefficients[0], residual.patterns[1], variables.inclusion.t or stagnation.
+An item whose evidence_field does not exist, or points to an empty value, is
+discarded.
+2. Edits (at most 3) are complete rewrites of one of top_structures, identified
+by of_rank, and are fitted like any proposal. The expression is always the WHOLE
+structure after the change - never a single term, and never the structure
+unchanged. Actions:
+delete_term: remove one term whose coefficient the data does not determine
+(two, if the structure has four or more terms), or remove the part of one term
+that holds such a coefficient (c0*P/(c1 + c2*t) becomes c0*P when
+weak_coefficients names c1); keep everything else, and keep the names of the
+coefficients you keep.
+merge_coefficients: rewrite with fewer coefficients where several only act
+together (c0*c1*P becomes c0*P); keep the same inputs.
+replace_term: swap exactly one term the residual shows is misshaped for a
+better one; keep the other terms.
+Example: top structure 1 is c0*P + c1*P**2 + c2*sin(c3*t) and
+weak_coefficients[0] names c2 in c2*sin(c3*t). A valid edit is {"of_rank": 1,
+"action": "delete_term", "expression": "c0*P + c1*P**2", "evidence_field":
+"weak_coefficients[0]"}.
+An edit that does not match its action is discarded.
+3. Directives (2 or 3) steer the proposer's next rounds. Make them pursue
+different hypotheses. Each takes n_slots of the batch of 8; directive slots plus
+edits may not exceed 6, so at least 2 proposals stay unconditioned.
+4. banned_families (at most 5): expressions copied from repeated_families that
+the proposer should stop proposing. Nothing else may be banned.
+5. mode: "exploit" to refine the current best structures; "explore" when the
+search has stagnated or the best structures look physically implausible.
+6. The evidence has a calibration block, computed without any held-out labels:
+how far the top structures' predictions diverge beyond the training inputs, and
+how much the prediction interval widens there. The goal is structures that
+extrapolate with narrow, honest intervals. Prefer edits and directives that
+would make the top structures agree beyond the data - forms that discriminate
+between them, or physically motivated forms - and never propose anything whose
+only effect would be a wider interval.
+Expressions: use only the variables t, P, and coefficients named c0, c1, c2, ...
+Allowed functions: sin cos tan tanh sinh cosh exp log sqrt abs sign softplus
+minimum maximum. Write powers as **. Right-hand side only.
+Return JSON only.
+Rule 6 is the only difference between the two critic configurations. Without calibration evidence it reads instead: “The
+goal is a law, not a curve fit: compact, physically plausible forms that fit the data.” Everything else is identical, so the two
+configurations differ in exactly one paragraph of instruction and in the presence of one block of evidence.
+The user message is the problem description followed by the evidence, serialised as JSON. It is not stored as a string, but it
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+is reconstructible from the stored evidence and the problem description; rebuilding it reproduces the recorded character
+count for all 6,696 critic calls in these runs, with no mismatches.
+What the critic received.
+The evidence the critic was given before round 49, exactly as sent. Numbers are rounded to
+four significant figures.
+{"iteration": 48, "candidates_fitted": 384,
+"last_batch": {"proposed": 8, "fitted": 8, "entered_buffer": 0, "rejections": []},
+"top_structures": [
+{"rank": 1, "expression": "c0+c1*P**c2+c3*P**c4+c5*c6**c7/(c8+t**c9)",
+"train_mse": 6.665e-08, "train_nmse": 9.497e-09, "n_params": 10, "weight": 0.3118},
+{"rank": 2, "expression": "c0+c1*P**c2+c3*t**c4+c5*P**c6",
+"train_mse": 1.678e-05, "train_nmse": 2.391e-06, "n_params": 7, "weight": 0.0679},
+{"rank": 3, "expression": "c0+c1*P**c2+c2*P**c3/(c4+t**c5)",
+"train_mse": 2.155e-05, "train_nmse": 3.071e-06, "n_params": 6, "weight": 0.06543}],
+"weak_coefficients": [
+{"rank": 1, "coefficient": "c5", "kind": "unidentified",
+"terms": ["c5 * c6 ** c7 / (c8 + t ** c9)"]},
+{"rank": 1, "coefficient": "c6", "kind": "unidentified",
+"terms": ["c5 * c6 ** c7 / (c8 + t ** c9)"]},
+{"rank": 1, "coefficient": "c7", "kind": "unidentified",
+"terms": ["c5 * c6 ** c7 / (c8 + t ** c9)"]}],
+"variables": {"inclusion": {"t": 0.8667, "P": 1.0}, "unused_in_top": []},
+"residual": {"expression": "c0+c1*P**c2+c3*P**c4+c5*c6**c7/(c8+t**c9)",
+"residual_rel_sd": 9.618e-05,
+"patterns": [{"variable": "t", "shape": "falls", "rank_corr": -0.2171,
+"bin_range_sd": 0.2188},
+{"variable": "P", "shape": "falls", "rank_corr": -0.2252,
+"bin_range_sd": 0.2187}]},
+"protection": [],
+"repeated_families": [{"expression": "c0+c1*t**c2+c3*P**c4", "times": 24},
+{"expression": "c0+c1*P**c2+c3*t**c4", "times": 18},
+{"expression": "c0+c1*P**c2+c3*P**c4", "times": 13},
+{"expression": "c0+c1*(P**c2)/(c3+t**c4)", "times": 10},
+{"expression": "c0+c1*P**c2", "times": 9}],
+"stagnation": {"iterations_since_improvement": 9, "stagnant": false},
+"calibration": {
+"probe": "inputs up to 0.25 training-range widths beyond the data; no labels used",
+"disagreement": [{"ranks": [1, 2], "train_nmse": 2.182e-06, "probe_nmse": 5.981e-05},
+{"ranks": [1, 3], "train_nmse": 2.714e-06, "probe_nmse": 0.3279},
+{"ranks": [2, 3], "train_nmse": 4.629e-08, "probe_nmse": 0.3265}],
+"sigma_growth": 750.3,
+"interval_halfwidth_rel": {"calibration": 4.655e-05, "probe": 0.03493}}}
+The final calibration block is what separates the two critic configurations; it is absent without calibration evidence. It
+is label-free: disagreement compares the top structures against each other on a probe box extending 0.25 training-range
+widths beyond the data, and interval halfwidth rel is the median conformal half-width relative to the training
+target’s standard deviation. Here the structures agree to NMSE ≈3 × 10−6 on the training data and disagree by 0.33 on the
+probe: five orders of magnitude apart.
+The critic’s response.
+{"mode": "exploit",
+"edits": [
+{"of_rank": 1, "action": "delete_term", "expression": "c0+c1*P**c2+c3*P**c4",
+"evidence_field": "weak_coefficients[0]"},
+{"of_rank": 2, "action": "merge_coefficients", "expression": "c0+c1*P**c2+c3*t**c4",
+"evidence_field": "residual.patterns[0].rank_corr"},
+{"of_rank": 3, "action": "replace_term", "expression": "c0+c1*P**c2+c3*P**c4",
+"evidence_field": "residual.patterns[1].rank_corr"}],
+"directives": [
+{"instruction": "propose forms with fewer coefficients",
+"evidence_field": "variables.inclusion.t", "n_slots": 2},
+{"instruction": "propose forms with physically motivated terms",
+"evidence_field": "calibration.disagreement[0].train_nmse", "n_slots": 2},
+{"instruction": "propose forms that extrapolate with narrow intervals",
+"evidence_field": "calibration.interval_halfwidth_rel.calibration", "n_slots": 4}],
+"banned_families": ["c0+c1*t**c2+c3*P**c4", "c0+c1*P**c2+c3*t**c4",
+"c0+c1*P**c2+c3*P**c4", "c0+c1*(P**c2)/(c3+t**c4)", "c0+c1*P**c2"]}
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+Mechanical validation.
+Every response is checked before any of it reaches the proposer. For this call:
+{"parsed": true,
+"dropped": [
+{"kind": "edit", "why": "repeats another edit",
+"item": {"of_rank": 3, "action": "replace_term",
+"expression": "c0+c1*P**c2+c3*P**c4"}},
+{"kind": "directive", "why": "no slots left",
+"item": {"instruction": "propose forms that extrapolate with narrow intervals",
+"n_slots": 4}}],
+"edits_proposed": 3, "edits_valid": 2,
+"directives_proposed": 3, "directives_valid": 2,
+"slots_trimmed": 0, "banned_proposed": 5, "banned_valid": 5, "ungrounded": 0}
+Three checks apply. Duplicate edits are dropped — here the third repeated the first. Directives are trimmed to the slots
+actually left: the third asked for four when two remained. And every claim must point at a field that exists in the evidence;
+on this call all did. Only what survives these checks reaches the proposer, which is why the guidance shown earlier lists two
+directives rather than the three the critic wrote.
+D.4
+Aggregate critic behaviour on this problem
+Table 8. Critic activity on the problem of SectionD.2: 24 calls over 101 proposer rounds, costing about 49k tokens in total.
+critic calls
+24
+edits proposed
+72
+failed calls
+0
+edits valid
+44
+prompt tokens
+39,120
+edits fitted
+44
+completion tokens
+10,245
+edits entering buffer
+0
+directives proposed
+72
+bans proposed
+111
+directives valid
+52
+bans valid
+110
+slots trimmed
+19
+proposals under ban
+701
+ungrounded claims
+2
+ban violations
+80
+explore calls
+0
+ungrounded rate
+0.008
+These counters exist to check that the critic is doing what it was asked to do rather than producing plausible-looking text:
+that its claims point at evidence that exists, that its edits and bans are well formed, and that nothing reaches the proposer
+without passing the checks. Section4 reports them across all problems and configurations.
+E
+A RUN, END TO END
+This appendix follows one problem through the whole loop, using logged values only, to show concretely what each stage
+produces and how the pieces connect.
+Setup.
+A population-growth problem, run in the calibration-aware configuration with one seed: 101 proposer rounds and
+24 critic calls, 125 LLM calls in total, with Llama-3.1-8B-Instruct as both proposer and critic. The task is to predict the
+growth rate ˙P from time t and population P. The true equation, which the method never sees, is logistic growth with a
+sigmoidal harvesting term:
+0.1727856699554779*(1 - P(t)/48.5483027446097)*P(t)
++ 0.1727856699554779*P(t)/(1 + exp(-1.5237423595759925*(-0.9236923548638324 + P(t))))
+How the search moved.
+Best log-evidence never decreases, and it improved on only six of the 101 rounds. Table 9 gives
+every round on which the leading structure changed, plus the last round.
+The best structure was found at round 39 and never displaced over the remaining 62. Just under half the budget produced the
+answer and the rest produced nothing. None of the 808 candidates fitted was rejected: the grammar is total, every expression
+evaluates, so feedback about failed proposals has nothing to work with.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+Table 9. Every improvement in the leading structure, and the final round. Buffer size is capped at 24; the effective model count is pinned
+at 8.4 by the temperature controller of Section3.5, as designed.
+round
+leading structure
+log-evidence
+families
+1
+c0+c1*(P**c2)/(c3+t**c4)
+5,496
+8
+2
+c0+c1*P**c2/(c3+t**c4)+c5*P**c6
+16,847
+16
+5
+c0+c1*P**c2+c3*P**c4
+16,855
+24
+6
+c0+c1*P**c2+c3*P**c4+c5*t**c6
+17,207
+24
+7
+c0+c1*P**c2+c3*P**c4+c5*softplus(c6*t)**c7
+18,320
+24
+39
+c0+c1*P**c2+c3*P**c4+c5*c6**c7/(c8+t**c9)
+26,398
+22
+101
+unchanged since round 39
+26,398
+22
+What the buffer selected.
+The winning structure carries ten coefficients, of which the run marks three as unidentified:
+c0 + c1*P**c2 + c3*P**c4 + c5*c6**c7/(c8 + t**c9)
+c5 = -3.19
+(sd 9.80)
+c6 =
+3.69
+(sd 8.59)
+c7 =
+2.96
+(sd 5.50)
+The term c5*c6**c7 is a product of three free constants, so it is a constant and the data cannot separate its factors. This is
+what the identifiability diagnostic is for, and it fires: all three coefficients are named to the critic as undetermined by the
+data (visible in the evidence of Appendix D), the critic proposes deleting the term, and the resulting rewrite is fitted as a
+candidate in its own right. The structure still leads on evidence, with training NMSE 9.5 × 10−9 against 2.4 × 10−6 for the
+five-coefficient runner-up: the BIC penalty of equation 2 charges for the extra coefficients, and two orders of magnitude of
+fit outweigh the charge. The trace is a useful illustration of the retention rule doing exactly what Section3.6 says it does –
+taking the critic’s suggestion as a candidate and nothing more.
+The final posterior.
+Twenty-four buffer items in 22 structural families. The top family holds 31% of the weight and the
+rest is nearly flat, with the next 21 families between 2.4% and 5.9%.
+Table 10. Top five families of the final buffer, with the whole buffer’s weight summing to 1. Every family is a sum of powers of P and t;
+none contains a saturating term of the kind the ground truth requires.
+rank
+best expression in family
+log-evidence
+weight
+coeffs
+1
+c0+c1*P**c2+c3*P**c4+c5*c6**c7/(c8+t**c9)
+26,398
+0.313
+10
+2
+c0+c1*P**c2+c3*t**c4+c5*P**c6
+17,564
+0.059
+7
+3
+c0+c1*P**c2+c2*P**c3/(c4+t**c5)
+17,168
+0.057
+6
+4
+c0+c1*P**c2+c3*P**c4+c5*P**c6/(c7+c8*t**c9)
+19,388
+0.052
+10
+5
+c0+c1*P**c2+c3*P**c4+c5*softplus(c6*t)**c7
+18,320
+0.040
+8
+Recovery.
+Symbolic accuracy is 0 at every k: SA@1, @3, @5, @10, and SA@all over all 22 families. The credible set
+holds 19 families and the true structure is in none of them. The sigmoidal form was never proposed, so this is a property of
+what the search explored rather than of what it retained – a distinction the SA@k metrics of Section4 exist to make.
+Final intervals.
+The two evaluation splits behave in opposite directions.
+This example illustrates why coverage and interval width should be interpreted together. On the OOD test set, the intervals
+cover all observations, but their mean width is approximately 1,900 times greater than on the ID test set. Thus, perfect OOD
+coverage comes at the cost of substantially wider intervals. In contrast, ID coverage is 0.886, slightly below the nominal
+target of 0.90. These results illustrate the importance of evaluating interval width alongside empirical coverage.
+Note also that the variance decomposition attributes 99.99% of in-distribution predictive variance to parameter uncertainty
+and only 3 × 10−8 of it to structural disagreement, even though 22 distinct families are in the buffer. The families agree
+almost exactly where the data are, and diverge only outside them – which is the phenomenon the paper is about, visible
+inside a single run.
+
+
+Structural Uncertainty for LLM-Guided Symbolic Regression under Extrapolation
+Table 11. Final metrics, nominal level 0.90. Widths are absolute; the OOD interval is roughly 1,900 times wider than the in-distribution
+one.
+in-distribution (Dtest)
+shifted (DOOD)
+NMSE
+1.0 × 10−8
+7.1 × 10−4
+Acc0.1
+0.994 of points
+1.000 of points
+coverage
+0.886
+1.000
+coverage gap
+−0.014
++0.100
+mean interval width
+1.7 × 10−4
+3.3 × 10−1
+What the critic did.
+Table 8 gives the counters. Over 24 calls the critic proposed 72 edits, of which 44 passed the checks
+and were fitted; 111 families to stop proposing, of which 110 were well formed; and it pointed at evidence that did not exist
+twice in 255 claims. It chose to explore on none of the 24 calls. The proposer went on to propose a banned family 80 times
+out of 701 proposals made while a ban was active.
+The last of these is explained by how stagnation is detected. At the call before round 49 the search had gone nine rounds
+without improvement, below the threshold of ten, so the critic was not told the search had stalled and chose to refine rather
+than explore – on a run whose plateau eventually ran to 62 rounds. We report this as a limitation in Section6.
+Scope.
+This trace documents the mechanism on one problem: measurements computed from the fits, a critic whose every
+claim is checked against the evidence it was shown, edits and bans that reach the proposer only after passing those checks,
+and a retention rule that admits candidates on evidence regardless of where they came from. A single run establishes none of
+the quantitative claims in this paper; Section5 reports distributions over problems, seeds and configurations.
+F
+NOTATION
+Table 12. Symbols used in Section 3, in order of appearance.
+Symbol
+Meaning
+xi, yi
+input vector and scalar target of data point i
+M, Mk
+a structure: the shape of an equation with its coefficients left free; Mk is candidate k
+θ, c0, c1, . . .
+the free coefficients of a structure, and the names they carry in proposals
+ˆθk
+the coefficients of Mk fitted on Dfit
+Dfit, Dcal-ID, Dcal-EXT
+fitting split; labelled calibration split; unlabelled probe region just beyond the data
+(Table 2)
+Dtest, DOOD
+the benchmark’s in-distribution and shifted test splits, used only at the end
+K
+candidates proposed per round (8)
+n
+number of fitting points, |Dfit| = 3,200
+dk
+number of free coefficients in Mk
+RSSk
+residual sum of squares of Mk on Dfit
+ˆσ2
+k
+estimated noise variance of Mk, RSSk/n with a small floor
+BICk
+Bayesian Information Criterion of Mk; lower is better
+Zk, log Zk
+evidence (marginal likelihood) of Mk and its logarithm, ≈−BICk/2
+Σk
+covariance of the fitted coefficients under the Laplace approximation
+p(Mk), λ
+prior over structures, log p(Mk) = −λdk with λ = 0.05
+ℓk
+score of Mk: log Zk + log p(Mk)
+B
+buffer capacity (24 structures)
+τ
+temperature that flattens the weights
+wk
+tempered weight of Mk in the buffer, used for the spread
+˜wk
+untempered weight (τ = 1), used for the predicted mean
+Beff
+effective number of structures, (P
+k w2
+k)−1; held at 0.35B ≈8.4
+ˆy(x)
+averaged prediction at input x
+σS(x)
+structural spread: weighted disagreement of the retained structures at x
+m
+size of Dcal-ID (800)
+si
+nonconformity score of calibration point i
+α
+tolerated miscoverage (0.1, a nominal 90% interval)
+ˆqα
+conformal quantile of the scores
+C(x)
+reported prediction interval at x

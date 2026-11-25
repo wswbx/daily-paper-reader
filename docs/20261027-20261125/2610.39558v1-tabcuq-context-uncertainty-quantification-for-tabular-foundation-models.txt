@@ -1,0 +1,1627 @@
+TabCUQ: Context-Uncertainty Quantification for Tabular
+Foundation Models∗
+Yuebei Shi1,2, Molei Liu3,4 and Zijian Guo2
+1School of Mathematics, Zhejiang University
+2Center for Data Science, Zhejiang University
+3Department of Biostatistics, Peking University Health Science Center
+4Beijing International Center for Mathematical Research, Peking University
+Abstract
+Tabular foundation models use in-context learning to estimate conditional expected outcomes
+and average treatment effects for specific groups of individuals. Using these estimates to guide
+scientific decisions requires reliable uncertainty quantification. The challenge is to account
+simultaneously for two sources of uncertainty: limited-context bias and context variation arising
+from the small labeled sample supplied at inference. Predictive spread does not directly quantify
+both sources of uncertainty, and we observe that the ordinary bootstrap may substantially
+overestimate context variation, whereas subsampling may underestimate it.
+We introduce
+TabCUQ, a perturbation-based framework that injects noise into observed outcomes and applies
+the foundation model to the perturbed contexts. TabCUQ estimates context variation using
+wild-bootstrap dispersion and accounts for limited-context bias using the maximum deviation
+between perturbed and original estimates. For a kernel-regression analogue whose estimation error
+admits an exact decomposition into these two components, we show that our framework provides
+asymptotically valid pointwise coverage. In simulations, TabCUQ substantially improves coverage,
+with average interval widths typically about twice those of an oracle bias-aware benchmark.
+Across seven real-world tasks, it also improves coverage of reference functions learned from much
+larger samples.
+1
+Introduction
+Scientific decisions often depend on estimates drawn from small tabular datasets. Tabular foundation
+models offer a promising approach to prediction in these settings. Conventional methods, such as
+generalised additive models, random forests and neural networks trained from scratch, are typically
+fitted separately to each dataset [Hastie et al., 2009]. The foundation models studied here are neural
+networks trained in advance on many synthetic and real datasets. This training allows the same
+model to be reused for prediction tasks on new datasets. For a new task, the user supplies a small
+labeled dataset containing examples of features and their observed outcomes. The model takes
+these examples as part of its input and uses them to predict the outcome of a new observation
+from its features, without updating its pretrained parameters. This process is known as in-context
+learning. Built on this idea, tabular foundation models, including TabPFN [Hollmann et al., 2025],
+TabICL [Qu et al., 2025] and TabFM [Kong and Das, 2026], have demonstrated strong predictive
+∗Correspondence to: Molei Liu (moleiliu@bjmu.edu.cn) and Zijian Guo (zijguo@zju.edu.cn).
+1
+arXiv:2610.39558v1  [stat.ML]  29 Oct 2026
+
+
+performance on small-data benchmarks. Their predictive success raises a question: how reliably can
+estimates obtained from a small labeled dataset support a scientific conclusion?
+We focus on two quantities that inform scientific decisions: the conditional mean and the
+conditional average treatment effect. A chemist may need to determine whether the mean reaction
+yield under specified experimental conditions exceeds a threshold for further development. Time
+and material costs limit the number of experiments available to estimate this quantity [Shields
+et al., 2021, Hickman et al., 2022]. The average outcome across repeated experiments under those
+conditions is a conditional mean. A clinical researcher may instead ask whether a treatment shortens
+average recovery time for patients with a particular clinical profile. Their average recovery time
+under treatment minus their average recovery time without treatment is the conditional average
+treatment effect (CATE); a negative value indicates faster recovery.
+We use conditional-mean estimation to explain how a foundation model produces an estimate.
+As illustrated in Figure 1, the foundation model takes two inputs: context and query. The context is
+the labeled dataset containing observed features and outcomes, and the query specifies the feature
+values at which the mean is to be estimated. In the chemistry example, the context contains
+completed experiments and their measured yields, while the query specifies the reaction conditions
+of interest. The model processes the context and query without updating its pretrained weights, a
+procedure called in-context learning. We use its point prediction as an estimator of the conditional
+mean. Although the prediction rule is fixed, the estimate depends on the labeled observations
+supplied as context.
+Many synthetic datasets
+Pretraining
+Context
+X1
+X2
+X3
+Y
+0.8
+Red
+Low
+1.4
+2.1
+Blue
+High
+2.7
+Pretrained TFM
+Fixed weights
+X1
+X2
+X3
+Y
+1.5
+Red
+Medium
+?
+Query
+Predictive distribution
+Y
+Figure 1: In-context prediction with a tabular foundation model (TFM) pretrained on many
+synthetic datasets. The context contains observed feature–outcome pairs, while the query supplies
+feature values with its outcome Y left unknown. With its pretrained weights fixed, the model
+processes both inputs to produce a predictive distribution for Y .
+We distinguish two components of context uncertainty: context variation and limited-context
+bias. A fresh context of the same size sampled from the target population can produce a different
+estimate. Each context consists of newly sampled observations, so both features and outcomes vary.
+We refer to this sampling variation as context variation. To understand the second component,
+2
+
+
+imagine repeatedly drawing contexts of the same size and averaging the resulting estimates at a
+fixed query. Even after the sampling fluctuations are averaged out, the average estimate may still
+lie above or below the true conditional mean at that query. We refer to this systematic gap as
+limited-context bias.
+In our experiments, TabPFN frequently exhibits such bias with small contexts,
+analogous to the regularization bias commonly encountered in classic machine learning methods. In
+statistical terminology, these are the sampling variability and bias of the estimator induced by the
+pretrained prediction rule. The same distinction applies to a CATE estimator at a fixed clinical
+profile. Panel A of figure 2 illustrates both components. Both components matter when scientific
+decisions depend on an estimated mean or treatment effect. Sampling fluctuations or bias can
+make an estimate appear favorable even when the true mean yield is inadequate or the treatment
+benefit is negligible. A point estimate alone therefore does not establish whether the data support
+the scientific conclusion. We seek confidence intervals for the conditional mean or CATE. A valid
+confidence-interval procedure covers the fixed target with probability at least the stated confidence
+level over repeated contexts of the same size. Such intervals help assess whether the data support a
+mean yield above the development threshold or a treatment effect below zero, taking estimation
+uncertainty into account.
+Constructing such confidence intervals requires estimating context variation and accounting
+for limited-context bias. Bootstrap and subsampling provide standard tools for approximating
+sampling distributions under appropriate conditions and are natural candidates for estimating context
+variation. Applying classical resampling methods to pretrained tabular foundation models raises
+the question of whether they accurately capture variation across the labeled contexts supplied at
+inference, while the pretrained network parameters remain fixed. Nevertheless, accurately estimating
+context variation is only part of the inferential task. In nonparametric regression, estimation bias
+that is non-negligible relative to the estimator’s standard deviation can impair confidence-interval
+coverage, even when that standard deviation is accurately estimated [Wasserman, 2006, Section 5.7].
+Pretraining does not itself guarantee negligible bias at the available context size. Through extensive
+simulation and real-world studies, we observe that the Tabular foundation models tend to suffer
+from an estimation bias with the limited aomunt of context. We therefore develop TabCUQ, a
+perturbation-based confidence-interval construction that accounts for both context variation and
+limited-context bias.
+1.1
+Main results and contributions
+The paper makes two main contributions. First, we find empirically that wild-bootstrap perturbations
+effectively estimate the scale of context variation for the pretrained tabular prediction rules evaluated
+here. Interestingly, we observe that the ordinary bootstrap produces standard-error estimates
+substantially larger than the true standard deviations, whereas the evaluated subsampling procedure
+produces smaller estimates. These findings motivate our use of wild-bootstrap perturbations in
+the uncertainty quantification of the tabular foundation model. Second, we introduce TabCUQ, a
+perturbation-based confidence-interval construction for conditional means and CATEs that combines
+an estimate of context variation with a characterization of limited-context bias. In a kernel-regression
+setting, we prove that the proposed bias cushion bounds estimation bias and establish coverage for
+the resulting interval under the stated assumptions.
+TabCUQ generates perturbed contexts by applying wild-bootstrap perturbations to the observed
+outcomes, while holding the features and context size fixed. We then apply the tabular foundation
+model to each perturbed context to obtain the corresponding perturbed estimates. We use the
+empirical standard deviation of these estimates to estimate the scale of context variation. To
+characterize limited-context bias, we define a bias cushion as the largest absolute displacement of the
+3
+
+
+A Variation and bias due to limited context
+Underlying population
+Independent
+sampling
+Context 1
+X1
+X2
+X3
+Y
+Context 2
+X1
+X2
+X3
+Y
+Context K
+X1
+X2
+X3
+Y
+Pretrained TFM
+Query x
+X1
+X2
+X3
+?
+Estimates
+Truth
+Context
+variation
+Limited-context
+bias
+Across-context
+mean
+Estimate 1
+Estimate 2
+Estimate K
+B TabCUQ quantifies context uncertainty
+Observed context
+X1
+X2
+X3
+Y
+Perturbed contexts
+Wild bootstrap
+Y
+Y*(b)
+X1
+X2
+X3
+Y*(1)
+X1
+X2
+X3
+Y*(2)
+X1
+X2
+X3
+Y*(B)
+Pretrained TFM
+Query x
+X1
+X2
+X3 ?
+Perturbed estimates
+Variation
+Bias
+cushion
+Estimate B
+Estimate 1
+Estimate 2
+Original
+estimate
+Confidence interval
+Original
+estimate
+Variation
+Bias cushion
+Figure 2: TabCUQ quantifies context uncertainty. (A) With the pretrained TFM and query
+fixed, independently sampled contexts yield different estimates. Their spread represents context
+variation, while the gap between their across-context mean and truth represents limited-context
+bias. (B) Wild-bootstrap outcome perturbations provide an estimate of context variation and an
+empirical bias cushion. The blue central segment represents the contribution of estimated variation,
+while the orange extensions represent the empirical bias cushion.
+perturbed estimates from the original estimate. We construct a normal-approximation confidence
+interval centered on the original point estimate and widen it by this cushion on each side. The
+construction thus uses the same perturbed estimates both to quantify sampling variability and to
+provide an additional margin for bias.
+We evaluate TabCUQ in extensive simulated tasks of conditional-mean and CATE inference
+4
+
+
+with three tabular foundation models. Even when wild-bootstrap standard errors are reasonably
+well calibrated, confidence intervals that ignore limited-context bias can substantially undercover.
+TabCUQ improves coverage across the main simulation settings, generally reaching the nominal
+95% level, with average interval widths typically around twice those of an oracle benchmark that
+uses the true bias and variance. We further evaluate TabCUQ on seven real-world tasks spanning
+socioeconomic, environmental, behavioural, protein and single-cell data. Since the true conditional
+means are unknown, we assess coverage relative to reference functions fitted on much larger samples.
+With contexts of small sizes, the average reference coverage across tasks increases from 0.614–0.842
+for wild bootstrap intervals to 0.966–1.000 for TabCUQ, while average interval widths of TabCUQ
+remain around two times those of the oracle benchmark.
+1.2
+Relation to existing work
+TabCUQ builds on classical resampling methods for inference about fixed population quantities.
+The nonparametric bootstrap and subsampling approximate sampling distributions by recomputing
+estimators on resampled observations [Efron, 1979, Politis et al., 1999]. Classical wild-bootstrap
+methods perturb regression residuals with covariates held fixed to accommodate heteroskedastic
+errors [Wu, 1986]. TabCUQ applies outcome perturbations to pretrained in-context prediction rules,
+using the resulting estimates to quantify context variation and construct a margin for limited-context
+bias. Its use of a bias cushion also connects the construction to bias-aware methods that calibrate
+confidence intervals to accommodate estimation bias [Armstrong and Kolesár, 2016].
+For pretrained models, posterior methods offer another approach to uncertainty quantification.
+PFNs were introduced to approximate Bayesian posterior predictive distributions under a specified
+prior over tasks [Müller et al., 2022]. Predictive intervals from these distributions concern future
+responses and include outcome noise. Posterior methods can also target uncertainty about conditional
+means and other functionals. The approximate martingale posterior method of Nagler and Rügamer
+[2025] uses PFN-initialised predictive distributions and copula updates to quantify uncertainty
+about conditional means, quantiles and other summaries at a fixed query. The authors motivate
+learning-rate choices that widen credible intervals to accommodate nonparametric bias. TabMGP
+[Ng et al., 2026] constructs martingale posteriors for parameters defined as minimisers of an expected
+loss. Fortini et al. [2026] use a predictive central limit theorem to obtain Gaussian approximations to
+posterior uncertainty about conditional event probabilities under a limiting predictive distribution.
+These approaches provide posterior uncertainty for a range of targets using pretrained models. In
+contrast, our proposal assesses the uncertainty from the frequentist perspective, which has distinct
+properties and different application scenarios from posterior credibility. Our method constructs
+intervals by perturbing the observed outcomes and repeatedly evaluating the original point estimator.
+We assess their coverage at a fixed query over repeated draws of the labeled context.
+Conformal prediction constructs prediction sets for future responses [Shafer and Vovk, 2008],
+whereas TabCUQ constructs confidence intervals for conditional means and CATEs. Under ex-
+changeability, standard split conformal prediction guarantees marginal coverage [Lei et al., 2018];
+coverage at a particular query can still fall below the nominal level [Barber et al., 2021]. For
+tabular foundation models, C-USIM [Park et al., 2026] uses held-out observations to calibrate
+highest predictive density regions and studies the gap between conditional and marginal coverage.
+In causal inference, Lei and Candès [2021] develop conformal methods for counterfactual outcomes
+and individual treatment effects. An individual treatment effect is the difference between a person’s
+two potential outcomes; CATE is the conditional expectation of this difference given the features.
+These are different inferential targets: even valid coverage for outcomes or individual effects at a
+fixed query does not by itself establish confidence-interval coverage for their conditional means.
+5
+
+
+2
+Uncertainty Quantification for Tabular Foundation Model
+Uncertainty quantification is essential when predictions from tabular foundation models inform
+decisions based on small- to medium-sized datasets. A positive estimate of a conditional mean or
+treatment effect does not, by itself, establish that the underlying quantity is positive. The estimated
+sign may reflect limited-context bias or context variation. We first review tabular foundation models
+in Section 2.1 and then discuss the need for uncertainty quantification and the challenges involved
+in the remainder of this section.
+2.1
+Basics of Tabular Foundation Models
+We review prior-data fitted networks (PFNs), which provide the methodological foundation for
+TabPFN [Müller et al., 2022]. PFNs are pretrained on synthetic datasets and subsequently applied
+to new datasets at prediction time. Let ϕ index a data-generating rule, with prior density π(ϕ).
+To construct each synthetic dataset, the simulator first samples ϕ ∼π and then generates labeled
+observations independently from the sampled rule, conditional on ϕ. The observations are randomly
+divided into a labeled context and held-out queries. For each query, the network receives the context
+together with the query features and predicts the corresponding outcome label. The query labels
+are withheld from the network inputs and used only to compute the training loss.
+Let D denote the labeled context and (Xtest, Ytest) a held-out query, where Xtest and Ytest are
+its features and outcome label, respectively. A PFN with parameters θ outputs a predictive density
+qθ(y | x, D) for the outcome label of a query with features x, given context D. The population
+pretraining objective is
+L(θ) = Eϕ∼πED,(Xtest,Ytest)|ϕ [−log qθ(Ytest | Xtest, D)] .
+(1)
+In practice, we sample synthetic datasets using the procedure described above and approximate the
+expectation in (1) by an empirical average of the losses on the sampled synthetic datasets. This
+empirical loss is used to update the network parameters θ, with new synthetic datasets sampled
+throughout training.
+We follow Müller et al. [2022] and connect the pretraining objective in (1) to the Bayesian
+posterior predictive density. Let pπ(y | x, D) denote the Bayesian posterior predictive density of the
+query outcome with the prior π, admitting the following expression
+pπ(y | x, D) =
+Z
+p(y | x, ϕ) pπ(ϕ | x, D) dϕ.
+(2)
+Here, p(y | x, ϕ) is the conditional response density under rule ϕ, and pπ(ϕ | x, D) is the posterior
+density of the rule given the context and query features. The loss in (1) decomposes as
+L(θ) = C + ED,Xtest [KL(pπ(· | Xtest, D) ∥qθ(· | Xtest, D))] ,
+(3)
+where C = E[−log p(Ytest | Xtest, D)] is independent of θ. Minimizing the population loss is therefore
+equivalent to minimizing the expected KL divergence from pπ. Over a rich class of qθ functions,
+this divergence is minimized with qθ(· | x, D) = pπ(· | x, D) for almost every (D, x). Thus, pπ is the
+population predictive target, although a fitted PFN may not achieve it due to restrictions on the
+network class, finite pretraining data, and imperfect optimization.
+Conventional Bayesian methods typically obtain the predictive density by approximating this
+posterior distribution pπ(ϕ | x, D) for each context and then applying (2) to learn the posterior
+outcome distribution. In contrast, PFNs are based on directly using qθ(y | x, D) to approximate
+the posterior predictive density pπ(y | x, D) through pretraining on simulated datasets, without
+explicitly constructing the posterior over ϕ or evaluating the integral in (2) at prediction time.
+6
+
+
+2.2
+Inferential Targets and Real-data Examples
+We consider two inferential targets that inform the scientific decisions. The first target is the
+conditional mean in regression, which describes the average outcome for given covariates. Let
+Dn = {(Xi, Yi)}n
+i=1 be a context consisting of i.i.d. observations, and fix a query feature vector x.
+Our target is the population conditional mean µ(x) = E[Y | X = x]. The tabular foundation model
+provides a predictive density qθ(y | x, Dn) and the corresponding conditional mean estimator
+bµ(x) =
+Z
+y qθ(y | x, Dn) dy.
+(4)
+The second target is the conditional average treatment effect (CATE), defined as the difference
+between the conditional means of the potential outcomes under treatment and control [Athey and
+Imbens, 2016]. Let A ∈{0, 1} indicate treatment, X denote pretreatment covariates, and Y (a)
+denote the potential outcome under treatment assignment a. At a given covariate value x, we define
+the corresponding CATE as τ(x) = E[Y (1) −Y (0) | X = x]. To identify τ(x) from observed data,
+we assume the standard causal identification condition: (i) consistency, Y = Y (A); (ii) overlap,
+0 < P(A = 1 | X = x) < 1 for all possible x; (iii)unconfoundedness, {Y (0), Y (1)} ⊥A | X [Hernán
+and Robins, 2020]. Writing µa(x) = E[Y | A = a, X = x] for a ∈{0, 1}, these assumptions give
+τ(x) = µ1(x) −µ0(x). This representation reduces CATE estimation to two regression problems.
+Given a context Dτ
+n = {(Xi, Ai, Yi)}n
+i=1 consisting of i.i.d. observations, we apply the estimator
+in (4) separately to the treated and control groups, obtaining bµ1(x) and bµ0(x), respectively. The
+T-learner [Künzel et al., 2019] then takes their difference:
+bτ(x) = bµ1(x) −bµ0(x).
+(5)
+Although tabular foundation model achieves strong prediction performance, the point estimates
+produced by the tabular foundation model alone are insufficient to guide scientific decisions. We
+illustrate this in Figure 3 with two real-data examples. Our first example concerns mutation-induced
+changes in protein stability. The feature vector X is the difference between the embeddings of the
+wild-type and mutant protein sequences and the response is the difference in Gibbs free energy
+of unfolding between the mutant and wild-type proteins, measured in kcal/mol. A positive value
+indicates that the mutant protein is more stable than the wild type, whereas a negative value
+indicates that it is less stable. Here, µ(x) represents the expected stability change conditional on
+the mutation’s feature representation. Using the protein stability dataset accompanying GeoStab
+[Xu et al., 2024], we consider the N139V mutation in protein 1G3P.
+We randomly draw 20 contexts, each containing 100 labeled observations sampled without
+replacement from a total of 8,754 mutations. For each context, we obtain a TabPFN 2.6 estimate
+at the same query. A model fitted to the much larger full dataset provides an empirical reference
+estimate of approximately −0.091 kcal/mol. As shown in Figure 3(a), six of the 20 TabPFN
+estimates are positive, while the remaining 14 are negative. Thus, a decision based solely on the
+estimated direction of the stability change may depend on the particular observations included in
+the context. This sensitivity to context sampling also matters when estimates are used to assess the
+effects of an intervention.
+Our second example concerns a job-training programme and uses a pretreatment outcome to
+provide a benchmark with a known null effect. We use the National Supported Work experiment
+studied by LaLonde [1986], with the sample compiled by Dehejia and Wahba [1999]. Treatment
+is assignment to the training programme, and we take earnings in 1974, before treatment, as the
+outcome. Since later assignment cannot change income already earned, the true CATE is zero. Yet,
+for a fixed baseline covariate profile, the CATE estimates range from approximately −676 to 952
+7
+
+
+1
+5
+10
+15
+20
+randomly sampled contexts
+−0.091
+Estimated stability change (kcal/mol)
+(a)
+1
+5
+10
+15
+20
+randomly sampled contexts
+0
+Estimated CATE on 1974 earnings (USD)
+(b)
+Positive
+Negative
+Pseudo-truth
+True CATE
+Figure 3: Context uncertainty in two real-world examples. (a) Estimated conditional-mean
+stability change for the N139V mutation in PDB 1G3P. (b) Estimated CATE of job-training
+assignment on pretreatment earnings in the National Supported Work experiment, where the true
+effect is zero. Pink and teal indicate positive and negative estimates the solid orange line in
+(a) indicates the pseudo-truth from a LightGBM reference model fitted to the full protein data
+observations, approximately −0.091 kcal/mol. The gray dashed line in (b) marks the known zero
+CATE.
+US dollars across the 20 contexts shown in Figure 3(b). Interpreting their signs alone could suggest
+either a benefit or a harm where neither is possible.
+Together, these examples show that point estimates can lead to different scientific conclusions as
+the context changes. Variation across contexts demonstrates context uncertainty, while the apparent
+displacement of estimates from their reference values raises the possibility of limited-context bias.
+These observations motivate uncertainty quantification that accounts for both sampling variability
+and potential bias before the estimated magnitude or sign is used to guide a scientific decision.
+2.3
+Challenges of Uncertainty Quantification for Tabular Foundation Models
+To support scientific conclusions about conditional means and CATEs, we construct confidence
+intervals by bounding the estimation error. We focus on the conditional mean to illustrate the
+main idea and the same construction applies to CATE. A confidence interval provides a range of
+plausible values for the average outcome at x in regression. For a fixed query x and significance
+level α ∈(0, 1), we seek a data-dependent bound Rα(Dn; x) satisfying
+P{|bµ(x) −µ(x)| ≤Rα(Dn; x)} ≥1 −α.
+Using this bound as the radius gives the 1 −α confidence interval
+Cα(Dn; x) = [bµ(x) −Rα(Dn; x), bµ(x) + Rα(Dn; x)] .
+Its width indicates estimation precision, and an interval entirely above or below a scientifically
+relevant benchmark supports the corresponding conclusion about µ(x). One of the most commonly
+used confidence interval is the Wald interval [Wasserman, 2004], which uses an estimated standard
+error multiplied by a normal critical value as its radius:
+CWald(Dn; x) =
+h
+bµ(x) −z1−α/2bs(x), bµ(x) + z1−α/2bs(x)
+i
+,
+8
+
+
+where z1−α/2 is the (1 −α/2) quantile of the standard normal distribution. Here, bs(x) estimates
+the standard deviation of bµ(x) across repeated contexts and thus quantifies context variation.
+Approximate nominal coverage requires an accurate standard error estimate, an appropriate normal
+approximation, and limited-context bias that is negligible relative to the standard error.
+0.0
+0.5
+1.0
+1.5
+2.0
+2.5
+3.0
+3.5
+Estimate
+0
+1
+Density
+A
+TabPFN
+Bootstrap
+True mean
+TabPFN mean
+Bootstrap
+Subsample
+0.0
+0.5
+1.0
+1.5
+Variance ratio
+B
+Figure 4: Context variation and limited-context bias of TabPFN 2.6 in the simulation setting
+with Y = sin(πX) + ε, where independent X, ε ∼N(0, 1) and the context size n = 300. (A) At
+x = −1.737, TabPFN estimates from 100 independent contexts (gray) and 100 bootstrap estimates
+conditional on one context (blue). (B) Ratios of mean resampling variance to the variance of
+TabPFN estimates across independent contexts, averaged over 20 queries in [−3, 3]. We use the same
+100 contexts to estimate both variance, with 100 resamples per method and context. Subsampling
+draws m = 30 without replacement and scales variance by m/(n −m).
+Bootstrap and subsampling are often used to estimate the standard error. Ordinary bootstrap
+draws n observations with replacement from the observed context, whereas subsampling draws
+m < n observations without replacement [Efron, 1979, Politis et al., 1999]. We supply each resampled
+dataset to the foundation model as a new context and use the variation across the resulting point
+estimates to estimate the standard error bs(x) in section 2.3. As an example, we consider TabPFN in
+the sine simulation setting (figure 4). Panel A illustrates both context variation and limited-context
+bias at the fixed query x = −1.737. The gray histogram shows TabPFN estimates across 100
+independent contexts. Their empirical mean is 0.566, compared with the true conditional mean of
+0.736, indicating a limit-context bias of 0.17. The blue histogram shows 100 ordinary-bootstrap
+estimates from a single context and has a wider spread than the gray histogram. Panel B shows that
+ordinary bootstrap overestimates variance on average across the query grid, whereas subsampling
+underestimates it. At each of 20 equally spaced queries in [−3, 3], we average the variance estimates
+from each method over the same 100 contexts and divide by the empirical variance of TabPFN
+estimates across those contexts. The two bars show these ratios averaged over queries: 1.64 for
+ordinary bootstrap and 0.45 for subsampling.
+We next discuss possible reasons why ordinary bootstrap and subsampling misestimate context
+variation in our experiments. Ordinary bootstrap reuses the observed data, with some observations
+repeated and others omitted.
+TabPFN may respond differently to these repetitions than to
+new observations, so the bootstrap variation may not match the variation we want to estimate.
+Subsampling uses smaller contexts. We rescale its standard-error estimates to account for the
+smaller size, but the adjusted estimates still underestimate context variation in our experiments. For
+9
+
+
+Wald intervals, overestimating the standard error produces wider intervals, whereas underestimating
+it can lead to insufficient coverage even when the point estimator’s bias is small.
+Accurately estimating context variation does not, however, address limited-context bias. When
+this bias is large relative to the standard error, a Wald interval may fail to attain nominal coverage
+even if the standard error is accurately estimated. Since the population target is unknown, the bias
+cannot be determined directly from the observed labeled context. In the next section, we therefore
+seek an interval construction that accounts for both context variation and limited-context bias.
+3
+Method
+TabCUQ constructs confidence intervals by combining an estimate of context variation with an
+empirical bias cushion for limited-context bias. We design the particular perturbation or resampling
+method in the following Section 3.1. We develop the confidence interval construction for a conditional
+mean in Section 3.2, then extend it to a conditional average treatment effect in Section 3.3.
+3.1
+Perturbation design
+We first consider the conditional mean at a fixed query x, given the observed context Dn = (Xi, Yi)n
+i=1.
+We use the wild bootstrap to perturb the outcomes while keeping all observed feature rows unchanged,
+where the outcome perturbation is formed by adding a randomly weighted residual to an estimated
+conditional mean. To avoid overfitting, we use five-fold cross-fitting to obtain the out-of-fold
+predictions used to construct both the residuals and the perturbed responses.
+We partition the observation indices into five disjoint folds I1, . . . , I5 of approximately equal
+size. For each k = 1, . . . , 5, the other four folds form the context D−k = {(Xj, Yj)}j /∈Ik. Let bµ−k(x)
+denote the estimator in (4) evaluated using D−k as the context. For each observation i ∈Ik, we
+use Xi as the query to obtain the out-of-fold prediction. Repeating this calculation for k = 1, . . . , 5
+provides exactly one out-of-fold prediction for each observation, that is, we define
+bµ(Xi) = bµ−k(Xi),
+for
+i ∈Ik
+with
+k = 1, . . . , 5.
+(6)
+We then compute the out-of-fold residuals and subtract their sample mean from each residual
+before using them to generate the response perturbations. For i ∈Ik, with k = 1, . . . , 5, define the
+out-of-fold residual and the centered residual used below by
+ri = Yi −bµ(Xi)
+and
+ei = ri −r,
+with
+r = 1
+n
+n
+X
+j=1
+rj.
+Then, we form each perturbed response by multiplying the centered residual ei by a random
+sign and adding the result to the corresponding out-of-fold prediction bµ(Xi), for i ∈Ik. The
+out-of-fold predictions and residuals are computed once and reused in all resamples. For each
+resample b = 1, . . . , B, draw an independent Rademacher multiplier vi,b for every observation:
+P(vi,b = 1) = P(vi,b = −1) = 1
+2,
+1 ≤i ≤n,
+1 ≤b ≤B.
+Throughout the paper, we mainly use Rademacher multipliers. We may also adopt other multiplier
+distributions used in the wild-bootstrap literature, including the standard normal distribution and
+Mammen’s two-point distribution, both of which have mean zero and unit variance [Mammen, 1993,
+Kline and Santos, 2012]. For each resample b = 1, . . . , B, define the perturbed outcome as
+Yi,b = bµ(Xi) + vi,bei,
+i ∈Ik,
+k = 1, . . . , 5.
+(7)
+10
+
+
+The resulting context Db = {(Xi, Yi,b)}n
+i=1 contains the original n feature vectors in the same row
+order, with only the outcome variables perturbed.
+3.2
+Standard error, empirical bias cushion, and confidence interval
+In this section, we leverage the perturbed data set Db = {(Xi, Yi,b)}n
+i=1 with 1 ≤b ≤B to quantify
+the context variation and limited-context bias of the tabular foundation model. Let bµb(x) denote
+the estimator in (4) evaluated at the fixed query x using Db = {(Xi, Yi,b)}n
+i=1 as the context, where
+the variation across {bµb(x)}1≤b≤B comes from the multiplier vectors.
+In classical regression settings, wild-bootstrap methods can consistently approximate sampling
+distributions under suitable regularity conditions [Wu, 1986, Mammen, 1993]. Motivated by these
+results, we use the sample standard deviation of the PFN mean estimates obtained from the
+perturbed contexts as a bootstrap standard-error estimate, that is,
+bs(x) =
+(
+1
+B −1
+B
+X
+b=1
+ bµb(x) −µB(x)
+2
+)1/2
+with
+µB(x) = 1
+B
+B
+X
+b=1
+bµb(x).
+(8)
+The estimated scale bs(x) describes dispersion across perturbed contexts, but does not account for
+possible limited-context bias relative to µ(x).
+To adjust for this limited-context bias, we introduce an empirical bias cushion constructed from
+the same perturbed estimates:
+br(x) = max
+1≤b≤B |bµb(x) −bµ(x)| ,
+(9)
+where br(x) is the largest absolute difference between a perturbed estimate and the original estimate.
+We use this quantity as an empirical proxy of an upper bound for the limited-context bias. We provide
+theoretical support for this interpretation in a kernel-regression setting in section 4. Specifically,
+under the stated assumptions, br(x) is a high probability upper bound for the bias of the kernel
+regression. Computed from the observed context and the generated outcome perturbations, this
+cushion provides an additional margin for possible systematic error. Adding it to the margin for
+context variation yields a confidence interval designed to accommodate both context variation and
+limited-context bias.
+With the standard-error estimate and the empirical bias cushion defined, we now combine them
+to construct an interval for the conditional mean µ(x). For a significance level α ∈(0, 1), define the
+TabCUQ interval by
+Cα(Dn; x) = [bµ(x) −Rα(Dn; x), bµ(x) + Rα(Dn; x)] ,
+(10)
+with Rα(Dn; x) = z1−α/2bs(x) + br(x). The term z1−α/2bs(x) addresses context uncertainty through a
+normal approximation based on the wild-bootstrap standard-error estimate bs(x). The empirical
+bias cushion br(x) further widens the interval on both sides to account for possible limited-context
+bias. Section 4 develops the corresponding coverage analysis under a tractable kernel regression
+regime. Algorithm 1 summarizes the procedure for constructing a conditional-mean interval.
+3.3
+Inference for conditional average treatment effects
+In the following section, we generalize our proposal to uncertainty quantification for CATE. Recall
+the CATE estimation using the T-learner in Section 2 [Künzel et al., 2019], which estimates the
+conditional mean in each treatment arm and takes the difference between the two estimates. Let
+Dτ
+n = {(Xi, Ai, Yi)}n
+i=1 be a context consisting of i.i.d. observations, where Xi denotes pretreatment
+11
+
+
+Algorithm 1 TabCUQ for a conditional mean
+Input: Context Dn = {(Xi, Yi)}n
+i=1 (n ≥5), fixed query x, pretrained TFM with fixed weights θ,
+B ≥2 resamples, and level α ∈(0, 1).
+Output: Original estimate bµ(x) and interval Cα(Dn; x).
+Step 1: Compute the original estimate bµ(x) from Dn using (4).
+Step 2: Construct the out-of-fold predictions and centered residuals once:
+(2a) Partition {1, . . . , n} into five nearly equally sized disjoint folds I1, . . . , I5.
+(2b) For each k = 1, . . . , 5, use D−k = {(Xj, Yj) : j /∈Ik} as the context to compute
+bµ−k(Xi) and set bµ(Xi) ←bµ−k(Xi) for i ∈Ik.
+(2c) Compute and center the residuals for i = 1, . . . , n:
+ri ←Yi −bµ(Xi),
+r ←1
+n
+n
+X
+j=1
+rj,
+ei ←ri −r.
+Step 3: For each resample b = 1, . . . , B:
+(3a) Draw vi,b ∈{−1, +1} with equal probabilities, independently across i, b and of the
+data and fold partition.
+(3b) Set Yi,b ←bµ(Xi) + vi,bei for i = 1, . . . , n.
+(3c) Form Db ←{(Xi, Yi,b)}n
+i=1 in the original row order and compute bµb(x) from Db.
+Step 4: Compute the standard-error estimate:
+µB(x) ←1
+B
+B
+X
+b=1
+bµb(x),
+bs(x) ←
+(
+1
+B −1
+B
+X
+b=1
+ bµb(x) −µB(x)
+2
+)1/2
+.
+Step 5: Compute the empirical bias cushion br(x) ←max1≤b≤B |bµb(x) −bµ(x)|.
+Step 6: Form the interval and return bµ(x) and Cα(Dn; x):
+Rα(Dn; x) ←z1−α/2bs(x) + br(x),
+Cα(Dn; x) ←[bµ(x) −Rα(Dn; x), bµ(x) + Rα(Dn; x)].
+covariates, Ai ∈{0, 1} indicates treatment, and Yi is the observed outcome. Under consistency,
+unconfoundedness, and overlap as stated in Section 2, the CATE is τ(x) = E[Y (1)−Y (0) | X = x] =
+µ1(x) −µ0(x), where µa(x) = E[Y | X = x, A = a] denotes the conditional mean for the treatment
+assignment a. For each arm a ∈{0, 1}, we apply the pretrained model with Da = {(Xi, Yi) : Ai = a}
+as the context to obtain the conditional-mean estimate bµa(x) in (4). The original T-learner estimate
+is bτ(x) = bµ1(x) −bµ0(x).
+We apply Steps 2–3 of Algorithm 1 separately to D0 and D1. Cross-fitting and residual centering
+are performed within each arm. Let bµa,b(x) denote the resulting prediction from arm a in resample
+b. The perturbed CATE estimate is
+bτb(x) = bµ1,b(x) −bµ0,b(x),
+b = 1, . . . , B.
+(11)
+Then following (8) and (9), we compute bsτ(x) as the sample standard deviation of the perturbed
+12
+
+
+CATE estimates and brτ(x) as their maximum absolute deviation from bτ(x). The CATE interval is
+Cα,τ(Dτ
+n; x) =
+h
+bτ(x) −
+n
+z1−α/2bsτ(x) + brτ(x)
+o
+, bτ(x) +
+n
+z1−α/2bsτ(x) + brτ(x)
+oi
+.
+(12)
+Algorithm 2 summarizes the procedure for constructing a CATE interval.
+Algorithm 2 TabCUQ for a CATE using a T-learner
+Input: Context Dτ
+n = {(Xi, Ai, Yi)}n
+i=1 with at least five observations in each arm, fixed query x,
+pretrained TFM with fixed weights θ, B ≥2 resamples, and level α ∈(0, 1).
+Output: Original CATE estimate bτ(x) and interval Cα,τ(Dτ
+n; x).
+Step 1: For each a ∈{0, 1}, form Da = {(Xi, Yi) : Ai = a} and apply Steps 1–3 of Algorithm 1 to
+obtain bµa(x) and {bµa,b(x)}B
+b=1, using independent multipliers across arms.
+Step 2: Compute the original and perturbed CATE estimates:
+bτ(x) ←bµ1(x) −bµ0(x),
+bτb(x) ←bµ1,b(x) −bµ0,b(x),
+b = 1, . . . , B.
+Step 3: Compute the standard-error estimate bsτ(x) and empirical bias cushion brτ(x) from
+{bτb(x)}B
+b=1 using (8) and (9), respectively, with bτ(x) as the original estimate.
+Form
+the interval in (12) and return bτ(x) and Cα,τ(Dτ
+n; x).
+For average treatment effects, semiparametric methods based on influence functions allow valid
+inference with flexible estimates of nuisance functions under suitable conditions [Hines et al., 2022].
+With continuously distributed covariates, however, a conditional mean or CATE at a fixed query is
+generally not pathwise differentiable in an unrestricted nonparametric model. The usual regular
+root-n theory for average treatment effects therefore does not apply directly. Although orthogonality
+can reduce sensitivity to nuisance-estimation errors, it does not by itself eliminate the bias introduced
+by estimating the conditional effect. For the tabular foundation models considered here, reliable
+inference must account for both context variation, arising from the randomness of the finite labeled
+sample supplied to the model, and limited-context bias, the systematic difference between the
+estimator’s expectation across sampled contexts and the target.
+In our experiments, we use a T-learner: the pretrained model estimates the conditional mean
+outcome separately under treatment and control, and their difference estimates CATE. Other
+learners could also be considered.
+For example, the DR-learner combines estimated outcome
+regressions and treatment probabilities to construct pseudo-outcomes, which are then regressed on
+the covariates to estimate CATE [Kennedy, 2023]. Such an approach could reduce the contribution
+of nuisance-estimation errors, although the final regression step may still introduce approximation or
+regularization bias. Here, we focus on uncertainty quantification for the T-learner, using TabCUQ
+to estimate context variation and provide an empirical bias cushion. Extending this construction
+to other learners would require accounting for their additional estimation steps and assessing the
+resulting interval coverage.
+4
+Theory
+To clarify the statistical reasoning behind TabCUQ, we study outcome perturbations in the setting
+of kernel regression. This tractable setting allows us to examine how the perturbed estimates relate
+13
+
+
+to sampling variation and how the bias cushion provides an upper bound for the nonparametric
+bias. The purpose of our theoretical analysis is to explain the rationale for TabCUQ’s interval
+construction, especially the role of the empirical bias cushion, rather than to establish theoretical
+guarantees for pretrained tabular foundation models.
+We first introduce the basic setup of kernel regression and then adapt the perturbation procedure
+described in Sections 3.1 and 3.2 to this setting. Let {(Xi, Yi)}n
+i=1 be i.i.d. observations of (X, Y ),
+where X ∈Rd, Y ∈R, and E|Y | < ∞. Throughout this section, we fix our query feature at x ∈Rd
+and our target is the regression function µ(x) = E[Y | X = x]. Defining εi = Yi −µ(Xi) gives the
+representation
+Yi = µ(Xi) + εi,
+E[εi | Xi] = 0.
+We write σ2(x) = E[ε2
+i | Xi = x] and assume σ2(x) is continuous at x.
+For a nonnegative kernel K and bandwidth hn > 0, define the kernel weights
+wi(x) =
+K((Xi −x)/hn)
+Pn
+j=1 K((Xj −x)/hn),
+1 ≤i ≤n,
+(13)
+with all weights set to zero when the denominator is zero. When the denominator is positive, the
+Nadaraya-Watson estimator is the solution to the local-constant least-squares problem
+bµ(x) = arg min
+a∈R
+n
+X
+i=1
+wi(x)(Yi −a)2 =
+n
+X
+i=1
+wi(x)Yi.
+(14)
+Intuitively, equation (14) estimates µ(x) by a weighted average of the responses, with weights
+determined by the kernel, the bandwidth, and the feature locations relative to x.
+In this kernel-regression setting, we construct the outcome perturbations without cross-fitting.
+We form the residuals ri = Yi −bµ(Xi), where bµ(Xi) is the estimator in (14) evaluated at Xi,
+and center them as ei = ri −¯r, where ¯r = n−1 Pn
+j=1 rj. These fitted values and residuals are
+computed once and reused in all perturbations. For each perturbation b = 1, . . . , B, we generate
+Yi,b = bµ(Xi)+vi,bei using the Rademacher multipliers described in Section 3.1. Keeping the features
+and kernel weights fixed, we replace the responses in (14) with Yi,b to obtain bµb(x) = Pn
+i=1 wi(x)Yi,b.
+As in Section 3.2, we compute the standard-error estimate bs(x) from the perturbed estimates
+{bµb(x)}1≤b≤B.
+The empirical bias cushion br(x) is the largest absolute difference between all
+perturbed estimates {bµb(x)}1≤b≤B and the original estimate bµ(x). We combine these quantities to
+form the interval Cα(Dn; x) in (10). We analyze this construction under the following assumptions.
+Assumption 1 (Kernel regression assumptions).
+1. The observations (Xi, Yi) are i.i.d., with
+Xi ∈Rd and satisfy Yi = µ(Xi) + εi with E|µ(X)| < ∞. The design distribution has a density
+fX that is continuous at the fixed query x, with 0 < fX(x) < ∞. There exists a finite constant
+C > 0 such that
+E[εi | Xi] = 0,
+E[ε2
+i | Xi] = σ2(Xi),
+E[ε4
+i | Xi] ≤C
+almost surely,
+where σ2(x) > 0 is continuous at x.
+2. The regression function µ is Hölder smooth in the following sense:: For some β > 0 and
+finite L > 0, the regression function µ : Rd →R is ℓtimes continuously differentiable with
+ℓ= ⌈β⌉−1, and satisfies
+|Dγµ(u) −Dγµ(v)| ≤L∥u −v∥β−ℓ,
+u, v ∈Rd,
+|γ| = ℓ.
+where γ = (γ1, . . . , γd) ∈Nd
+0 with Nd
+0 denoting the set of d-tuples of nonnegative integers,
+|γ| = Pd
+j=1 γj, Dγ denotes the corresponding partial derivative with D0µ = µ and ∥· ∥is the
+Euclidean norm.
+14
+
+
+3. There exist constants 0 < r0 ≤1 and 0 < Kmin ≤Kmax < ∞such that
+Kmin1{∥u∥≤r0} ≤K(u) ≤Kmax1{∥u∥≤1},
+u ∈Rd.
+The kernel K is of order ℓ= ⌈β⌉−1, that is, for every multi-index γ = (γ1, . . . , γd) ∈Nd
+0 with
+|γ| ≤ℓ,
+Z
+Rd K(u) du = 1,
+Z
+Rd
+d
+Y
+j=1
+uγj
+j K(u) du = 0,
+1 ≤|γ| ≤ℓ.
+In addition, the kernel satisfies
+R
+Rd ∥u∥β|K(u)| du < ∞.
+4. The deterministic bandwidth satisfies
+hn →0,
+nhd
+n
+log n →∞.
+In the above assumption, the Hölder smoothness of the function µ(·) and kernel assumptions
+are standard in nonparametric estimation; see Tsybakov [2009].
+In the following, we shall use the Nadaraya–Watson estimator as an analytically tractable
+example to provide reasoning for our TabCUQ proposal. We use the terms context variation and
+limited context bias to connect the interpretation of its estimation error with our discussion of
+tabular foundation models. For the Nadaraya–Watson estimator, these two components admit an
+explicit characterization through the exact decomposition
+bµNW(x) −µ(x) = bµor(x) −µ(x)
+|
+{z
+}
+context variation
++
+bn(x)
+| {z }
+limited context bias
+(15)
+where bµor(x) denotes an oracle estimator of µ and bn(x) denotes the bias component, defined as
+bµor(x) := µ(x) +
+n
+X
+i=1
+wi(x)εi
+and
+bn(x) =
+n
+X
+i=1
+wi(x){µ(Xi) −µ(x)}.
+(16)
+Conditional on the observed covariates, context variation corresponds to the mean-zero fluctuation
+induced by the outcome noise. Limited context bias corresponds to the discrepancy between the
+weighted regression values within the context and the target µ(x). The oracle estimator removes
+this bias while preserving context variation. The two quantities used by TabCUQ correspond to the
+two terms in (15): the standard-error estimate bs(x) estimates the scale ρn of the oracle fluctuation,
+while the empirical bias cushion br(x) provides a high-probability upper bound for the bias bn(x).
+Under Assumption 1, the oracle estimator satisfies
+bµor(x) −µ(x)
+ρn
+d−→N(0, 1)
+with
+ρn = σ(x)
+s
+νK
+nhdnfX(x),
+(17)
+where νK =
+R
+Rd K(u)2 du and ρn describes the asymptotic sampling scale of bµor(x) −µ(x).
+Theorem 1 (An upper bound on bias). Under Assumption 1, suppose the number B of perturbations
+satisfy
+nh2β+d
+n
+log B
+−→0.
+(18)
+Then, as n →∞, the empirical bias cushion br(x) defined in (9) satisfies
+P{|bn(x)| ≤br(x)} −→1.
+(19)
+15
+
+
+Theorem 1 shows that the empirical bias cushion is a high probability upper bound for the
+bias component. On the event |bn(x)| ≤br(x), the decomposition in (15) gives |bµ(x) −µ(x)| ≤
+|bµor(x) −µ(x)| + br(x). Together with the limiting distribution in (17), the bias bound therefore
+yields a pointwise coverage guarantee for Cα(Dn; x). The following theorem states this guarantee
+and bounds the interval width.
+Theorem 2 (Pointwise coverage and interval width). Under Assumption 1 and suppose that B
+satisfies (18). For fixed α ∈(0, 1), the confidence interval Cα(Dn; x) satisfies
+lim inf
+n→∞P
+µ(x) ∈Cα(Dn; x)
+	 ≥1 −α.
+(20)
+Moreover,
+length{Cα(Dn; x)} = Op
+
+ρn
+p
+log B
+
+.
+(21)
+Theorem 2 establishes asymptotic pointwise coverage of at least 1 −α and provides an upper
+bound on the interval width. The usual kernel-regression error scale combines sampling variability
+and bias, (nhd
+n)−1/2 + hβ
+n. The width bound depends on this budget through the factor √log Bn,
+highlighting a tradeoff among bias accommodation, interval width, and computational cost. The
+bias component depends on the unknown regression function and is generally harder to estimate
+than the standard error. Balancing these terms gives hn ≍n−1/(2β+d) and the classical optimal
+pointwise length benchmark n−β/(2β+d). Under the theorem’s conditions, choosing this bandwidth
+and B = ⌈nc⌉for any fixed c > 0 yields length{Cα(Dn; x)} = Op(n−β/(2β+d)√log n). Our length
+bound is therefore near-optimal up to a logarithmic factor, which arises from taking the maximum
+over perturbations to accommodate bias without directly estimating it.
+5
+Simulation Studies
+5.1
+Experimental design and benchmarks
+We evaluate the coverage and width of nominal 95% confidence intervals for conditional means
+µ(x) and conditional average treatment effects τ(x) in simulations where the target values are
+known. The primary experiments use TabPFN 2.6 with eight ensemble members. Each Monte
+Carlo repetition generates an independent labeled context, including both features and outcomes,
+while the queries, pretrained model, and model seed remain fixed. Table 1 summarizes the main
+data-generating processes. For conditional means, we consider univariate and multivariate regression
+models with different mean functions, outcome noise distributions, and covariate structures. For
+CATEs, we consider nine designs that vary the baseline response, treatment-effect function, outcome
+noise, and treatment assignment.
+We compare TabCUQ with confidence intervals based solely on the wild-bootstrap standard
+error (referred to as Wild bootstrap). Both methods use the same point estimate and estimated
+standard error, so this comparison isolates the contribution of the empirical bias cushion. For CATE
+estimation, we use a T-learner with separate contexts for the two treatment arms. We also consider
+an oracle bias-aware (OBA) benchmark that uses the known target value and independent datasets
+generated from the true data-generating distribution to estimate the bias and sampling standard
+deviation of the original estimator. These quantities are used to construct benchmark intervals
+that provide a reference for interval width. The OBA method relies on information available in our
+simulations but unavailable in practice.
+At each query point, coverage is estimated by the proportion of Monte Carlo confidence intervals
+containing the true target, while interval width is averaged across repetitions. We also evaluate the
+16
+
+
+Table 1: Synthetic data-generating processes for conditional means and CATE. U and M stand for
+paired univariate and multivariate designs, respectively; C stands for the CATE designs.
+A. Conditional means: Y = µ(X) + ε(X)
+Univariate: X ∼N(0, 1). Multivariate: X ∼N(0, Σρ), with p ∈{5, 10} and ρ = 0 for M1–M8. M1 also uses ρ = 0.5;
+M9 uses p = 2 and ρ ∈{0, 0.5}.
+Design
+Univariate
+mean
+Multivariate mean
+Outcome noise
+Linear (U1 / M1)
+x
+Pp
+j=1 xj
+Z
+Quadratic (U2 / M2)
+x2
+Pp
+j=1 x2
+j
+Z
+Bimodal (U3 / M3)
+x
+Pp
+j=1 xj
+1.5U + Z
+Heteroskedastic linear
+(U4 / M4)
+x
+Pp
+j=1 xj
+1D: (1 + |x|)Z
+Multi:
+ 1 +
+|P
+j xj|
+p
+
+Z
+Absolute value (U5 / M5)
+|x|
+Pp
+j=1 |xj|
+Z
+Sine (U6 / M6)
+sin(πx)
+Pp
+j=1 sin(πxj)
+Z
+Step (U7 / M7)
+sgn+(x)
+Pp
+j=1 sgn+(xj)
+Z
+Heteroskedastic quadratic
+(U8 / M8)
+x2
+Pp
+j=1 x2
+j
+1D: (1 + |x|)Z
+Multi:
+ 1 +
+|P
+j xj|
+p
+
+Z
+Interaction (M9)
+–
+x1 + x2 + x1x2
+Z
+B. CATE: Y = µ0(X) + Aτ(X) + ε(X)
+X ∼N(0, 1) and A | X = x ∼Bernoulli{e(x)}. Common settings are ε(x) = Z and e(x) = 0.5; a dash in the final
+column denotes these settings.
+Design
+Baseline µ0(x)
+Effect τ(x)
+Noise / assignment change
+C1: Linear effect
+x
+x
+–
+C2: Null effect
+x
+0
+–
+C3: Opposite slopes
+−x
+2x
+–
+C4: Quadratic baseline
+x2
+x
+–
+C5: Bimodal noise
+x
+x
+ε(x) = 1.5U + Z
+C6: Heteroskedastic noise
+x
+x
+ε(x) = (1 + |x|)Z
+C7: Nonlinear effect
+x
+x2
+–
+C8: Treatment imbalance
+x
+x
+e(x) = 0.2
+C9: Weak overlap
+x
+x
+e(x) = {1 + exp(x)}−1
+Here Z ∼N(0, 1) and U ∈{−1, 1} with equal probabilities are independent of the covariates and of each other. We
+use sgn+(z) = 1 for z ≥0 and −1 otherwise. The covariance Σρ has unit diagonal and off-diagonal entries ρ. In Panel
+A, a noise formula without a dimension label applies to both univariate and multivariate versions; the interaction
+design is multivariate only.
+standard-error estimates. We report both pointwise results and averages over prespecified query
+regions. For the univariate and CATE settings, we use 20 equally spaced points in [−3, 3], including
+eight edge points satisfying |x| ≥2. For multivariate regression, we consider 20 query points in
+each of three Mahalanobis probability strata (0–50%, 50–90%, and 90–99%). The main univariate
+experiments use S = 300 independent contexts of size n = 300, with B = 300 wild-bootstrap
+perturbations per context. For multivariate regression, we use S = 100 independent contexts of
+size n = 300, with B = 100 wild-bootstrap perturbations per context. The CATE experiments use
+the same numbers of contexts and perturbations, with a total sample size of n = 600 across the
+17
+
+
+two treatment arms. Complete description of the simulation settings and evaluation procedures are
+given in Appendix B.
+5.2
+Main results
+TabCUQ substantially improves conditional-mean coverage across the univariate and multivariate
+designs. For the eight univariate designs, coverage averaged over the edge queries ranges from 0.677
+to 0.945 for Wild bootstrap and from 0.970 to 1.000 for TabCUQ; see Figure 5. The empirical bias
+cushion thus raises the regional average coverage above the nominal 0.95 level in all eight designs.
+The greatest improvement occurs in the sinusoidal design, where the coverage increases from 0.677
+to 0.970. TabCUQ also improves coverage in all 20 multivariate settings evaluated in the 90–99%
+Mahalanobis stratum; see Figure 6. In these settings, the average coverage ranges from 0.523 to
+0.851 for the Wild bootstrap and from 0.928 to 0.998 for TabCUQ. The details are given in Table 7
+in Appendix D.
+0.7
+0.85
+1
+Linear
+Quadratic
+Bimodal
+Heteroskedastic linear
+Absolute value
+Sine
+Step
+Heteroskedastic quadratic
+Coverage
+(a) Conditional Mean Coverage
+1
+2
+3
+Width / OBA
+(b) Relative width
+Wild bootstrap
+TabCUQ
+Figure 5: Univariate conditional-mean interval performance for TabPFN 2.6 across eight designs,
+with S = 300, n = 300, and B = 300. (a) Coverage averaged over the eight edge queries satisfying
+|x| ≥2. (b) Mean pointwise interval-width/OBA-width ratio over the same queries. Dashed
+reference lines mark 0.95 coverage and a width ratio of one.
+Detailed results under the quadratic design are presented in Figure 7 to illustrate the role of
+the empirical bias cushion in improving coverage in queries with substantial limited-context bias.
+Figure 7(a) shows that the absolute Monte Carlo bias is small near the center of the query grid but
+increases sharply toward its endpoints. The mean empirical bias cushion also increases toward these
+endpoints, providing a larger addition to the interval half-width where the bias is most pronounced.
+At x = 3, the absolute Monte Carlo bias is 1.247, and the mean empirical bias cushion is 2.171. The
+Wild bootstrap interval achieves coverage of only 0.683 at this query. Adding the empirical bias
+cushion increases coverage to 0.937, close to the nominal 0.95 level; see Figure 7(b). Figure 7(c)
+shows the corresponding increase in mean interval width, with the largest absolute increases near
+the endpoints of the grid. TabCUQ retains the original point estimate as the interval center and
+improves coverage by adding the empirical bias cushion for limited-context bias to the interval
+half-width.
+The CATE experiments reveal an additional source of variation in coverage arising from the
+combination of arm-specific estimation biases. Across the nine CATE designs, edge-average coverage
+18
+
+
+0.5
+0.75
+1
+Linear (p = 5, ρ = 0)
+Linear (p = 5, ρ = 0.5)
+Linear (p = 10, ρ = 0)
+Linear (p = 10, ρ = 0.5)
+Quadratic (p = 5)
+Quadratic (p = 10)
+Bimodal (p = 5)
+Bimodal (p = 10)
+Heterosk. linear (p = 5)
+Heterosk. linear (p = 10)
+Absolute value (p = 5)
+Absolute value (p = 10)
+Sine (p = 5)
+Sine (p = 10)
+Step (p = 5)
+Step (p = 10)
+Heterosk. quadratic (p = 5)
+Heterosk. quadratic (p = 10)
+Interaction (p = 2, ρ = 0)
+Interaction (p = 2, ρ = 0.5)
+Coverage
+(a) Conditional Mean Coverage
+1
+2
+3
+Width / OBA
+(b) Relative width
+Wild bootstrap
+TabCUQ
+Figure 6: Multivariate conditional-mean interval performance for TabPFN 2.6 across 20 settings,
+with S = 100 independent contexts of size n = 300 and B = 100. (a) Coverage averaged over 20
+fixed queries in the 90–99% Mahalanobis stratum. (b) Mean pointwise interval-width/OBA-width
+ratio over the same queries. Dashed reference lines mark 0.95 coverage and a width ratio of one.
+ranges from 0.729 to 0.968 for Wild bootstrap intervals and from 0.968 to 1.000 for TabCUQ; see
+Figure 8. Let ba(x) denote the bias of the estimated conditional mean in treatment arm a. The bias
+of the estimated CATE then satisfies bτ(x) = b1(x) −b0(x), so the arm-specific biases may cancel or
+reinforce each other. In the null-effect design, the edge-average absolute CATE bias is 0.062, and the
+Wild bootstrap interval achieves coverage of 0.950. In contrast, the opposite-slopes design produces
+an edge-average absolute CATE bias of 0.537, and Wild bootstrap coverage falls to 0.730. The
+corresponding standard-error calibration ratios are similar, at 1.103 and 1.107, respectively. Adding
+the empirical bias cushion increases coverage in the opposite-slopes design to 0.989. Our CATE
+experiments also examine nonlinear treatment effects and changes in treatment assignment. Wild
+bootstrap coverage falls to 0.854 under treatment imbalance, 0.839 for a nonlinear effect, and 0.729
+under weak overlap. TabCUQ increases coverage to 0.990, 0.983, and 0.968, respectively. Weak
+overlap remains particularly challenging at individual queries. At x = 3, where treated observations
+are sparse, coverage increases from 0.540 to only 0.890 after adding the empirical bias cushion.
+We also compare interval widths with an oracle benchmark (OBA) constructed using the Monte
+Carlo bias and standard deviation. This benchmark provides a reference for interval efficiency using
+information unavailable from a single observed context. Across the univariate conditional-mean
+designs, the mean pointwise TabCUQ/OBA width ratios range from 1.64 to 2.44; the corresponding
+19
+
+
+−3
+0
+3
+0
+1
+2
+Query x
+Absolute scale
+(a) Limited-context bias
+and empirical bias cushion
+−3
+0
+3
+0.6
+0.7
+0.8
+0.9
+1
+Query x
+Coverage
+(b) Interval coverage
+−3
+0
+3
+0
+2
+4
+6
+8
+Query x
+Mean width
+(c) Interval width
+Absolute limited-context bias
+Empirical bias cushion
+Wild bootstrap
+TabCUQ
+OBA
+Figure 7: Pointwise conditional-mean results in the quadratic design for TabPFN 2.6, with S = 300,
+n = 300, and B = 300. (a) Absolute Monte Carlo limited-context bias (orange dashed) and mean
+empirical bias cushion (blue solid). (b) Coverage of wild-bootstrap and TabCUQ intervals; the
+horizontal dashed line marks 0.95. (c) Mean interval widths for wild bootstrap, TabCUQ, and OBA.
+The cushion in (a) is the added component of the TabCUQ half-width.
+0.7
+0.85
+1
+Linear eﬀect
+Null eﬀect
+Opposite slopes
+Bimodal noise
+Heteroskedastic
+Quadratic baseline
+Imbalanced treatment
+Weak overlap
+Nonlinear eﬀect
+Coverage
+(a) CATE Coverage
+1
+2
+3
+Width / OBA
+(b) Relative width
+Wild bootstrap
+TabCUQ
+Figure 8: CATE interval performance for TabPFN 2.6 across nine designs, with S = 100, total
+n = 600, and B = 100. (a) Coverage averaged over the eight edge queries satisfying |x| ≥2. (b)
+Mean pointwise interval-width/OBA-width ratio over the same queries. Dashed reference lines in
+(a,b) mark 0.95 coverage and a width ratio of one.
+ratios range from 1.443 to 2.072 in the multivariate tail experiments. For CATE estimation, the
+ratios of regional mean TabCUQ width to regional mean OBA width range from 1.59 to 2.71 across
+the nine designs.
+20
+
+
+5.3
+Robustness and coverage–width trade-offs
+The coverage improvement extends to different pretrained models while interval
+widths vary across models.
+We evaluate TabCUQ with TabPFN 3 and TabFM using the
+same experimental design and perturbation budget as a matched TabPFN 2.6 comparison; see
+Table 2. Across the four univariate designs, TabCUQ achieves edge-average coverage of 0.986–1.000
+with TabPFN 3 and 0.971–0.998 with TabFM, compared with 0.854–0.936 and 0.784–0.900 for the
+corresponding Wild bootstrap intervals. Similar improvements are observed in the multivariate
+experiments, where TabCUQ achieves tail-average coverage of 0.996–1.000 for TabPFN 3 and
+0.998–1.000 for TabFM. The relative widths remain substantial and depend on the pretrained model,
+ranging from 1.7 to 2.4 times the corresponding OBA benchmark across these comparisons.
+Table 2:
+Sensitivity to the choice of foundation models. Entries give ranges across all the simulation
+settings. Panel A concerns the eight univariate edge queries in U1–U4; Panel B concerns the 20
+queries in the 90–99% Mahalanobis stratum. Relative width is the mean pointwise TabCUQ/OBA
+width ratio, using each model’s own Monte Carlo bias and standard deviation to construct its OBA
+reference. All three models are evaluated on the same nine multivariate settings: M1 at p ∈{5, 10}
+and ρ ∈{0, 0.5}, M2–M4 at p = 5 and ρ = 0, and M9 at p = 2 and ρ ∈{0, 0.5}.
+Model
+Designs
+Wild bootstrap
+coverage
+TabCUQ
+coverage
+TabCUQ width
+/ OBA
+A. Univariate edge queries
+TabPFN 2.6
+4
+0.738–0.910
+0.966–1.000
+1.773–2.082
+TabPFN 3
+4
+0.854–0.936
+0.986–1.000
+1.967–2.419
+TabFM
+4
+0.784–0.900
+0.971–0.998
+1.722–2.164
+B. Multivariate tail queries
+TabPFN 2.6
+9
+0.633–0.851
+0.981–0.998
+1.651–2.072
+TabPFN 3
+9
+0.852–0.915
+0.996–1.000
+2.044–2.291
+TabFM
+9
+0.861–0.940
+0.998–1.000
+2.131–2.442
+Increasing the context size reduces interval width but does not necessarily resolve Wild
+bootstrap undercoverage.
+We examine context sizes ranging from n = 100 to n = 3000 in the
+four original univariate designs. In the linear design, increasing n from 100 to 3000 reduces the
+average TabCUQ interval width from 3.86 to 1.31, while coverage increases from 0.979 to 0.999.
+However, Wild bootstrap coverage remains at 0.845 even when n = 3000. The OBA interval also
+becomes narrower, with its mean width decreasing from 2.45 to 0.66. Thus, although larger contexts
+improve absolute precision, they do not necessarily eliminate the need for bias protection or reduce
+the relative width cost of TabCUQ. Additional sample-size results are reported in Appendix E.
+The perturbation budget moderately affects the empirical bias cushion.
+Because the
+cushion is defined through the maximum absolute displacement among perturbed estimates, adding
+more perturbations cannot decrease this maximum when the draws are nested. In the four original
+univariate designs, increasing the number of perturbations from 100 to 500 increases the average
+wild-bootstrap displacement cushion by 8.5%–14.4%. Thus, the perturbation budget moderately
+affects the interval being constructed rather than merely the numerical precision of its computation.
+Additional results are reported in Appendix E.
+21
+
+
+6
+Real-World Studies
+6.1
+Data sets and study design
+We evaluate TabCUQ on seven real-world regression tasks spanning socioeconomic, environmental,
+behavioural, protein, and single-cell data. These tasks represent different prediction settings. Census
+income has a weak predictive signal and a heavy-tailed outcome, whereas tree-cover prediction has
+a stronger but highly nonlinear relationship between the covariates and outcome. Job Corps and
+Jester Jokes provide moderate- and high-dimensional regression settings. The two protein-stability
+tasks evaluate generalization to mutations on proteins largely absent from the training pool, with
+close sequence homologues removed. CITE-seq examines uncertainty quantification using 2,000
+gene-expression features. We consider the task of CATE inference on the Jester Jokes dataset while
+implementing conditional-mean inference on all the other datasets. Detailed dataset descriptions
+and preprocessing procedures are provided in Appendix I.
+Table 3:
+Basic information of the real-world datasets included in our studies.
+Dataset
+Pool
+Evaluation
+Input p
+Outcome
+Census
+11,800
+200
+2
+Income
+Tree cover
+11,800
+200
+4
+Canopy cover
+Job Corps
+10,014
+200
+23
+Earnings
+Jester Jokes
+48,245
+200
+110
+Rating
+Protein engineering ∆∆G
+8,754
+461
+145
+Gibbs free energy changes (∆∆G)
+Protein engineering ∆Tm
+4,346
+571
+155
+Melting temperature changes (∆Tm)
+CITE-seq CD71
+30,469
+200
+2,000
+CD71 (CLR)
+Unlike in simulations, the population conditional mean or CATE is unknown in real data. We
+therefore evaluate confidence intervals relative to a fixed, data-derived reference function. For each
+dataset, we reserve an evaluation set and fit the reference function using the remaining observations.
+The reference model is selected by five-fold cross-validation from a collection of regression methods,
+including random forests, XGBoost, LightGBM, multilayer perceptrons, ridge regression, and a
+constant predictor. A simple Cell-mean predictor is additionally included for the Census dataset with
+discrete covariates only. The reference function is fitted using a substantially larger sample than the
+contexts supplied to the foundation model and is treated as fixed during evaluation. Consequently,
+the reported coverage concerns the estimated reference function rather than the unknown population
+conditional-mean or CATE functions.
+We repeatedly sample contexts of size nctx ∈{200, 300, 500, 1000} without replacement from the
+reference pool. For each sampled context, we obtain a point estimate and confidence interval at
+the same fixed evaluation queries. The reference function and evaluation queries remain unchanged
+across repetitions. We measure reference coverage by the proportion of intervals containing the
+large-sample reference function and summarize the interval widths across the repeated contexts.
+The main analyzes use 200 held-out evaluation points for all tasks except protein-stability prediction,
+while the two protein tasks use the evaluation sets of 461 and 571 mutations prespecified by the data
+providers. For each sampled context, we generate 100 wild-bootstrap perturbations of the observed
+outcomes for TabCUQ. Additional details on the setting and evaluation strategy are reported in
+Appendix J.
+22
+
+
+6.2
+Results
+TabCUQ substantially improves reference coverage with interval widths comparable
+in scale to the oracle benchmark.
+At nctx = 1000, Wild bootstrap intervals achieve average
+reference coverage between 0.614 and 0.842 across the seven tasks, whereas intervals with the
+wild-bootstrap displacement cushion achieve coverage between 0.966 and 1.000. The mean pointwise
+TabCUQ/OBA width ratios range from 1.62 to 2.27, indicating that the coverage improvements are
+achieved with interval widths of the same order as those of the oracle bias-aware benchmark. The
+improvement is observed in various inferential tasks. For example, coverage increases from 0.649 to
+0.997 for Census income and from 0.682 to 0.973 for tree-cover prediction. Similar improvements
+occur in the biological application examples with higher dimensional predictors. In specific, the
+coverage increases from 0.779 to 0.997 for protein ∆∆G, from 0.658 to 0.967 for protein ∆Tm, and
+from 0.614 to 0.966 for CITE-seq. These results show that the improvement is not confined to
+weak-signal problems, as substantial gains are also observed in nonlinear regression and molecular
+prediction tasks. Figure 9 presents pointwise coverage and relative-width comparisons for six of the
+tasks, with complete results for all seven reported in Appendix J.
+Increasing the context size does not consistently resolve Wild bootstrap undercoverage.
+In the context-size sensitivity experiments, Wild bootstrap reference coverage decreases from 0.828
+to 0.587 for Census and from 0.855 to 0.761 for Jester as nctx increases from 100 to 2000. Tree cover
+shows a different pattern, with coverage increasing from 0.503 to 0.689, although it remains below
+the nominal level. Undercoverage also persists in the protein-stability tasks, where Wild bootstrap
+coverage ranges from 0.779 to 0.812 for ∆∆G and from 0.658 to 0.689 for ∆Tm across context sizes
+of 100–1000. In a separate CITE-seq context-size analysis using 500 principal components, Wild
+bootstrap coverage increases from 0.703 to 0.760 but remains below nominal. This analysis uses
+a different feature representation and reference function from the main CITE-seq experiment. In
+contrast, TabCUQ intervals maintain reference coverage close to or above 0.95 across most context
+sizes and datasets. The contrasting trends across datasets indicate that increasing the number of
+context observations does not necessarily lead to better calibrated intervals. The complete results
+are provided in Appendix J.
+Favorable average reference coverage can still conceal substantial differences across
+individual queries.
+This is particularly evident in the main CITE-seq experiment using 1,000
+gene-expression features. Although the TabCUQ intervals achieve average reference coverage of
+0.966, approximately 10% of evaluation points have pointwise coverage below 0.90. The Job Corps
+and Jester analyses also show considerable variation in interval width across queries. These results
+suggest that the improvement in reference coverage is not uniform across evaluation points, and
+that favorable dataset-level averages should not be interpreted as evidence of adequate coverage at
+every query.
+23
+
+
+Figure 9:
+Pointwise reference coverage and relative interval width across six real-world tasks, with
+context size n = 1,000. For each task, the left panel shows the distribution across evaluation queries
+of reference coverage. The right panel shows the distribution of mean interval width over those
+contexts divided by the OBA width at the same query. Wild bootstrap uses the estimated standard
+error without the empirical bias cushion; TabCUQ adds the empirical bias cushion from the same
+wild-bootstrap perturbations. Linear model denotes ordinary least-squares intervals, included only
+for the Census and Tree cover examples. OBA stands for the oracle benchmark. Inner boxes indicate
+medians and interquartile ranges; horizontal bars indicate identical values across queries. Dashed
+lines mark 0.95 coverage and a width ratio of one.
+AI use statement
+We used generative AI tools to improve the clarity and wording of the manuscript and to assist in
+searching for relevant literature. The authors take full responsibility for the final content of the
+24
+
+
+paper, including its scientific claims and references.
+References
+Timothy B. Armstrong and Michal Kolesár. Simple and honest confidence intervals in nonparametric
+regression. arXiv preprint arXiv:1606.01200, 2016. URL https://arxiv.org/abs/1606.01200.
+Susan Athey and Guido Imbens. Recursive partitioning for heterogeneous causal effects. Proceedings
+of the National Academy of Sciences, 113(27):7353–7360, 2016. doi: 10.1073/pnas.1510489113.
+Rina Foygel Barber, Emmanuel J. Candès, Aaditya Ramdas, and Ryan J. Tibshirani. The limits of
+distribution-free conditional predictive inference. Information and Inference: A Journal of the
+IMA, 10(2):455–482, 2021. doi: 10.1093/imaiai/iaaa017.
+Rajeev H. Dehejia and Sadek Wahba. Causal effects in nonexperimental studies: Reevaluating
+the evaluation of training programs. Journal of the American Statistical Association, 94(448):
+1053–1062, 1999. doi: 10.1080/01621459.1999.10473858.
+Bradley Efron. Bootstrap methods: Another look at the jackknife. The Annals of Statistics, 7(1):
+1–26, 1979. doi: 10.1214/aos/1176344552.
+Sandra Fortini, Kenyon Ng, Sonia Petrone, Judith Rousseau, and Susan Wei. Uncertainty de-
+composition for Bayes-filtered transformers via Bayesian predictive inference. arXiv preprint
+arXiv:2602.04596, 2026. URL https://arxiv.org/abs/2602.04596.
+Trevor Hastie, Robert Tibshirani, and Jerome Friedman. The Elements of Statistical Learning: Data
+Mining, Inference, and Prediction. Springer, 2 edition, 2009. doi: 10.1007/978-0-387-84858-7.
+Miguel A. Hernán and James M. Robins. Causal Inference: What If. Chapman & Hall/CRC, Boca
+Raton, 2020. URL https://miguelhernan.org/whatifbook.
+Riley J. Hickman, Matteo Aldeghi, Florian Häse, and Alán Aspuru-Guzik. Bayesian optimization
+with known experimental and design constraints for chemistry applications. Digital Discovery, 1:
+732–744, 2022. doi: 10.1039/D2DD00028H.
+Oliver Hines, Oliver Dukes, Karla Diaz-Ordaz, and Stijn Vansteelandt. Demystifying statistical
+learning based on efficient influence functions. The American Statistician, 76(3):292–304, 2022.
+doi: 10.1080/00031305.2021.2021984.
+Noah Hollmann, Samuel Müller, Lennart Purucker, Arjun Krishnakumar, Max Körfer, Shi Bin Hoo,
+Robin Tibor Schirrmeister, Frank Hutter, et al. Accurate predictions on small data with a tabular
+foundation model. Nature, 637:319–326, 2025. doi: 10.1038/s41586-024-08328-6.
+Edward H. Kennedy. Towards optimal doubly robust estimation of heterogeneous causal effects.
+Electronic Journal of Statistics, 17(2):3008–3049, 2023. doi: 10.1214/23-EJS2157.
+Patrick Kline and Andres Santos. A score based approach to wild bootstrap inference. Journal of
+Econometric Methods, 1(1):23–41, 2012. doi: 10.1515/2156-6674.1006.
+Weihao Kong and Abhimanyu Das.
+Introducing TabFM: A zero-shot foundation model
+for tabular data.
+Google Research Blog, 2026.
+URL https://research.google/blog/
+introducing-tabfm-a-zero-shot-foundation-model-for-tabular-data/.
+Accessed 2026-
+08-27.
+25
+
+
+Sören R. Künzel, Jasjeet S. Sekhon, Peter J. Bickel, and Bin Yu. Metalearners for estimating
+heterogeneous treatment effects using machine learning. Proceedings of the National Academy of
+Sciences, 116(10):4156–4165, 2019. doi: 10.1073/pnas.1804597116.
+Robert J. LaLonde. Evaluating the econometric evaluations of training programs with experimental
+data. The American Economic Review, 76(4):604–620, 1986. URL https://www.jstor.org/
+stable/1806062.
+Jing Lei, Max G’Sell, Alessandro Rinaldo, Ryan J. Tibshirani, and Larry Wasserman. Distribution-
+free predictive inference for regression. Journal of the American Statistical Association, 113(523):
+1094–1111, 2018. doi: 10.1080/01621459.2017.1307116.
+Lihua Lei and Emmanuel J. Candès. Conformal inference of counterfactuals and individual treatment
+effects. Journal of the Royal Statistical Society: Series B (Statistical Methodology), 83(5):911–938,
+2021. doi: 10.1111/rssb.12445. URL https://doi.org/10.1111/rssb.12445.
+Enno Mammen. Bootstrap and wild bootstrap for high dimensional linear models. The Annals of
+Statistics, 21(1):255–285, 1993. doi: 10.1214/aos/1176349025.
+Samuel Müller, Noah Hollmann, Sebastian Pineda Arango, Josif Grabocka, and Frank Hutter.
+Transformers can do Bayesian inference. In International Conference on Learning Representations,
+2022. URL https://openreview.net/forum?id=KSugKcbNf9.
+Thomas Nagler and David Rügamer. Uncertainty quantification for prior-data fitted networks using
+martingale posteriors. arXiv preprint arXiv:2505.11325, 2025. doi: 10.48550/arXiv.2505.11325.
+URL https://arxiv.org/abs/2505.11325.
+Kenyon Ng, Edwin Fong, David T. Frazier, Jeremias Knoblauch, and Susan Wei.
+TabMGP:
+Martingale posterior with TabPFN. In International Conference on Machine Learning, 2026.
+URL https://arxiv.org/abs/2510.25154.
+Sungwoo Park, Sunghee Park, and Won Chang. Conformal prediction and conditional coverage for
+tabular foundation models. arXiv preprint arXiv:2609.34887, 2026. URL https://arxiv.org/
+abs/2609.34887.
+Dimitris N. Politis, Joseph P. Romano, and Michael Wolf. Subsampling. Springer, New York, 1999.
+doi: 10.1007/978-1-4612-1554-7.
+Jingang Qu, David Holzmüller, Gaël Varoquaux, and Marine Le Morvan. TabICL: A tabular
+foundation model for in-context learning on large data. arXiv preprint arXiv:2502.05564, 2025.
+URL https://arxiv.org/abs/2502.05564.
+Glenn Shafer and Vladimir Vovk. A tutorial on conformal prediction. Journal of Machine Learning
+Research, 9(12):371–421, 2008. URL https://jmlr.org/papers/v9/shafer08a.html.
+Benjamin J. Shields, Jason Stevens, Jun Li, Marvin Parasram, Farhan Damani, Jesus I. Martinez Al-
+varado, Jacob M. Janey, Ryan P. Adams, and Abigail G. Doyle. Bayesian reaction optimization
+as a tool for chemical synthesis. Nature, 590:89–96, 2021. doi: 10.1038/s41586-021-03213-y.
+Alexandre B. Tsybakov. Introduction to Nonparametric Estimation. Springer Series in Statistics.
+Springer, New York, 2009. doi: 10.1007/b13794. URL https://doi.org/10.1007/b13794.
+26
+
+
+Larry Wasserman. All of Statistics: A Concise Course in Statistical Inference. Springer, 2004. doi:
+10.1007/978-0-387-21736-9.
+Larry Wasserman. All of Nonparametric Statistics. Springer Texts in Statistics. Springer, 2006. doi:
+10.1007/0-387-30623-4.
+C. F. Jeff Wu. Jackknife, bootstrap and other resampling methods in regression analysis. The
+Annals of Statistics, 14(4):1261–1295, 1986. doi: 10.1214/aos/1176350142.
+Yunxin Xu, Di Liu, and Haipeng Gong. Improving the prediction of protein stability changes upon
+mutations by geometric learning and a pre-training strategy. Nature Computational Science, 4:
+840–850, 2024. doi: 10.1038/s43588-024-00716-2.
+27

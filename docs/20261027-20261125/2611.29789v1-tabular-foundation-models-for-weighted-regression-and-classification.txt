@@ -1,0 +1,1602 @@
+Tabular Foundation Models for Weighted Regression
+and Classification
+Junwen Xia1, Yan He2, Dehan Kong3, and Zhenhua Lin4∗
+1School of Statistics, Renmin University of China, Beijing, China
+2School of Statistics, East China Normal University, Shanghai, China
+3Department of Statistical Sciences, University of Toronto, Toronto, Ontario, Canada
+4Department of Statistics and Data Science, National University of Singapore, Singapore
+∗email: linz@nus.edu.sg
+November 24, 2026
+Abstract
+Weighted regression and classification have applications ranging from missing-
+data analysis and causal inference to insurance pricing and particle physics. Exist-
+ing weighted methods must be fitted and tuned on each dataset, which is costly for
+flexible nonlinear learners. Tabular foundation models avoid this cost. A Trans-
+former is pretrained once on many simulated datasets and then predicts on a new
+dataset by in-context learning, using its observations as context without further fit-
+ting. Recent models such as TabPFN-3.5 surpass tuned conventional methods, but
+they cannot use sample weights. We develop a general pipeline that adapts such
+models to weighted prediction through weighted attention, a normalized weighted
+loss, and pretraining on synthetic weighted prediction tasks from missing-data prob-
+lems. Applied to TabPFN-3.5, it yields WeightedPFN, which performs strongly on
+real datasets, both in missing-data problems and in out-of-distribution causal tasks,
+while running about as fast as linear baselines. We also establish a statistical theory
+showing that a suitably pretrained weighted Transformer attains the nonparametric
+minimax rate for weighted regression on new datasets without further fitting.
+Keywords: causal inference, in-context learning, minimax rate, missing data, tabu-
+lar foundation model
+1
+arXiv:2611.29789v1  [stat.ML]  22 Nov 2026
+
+
+1
+Introduction
+Weighted regression and classification are fundamental tools that support a wide range
+of applications. For example, problems in survey sampling, missing-data analysis, dis-
+tribution shift, causal inference, learning from unreliable observations, insurance claim
+modeling, and particle-physics simulation can be addressed by weighted regression and
+classification (Pfeffermann, 1993; Robins and Rotnitzky, 1995; Shimodaira, 2000; Tian
+et al., 2014; Zhao et al., 2012; Ren et al., 2018; McCullagh and Nelder, 1989; CMS Col-
+laboration, 2025). We illustrate the applications of weighted regression and classification
+through two examples: missing-data prediction and treatment selection.
+Example 1 (Missing-data prediction). When covariates or responses are missing, the
+complete cases may differ systematically from the original population of interest before
+missingness. Under appropriate assumptions, weighting each complete case by the in-
+verse of its observation probability can correct this selection bias. Predicting continuous
+or categorical responses then becomes a weighted regression or classification problem,
+respectively (Rubin, 1976; Robins and Rotnitzky, 1995).
+Example 2 (Treatment selection). Treatment selection aims to recommend the treat-
+ment that yields the highest expected outcome for an individual. Under standard causal
+assumptions, this can be formulated either as weighted regression, which estimates the
+conditional average treatment effect (CATE) and assigns treatment according to its sign,
+or as weighted classification, which learns a treatment rule directly. The weights are
+constructed from the propensity score and outcome information (Tian et al., 2014; Zhao
+et al., 2012).
+Formally, weighted regression and classification aim to learn a predictor f that mini-
+mizes the weighted population risk E{Wℓ(f(X), Y )}, where X denotes covariates, Y the
+response, W ≥0 a sample weight, and ℓthe squared-error loss for regression and the
+0–1 loss for classification. Conventional approaches include weighted generalized linear
+2
+
+
+models (McCullagh and Nelder, 1989), weighted support vector regression and classifi-
+cation (Cortes and Vapnik, 1995; Smola and Schölkopf, 2004), weighted tree ensembles
+(Breiman, 2001; Ke et al., 2017), and weighted neural networks (Rumelhart et al., 1986).
+These methods trade flexibility against computational cost: weighted generalized linear
+models are fast to fit but may miss complex nonlinear relationships, whereas more flexi-
+ble nonlinear methods require substantial time for training and hyperparameter tuning.
+Moreover, each method must be fitted and tuned separately for every new dataset, so
+this cost is incurred repeatedly. This motivates a reusable weighted learner that transfers
+knowledge across tasks, combining flexible weighted prediction with fast adaptation to
+new datasets without task-specific fitting or tuning.
+Transformer-based in-context learning (Vaswani et al., 2017; Hollmann et al., 2023) of-
+fers a promising way to build such a learner. Pretrained tabular foundation models based
+on in-context learning can combine strong predictive performance with low computation
+time on unweighted prediction, using observed examples as context to predict responses
+for new observations without task-specific parameter updates or hyperparameter tuning.
+Recent models such as TabPFN-3.5 surpass extensively tuned conventional methods in
+aggregate performance on TabArena, a benchmark spanning diverse regression and clas-
+sification datasets, while offering a favorable accuracy–runtime trade-off (Erickson et al.,
+2025; Jäger et al., 2026).
+However, existing tabular foundation models are designed
+for unweighted prediction and do not directly support sample weights. Adapting these
+models to weighted prediction requires a new pipeline for generating synthetic weighted
+regression and classification tasks, incorporating sample weights into the Transformer
+architecture, and training with weighted losses.
+In this paper, we adapt tabular foundation models to weighted regression and classi-
+fication. Our contributions are threefold.
+First, we develop a reusable adaptation pipeline for weighted regression and classifi-
+cation. The pipeline has three components: synthetic weighted tasks for pretraining, a
+weighted attention mechanism that allows the Transformer to use sample weights, and a
+3
+
+
+normalized weighted loss. We propose to generate diverse pretraining tasks exclusively
+from synthetic missing-data prediction (Example 1). These tasks are designed to teach
+the models how to use sample weights, so that they can transfer this capability to other
+weighted prediction problems without requiring each application to be included in pre-
+training. The pipeline is designed for reuse across attention-based tabular foundation
+models, so that advances in the underlying models can be incorporated into weighted
+learning.
+Second, we apply this pipeline to TabPFN-3.5 (Jäger et al., 2026), yielding Weight-
+edPFN, to our knowledge the first tabular foundation model specifically pretrained for
+weighted regression and classification1. We fine-tune the released parameters of TabPFN-
+3.5 for approximately half an hour on a single NVIDIA H100 GPU and obtain our Weight-
+edPFN. Once pretrained, WeightedPFN makes weighted predictions on new datasets with-
+out task-specific fine-tuning or hyperparameter optimization. Experiments on 110 real
+regression datasets and 156 real classification datasets demonstrate strong performance
+in missing-data prediction (Example 1). WeightedPFN also generalizes well to out-of-
+distribution causal tasks (Example 2) built from 78 real randomized-experiment datasets.
+Across both task families, its runtimes are comparable to those of linear models and sub-
+stantially below those of tuned nonlinear methods. The fine-tuned WeightedPFN models
+are available at https://huggingface.co/xiajunwen/WeightedPFN, and the inference
+code is available at https://github.com/xiajunwen1007/WeightedPFN.
+Third, we establish a statistical theory of weighted in-context regression. Generaliz-
+ing studies of Transformers as learning algorithms (Garg et al., 2022; Bai et al., 2023;
+Kim et al., 2024; Ching et al., 2026), we analyze a weighted Transformer that more
+closely reflects the architectures used in tabular foundation models than those in pre-
+vious analyses by retaining softmax attention and Gaussian error linear unit (GELU)
+activations (Hendrycks and Gimpel, 2016). Under smoothness, boundedness, and task-
+1Shortly after we built our pipeline, the TabPFN GitHub repository introduced an experimental
+sample-weight interface, but according to its November 17, 2026 release notes, no released model supports
+this feature yet (https://github.com/PriorLabs/TabPFN/releases/tag/v10.1.0).
+4
+
+
+coverage assumptions, with suitable pretraining resources, the model attains the classical
+nonparametric minimax rate n−2s/(2s+d) for an s-smooth weighted regression function
+with n context observations and d covariates (Stone, 1982). With all weights equal to
+one, the analysis covers ordinary in-context regression and thus provides theoretical sup-
+port for why pretrained Transformers, such as those in unweighted tabular foundation
+models, can predict well on new datasets without task-specific fitting.
+1.1
+Related work
+Our work is most closely related to tabular foundation models for unweighted regres-
+sion and classification. TabPFN pioneered tabular foundation models: a Transformer is
+pretrained on synthetic datasets and then makes predictions on real datasets in context
+(Hollmann et al., 2023, 2025). Subsequent work improves predictive performance, scala-
+bility, and computational eﬀiciency. TabICL combines more diverse synthetic pretraining
+tasks, scalable attention, and improved optimization to achieve strong regression and clas-
+sification performance (Qu et al., 2026). LimiX uses context-conditional masked modeling
+to learn joint tabular structure, supporting regression, classification, and missing-value
+imputation within a unified framework (Zhang et al., 2026). TabSwift uses a lightweight
+row-wise attention backbone to provide eﬀicient regression and classification while re-
+taining competitive predictive performance (Liu and Ye, 2026). The recent TabPFN-3.5
+model achieves strong accuracy on the TabArena benchmark, outperforming existing
+tuned baselines across a broad range of regression and classification tasks (Erickson et al.,
+2025; Jäger et al., 2026).
+Alongside these advances in tabular prediction, pretrained in-context models have
+been adapted to causal inference (Robertson et al., 2025), time-series forecasting (Hoo
+et al., 2025), survival analysis (Seletkov et al., 2026), graph learning (Eremeev et al.,
+2026), and reinforcement learning (Schiff et al., 2026). These extensions broaden the use
+of pretrained models to a wider range of statistical problems. However, none of these
+models can handle weighted regression or classification.
+5
+
+
+1.2
+Outline
+This paper is organized as follows. Section 2 formulates the weighted regression and
+classification problems and presents the synthetic task generation, weighted attention
+architecture, and normalized weighted loss. Section 3 develops the theoretical guaran-
+tees. Section 4 describes the implementation and evaluates missing-data prediction and
+treatment selection on real datasets. We end with a discussion in Section 5. The sup-
+plementary material provides additional task constructions, architectural details, and
+proofs.
+2
+Methodology
+Consider a task with observations (X, Y, W) drawn from a distribution P, where X ∈
+X ⊆Rd is a vector of d covariates, Y is the response, taking values in R for regression or
+[K] = {1, . . . , K} for classification, and W ≥0 denotes a sample weight.
+In conventional unweighted learning, the objective is to minimize the population risk
+EP{ℓ(f(X), Y )} over a class of prediction functions f, where ℓdenotes a loss function.
+The resulting optimal prediction depends on the choice of loss. For regression, the squared-
+error loss ℓ(a, b) = (a−b)2 for a, b ∈R yields the conditional mean EP(Y | X = x) as the
+population risk minimizer. For multiclass classification, the 0–1 loss ℓ(a, b) = 1(a̸ = b)
+for a, b ∈[K] yields the optimal classification rule arg maxk PP(Y = k | X = x).
+In many applications, however, observations contribute unequally to the learning
+objective. We therefore consider the weighted population risk EP{Wℓ(f(X), Y )}. Its
+minimizer over f generally differs from its unweighted counterpart. Specifically, under
+squared-error loss, the optimal prediction is the weighted conditional mean mP(x) =
+EP(WY | X = x)/EP(W | X = x). For multiclass classification, minimizing the weighted
+0–1 loss yields the optimal classification rule arg maxk p∗
+k(x), where p∗
+k(x) = EP[W1(Y =
+k) | X = x]/EP[W | X = x].
+6
+
+
+These formulas show why the weights matter: changing them can change the optimal
+prediction. A tabular foundation model that ignores the weights estimates the unweighted
+target, such as EP(Y | X = x), rather than mP(x).
+We therefore build a weighted
+tabular foundation model that takes the weighted observations as context and estimates
+the weighted conditional mean or classification rule through in-context learning. A single
+model is pretrained across many synthetic datasets and then adapts to each new real
+dataset through its weighted context, without further fitting.
+We pretrain the model exclusively on synthetic missing-data tasks (Example 1), which
+teach it how to use sample weights for regression and classification, and reserve causal
+tasks (Example 2) for out-of-distribution evaluation of whether this ability transfers to
+other weighted problems. Figure 1 summarizes the pretraining pipeline. We first describe
+the construction of the pretraining and evaluation tasks, and then present the model
+architecture and training objective.
+Synthetic missing-data
+task generation
+Generate a dataset
+with missing values
+Construct weights using
+observation probabilities
+Retain complete cases
+Randomly split into
+context and queries
+Weighted task \(T_t\)
+Context \(\mathcal D^{(t)}\)
+$$X_{ti}$$
+$$Y_{ti}$$
+$$W_{ti}$$
+Queries (\(m_t\) records)
+Query covariates
+$$X_{tj}^{Q}$$
+Responses and weights
+$$(Y_{tj}^{Q},W_{tj}^{Q})$$
+WeightedPFN
+Weighted attention
+MatMul
+Normalize
+\(\times W_{ti}\)
+\(\exp(\,\cdot\,/\sqrt{d_k})\)
+MatMul
+$$Q$$
+$$K$$
+$$V$$
+$$W_{ti}$$
+Weighted prediction
+$$f_\theta(\mathcal D^{(t)},X_{tj}^{Q})$$
+Weighted regression
+Weighted classification
+Normalized
+weighted loss
+$$\ell_{f_\theta}(T_t)=\frac{\sum_{j=1}^{m_t}W_{tj}^{Q}\,\ell\{f_\theta(\mathcal D^{(t)},X_{tj}^{Q}),Y_{tj}^{Q}\}}{\sum_{j=1}^{m_t}W_{tj}^{Q}}$$
+Fine-tune \(\theta\)
+Figure 1: Weighted pretraining pipeline. WeightedPFN is fine-tuned on synthetic missing-
+data tasks with weighted attention and the normalized weighted loss. MatMul denotes
+matrix multiplication. The operation exp(·/√dk) divides its input by √dk and applies
+the exponential function elementwise. The operation ×Wti multiplies each input entry
+by its corresponding weight Wti.
+7
+
+
+2.1
+Weighted task construction
+2.1.1
+Missing-data prediction tasks for pretraining
+The missing-data prediction problem in Example 1 provides the basis for all our synthetic
+pretraining tasks. It leads to a weighted regression problem when the response is con-
+tinuous and to a weighted classification problem when the response is categorical, with
+the same inverse probability weights in both cases. We describe the two formulations in
+turn.
+Weighted regression.
+We start with a real-valued response Y , allowing both covari-
+ates and responses to be missing. For each observation i, let SX
+ij = 1 indicate that the
+jth covariate is observed, for j = 1, . . . , d, and let SY
+i = 1 indicate that the response is
+observed. Define Si = SY
+i
+Qd
+j=1 SX
+ij , so that Si = 1 indicates a complete case. Further-
+more, let Zi denote the vector of variables that are fully observed across all observations,
+potentially including the response Yi. Let Po denote the original joint distribution of the
+data before missingness occurs, and let Pc denote the distribution of complete cases, i.e.,
+the distribution conditional on Si = 1, which may differ from Po. Our objective is to
+estimate the conditional mean under the original distribution, i.e., EPo(Y | X = x). Be-
+cause Pc may differ from Po, minimizing the unweighted squared loss over complete cases
+may fail to recover EPo(Y | X = x). Weighting the squared loss corrects this selection
+bias. Specifically, let πS(z) = P(S = 1 | Z = z) denote the complete-case observation
+probability. Define the weighted samples as
+(Xi, Yi, Wi) =
+ 
+Xi, Yi,
+1
+πS(Zi)
+!
+,
+Si = 1.
+Under the positivity condition πS(Z) > 0 and the missing-at-random assumption S ⊥
+(X, Y ) | Z (Rubin, 1976), the weighted conditional mean recovers the conditional mean
+EPo(Y | X = x) of the original data distribution (Robins and Rotnitzky, 1995). In real-
+world applications, the complete-case observation probability πS is generally unknown.
+8
+
+
+We can estimate it by treating S as a binary response and the fully observed variables Z
+as predictors in a probabilistic classification model. The resulting estimated probabilities
+ˆπS are then used to construct the inverse probability weights Wi = 1/ˆπS(Zi) for complete
+cases.
+To generate synthetic missing-data regression tasks for pretraining, we simulate com-
+plete observations (Xi, Yi) with real-valued responses and introduce missingness in co-
+variates or responses according to different observation mechanisms πS. Across tasks, we
+vary covariate distributions, response functions, outcome noise levels, observation proba-
+bilities, and missingness patterns. We also construct weights using the true observation
+probabilities πS, randomly perturbed versions of these probabilities ˜πS, or their estimates
+ˆπS. The complete generation procedure for missing-data regression task types is given in
+Section S1 of the supplementary material.
+We consider four missingness mechanisms, named by the variables on which the obser-
+vation probability πS(Z) depends. Under X+Y selection, Z consists of the response and
+a subset of covariates. Under Y-only selection, Z consists of the response alone. Under
+X-only selection, Z consists of a subset of covariates alone. Under missing completely at
+random (MCAR) selection, the observation probability is constant.
+Weighted classification.
+We now consider the same missing-data setting with a cat-
+egorical response Y ∈{1, . . . , K}.
+Our objective is to find a classification rule that
+minimizes the 0–1 loss under the original distribution Po. The corresponding classifica-
+tion rule is arg maxk∈{1,...,K} PPo(Y = k | X = x). Because the complete-case distribution
+Pc may differ from Po, minimizing the unweighted 0–1 loss over complete cases may fail
+to recover the target rule. As in the regression setting, we reformulate the problem as
+weighted classification using the observations
+(Xi, Yi, Wi) =
+ 
+Xi, Yi,
+1
+πS(Zi)
+!
+,
+Si = 1.
+9
+
+
+Under the same positivity and missing-at-random conditions as in the regression setting,
+minimizing the weighted 0–1 loss can recover the classification rule of the original distri-
+bution Po. In real-world applications, πS may be estimated as in the regression setting,
+and each complete case receives the weight Wi = 1/ˆπS(Zi).
+To generate synthetic missing-data classification tasks for pretraining, we follow the
+same data-generating process as for regression, but with categorical responses. The com-
+plete generation procedure for missing-data classification task types is given in Section S1
+of the supplementary material.
+2.1.2
+Causal tasks for out-of-distribution evaluation
+Beyond missing-data analysis, weighted prediction has many other applications, as dis-
+cussed in Section 1.
+Among these, we use the causal tasks in Example 2 for out-of-
+distribution evaluation.
+Weighted regression.
+We begin with CATE estimation through weighted regression.
+Let A ∈A denote the assigned treatment, where A is a finite set of available treat-
+ments. For each a ∈A, let R(a) denote the potential outcome under treatment a, and let
+R = R(A) be the observed outcome. We assume that larger outcomes are preferred. De-
+fine the conditional mean potential outcome µa(x) = E{R(a) | X = x} and the propensity
+score πa(x) = P(A = a | X = x). Under consistency, conditional exchangeability, and
+positivity, µa(x) = E(R | A = a, X = x) (Hernán and Robins, 2020). These conditions
+hold in randomized experiments, where the propensity score is also known. For binary
+treatments, take A = {−1, 1}. The CATE is τ(x) = µ1(x) −µ−1(x), whose sign deter-
+mines which treatment yields the larger conditional mean outcome. The CATE can be
+estimated through weighted regression without separately estimating the two conditional
+mean potential outcomes (Tian et al., 2014). Namely, consider the weighted samples
+(Xi, Yi, Wi) =
+ 
+Xi, 2AiRi,
+1
+πAi(Xi)
+!
+,
+10
+
+
+for which the weighted conditional mean satisfies E(WY | X = x)/E(W | X = x) = τ(x).
+We refer to 2AiRi as the ordinary modified outcome, and to weighting by 1/πAi(Xi) as
+inverse probability weighting (IPW). We also consider three other weighted sample con-
+structions that target the same CATE. The first replaces the ordinary modified outcome
+2AiRi with the residualized modified outcome (Meng and Qiao, 2022). The second re-
+places IPW with overlap weighting (Li et al., 2018). The third makes both replacements.
+Details are given in Section S4 of the supplementary material.
+Weighted classification.
+We next consider learning treatment rules directly through
+weighted classification.
+Here, let A = {1, . . . , K} for K treatments.
+A treatment
+rule φ assigns treatment φ(x) to an individual with covariates x, and its value is de-
+fined as V (φ) = E{R(φ(X))}.
+Our goal is to estimate the optimal treatment rule
+φ∗= arg maxφ V (φ). This problem can be formulated as weighted classification through
+outcome-weighted learning (OWL) (Zhao et al., 2012). Specifically, consider the weighted
+samples
+(Xi, Yi, Wi) =
+ 
+Xi, Ai, Ri + C
+πAi(Xi)
+!
+,
+where C is any suﬀiciently large constant such that C + Ri ≥0 for all i, ensuring
+all observed weights are nonnegative. The optimal treatment rule can be recovered by
+minimizing the weighted 0–1 loss: φ∗= arg maxφ V (φ) = arg minφ EP [W1{φ(X)̸ = Y }]
+(Zhao et al., 2012). We also consider other weighted sample constructions that yield the
+optimal treatment rule using residual weighted learning (RWL) (Zhou et al., 2017) and
+doubly robust (DR) learning (Zhang et al., 2012a) in Section S5 of the supplementary
+material.
+2.2
+Model architecture
+We incorporate sample weights into the attention mechanism of the Transformer. The
+resulting weighted attention can replace standard attention in Transformer-based tabular
+foundation models. In this paper, we apply it to TabPFN-3.5 to obtain WeightedPFN.
+11
+
+
+To gain intuition for the proposed weighted attention mechanism, we first introduce
+the notation and describe how a standard attention mechanism operates. Denote the
+context by Dn = {(Xi, Yi, Wi)}n
+i=1 and the query covariates by XQ whose response is
+unknown. Tabular foundation models with standard attention feed the context without
+the sample weights, i.e., {(Xi, Yi)}n
+i=1, together with the query XQ into the Transformer
+and read the prediction for XQ from its output.
+To see how a Transformer uses attention to make predictions, consider a single-layer
+Transformer with one attention head and without embedding, layer normalization, or
+residual connections. Each context observation is represented by ui = (X⊤
+i , Yi)⊤∈Rd+1,
+and the query observation by uQ = ((XQ)⊤, 0)⊤∈Rd+1, where zero is a placeholder for
+the unknown query prediction. Linear projections first give the query vectors qC
+i = BQui
+and qQ = BQuQ, the key vectors ki = BKui, and the value vectors vi = BV ui, where
+BQ, BK, BV ∈Rdk×(d+1) are matrices learned during pretraining.
+Stacking all query
+vectors gives Q = [qC
+1 , . . . , qC
+n , qQ]⊤∈R(n+1)×dk. Similarly, stacking key vectors and value
+vectors gives K and V .
+Standard query–key–value (QKV) attention (Vaswani et al., 2017) then computes an
+output for every row of Q. Writing q⊤
+j for the jth row of Q, with qn+1 = qQ, we have
+αij =
+exp
+
+k⊤
+i qj/√dk
+
+Pn
+t=1 exp
+
+k⊤
+t qj/√dk
+,
+Attention(Q, K, V )j =
+n
+X
+i=1
+αijvi,
+where Attention(Q, K, V )j denotes the attention output vector corresponding to qj for j =
+1, . . . , n + 1. In the single-layer Transformer, prediction then uses only the final row after
+these operations, since it corresponds to the query observation. Specifically, the prediction
+is g{Attention(Q, K, V )n+1}, where g is a prediction head typically implemented as a feed-
+forward network (FFN).
+For the final row of the attention output, which corresponds to the query to be
+predicted, the coeﬀicient αi,n+1 can be interpreted as a measure of similarity between
+the query XQ and the ith context observation.
+Using these similarity coeﬀicients to
+12
+
+
+average the value vectors of the context observations then combines context observations
+for prediction according to their similarity to the query, which is similar to Nadaraya–
+Watson (NW) kernel regression (Nadaraya, 1964; Watson, 1964). To incorporate sample
+weights into attention, we therefore let these weights adjust the similarity coeﬀicients, as
+in weighted NW regression (Wang et al., 2010):
+αij =
+Wi exp
+
+k⊤
+i qj/√dk
+
+Pn
+t=1 Wt exp
+
+k⊤
+t qj/√dk
+,
+WeightedAttention(Q, K, V ; W)j =
+n
+X
+i=1
+αijvi,
+where WeightedAttention(Q, K, V ; W)j denotes the weighted attention output vector and
+Wi ≥0 is the sample weight associated with the ith context observation.
+The single-layer, single-head Transformer above only serves to convey the intuition
+behind weighted attention. In a full tabular foundation model with multiple layers and
+attention heads, such as TabPFN-3.5, the base model of our WeightedPFN, we apply the
+same modification to every attention head in every layer.
+2.3
+Training objective
+Having specified how the model uses sample weights, we now describe how its parameters
+are learned. We fine-tune the model on synthetic missing-data tasks T1, . . . , TM generated
+as in Section 2.1.1. For task Tt, we randomly split the weighted complete cases into
+a context D(t) = (Xti, Yti, Wti)nt
+i=1 and mt query samples (XQ
+tj, Y Q
+tj , W Q
+tj )mt
+j=1, where the
+context size nt and query size mt vary across tasks. Given D(t), the model with parameters
+θ produces a prediction fθ(D(t), XQ
+tj) for each query covariate XQ
+tj. For weighted regression,
+this is a scalar prediction. For weighted classification, it is a vector of predicted class
+probabilities pθ(D(t), XQ
+tj) = (pθ,1(D(t), XQ
+tj), . . . , pθ,K(D(t), XQ
+tj)), and the corresponding
+weighted classification rule is arg maxk pθ,k(D(t), XQ
+tj).
+13
+
+
+The training objective is an empirical version of the weighted population risk. For a
+predictor f, the normalized weighted loss on task Tt is the weighted average of the losses
+on its queries,
+ℓf(Tt) =
+Pmt
+j=1 W Q
+tj ℓ{f(D(t), XQ
+tj), Y Q
+tj }
+Pmt
+j=1 W Q
+tj
+,
+(2.1)
+and the overall loss is its average M −1 PM
+t=1 ℓfθ(Tt) over the M tasks. Normalizing by the
+total query weight Pmt
+j=1 W Q
+tj makes tasks with different weight scales contribute compa-
+rably.
+The loss ℓdepends on the type of task. For weighted regression, ℓ(a, b) = (a −b)2
+is the squared-error loss. For weighted classification, the 0–1 loss is non-differentiable
+and diﬀicult to optimize, so we use cross-entropy as a differentiable surrogate. For an
+observation with class label y, the cross-entropy loss is ℓ(p, y) = −log py, where p =
+(p1, . . . , pK) is the vector of class probabilities and py is the probability assigned to class
+y. Cross-entropy loss is Fisher consistent for the 0–1 loss (Zhang, 2004). Specifically, the
+weighted cross-entropy risk −EP[W log pY (X)] is minimized by p∗
+k(x) = EP[W1(Y = k) |
+X = x]/EP[W | X = x] for k = 1, . . . , K. Thus, choosing arg maxk p∗
+k(x) recovers the
+desired weighted classification rule.
+3
+Theoretical properties
+In this section, we study how accurately a pretrained weighted in-context learner predicts
+on new tasks. We focus on weighted regression with squared-error loss, for which the
+target of a task with distribution P is the weighted conditional mean mP.
+We consider contexts Dn and query covariates X of the form
+Dn = (Xi, Yi, Wi)n
+i=1,
+Xi, X ∈[0, 1]d,
+|Yi| ≤BY ,
+0 < Wi ≤BW,
+(3.1)
+where BY , BW ≥1 are fixed constants, and the responses and weights of query samples
+satisfy the same bounds.
+14
+
+
+We study the class F of single-head Transformers fθ(Dn, X) with L blocks. Aﬀine em-
+beddings first map each context pair (Xi, Yi) and the query covariates X to dk-dimensional
+vectors, called the initial token representations. Within each block, linear projections of
+the token representations produce the query, key, and value vectors introduced in Sec-
+tion 2.2, which we also take to have dimension dk. The block then applies the weighted
+attention mechanism in Section 2.2, followed by an FFN with DFFN hidden layers of width
+at most WFFN and GELU activations (Hendrycks and Gimpel, 2016). The prediction is
+clipped to [−BY , BY ]. Section S7 of the supplementary material gives the precise archi-
+tecture we analyze theoretically. Its core components, including the weighted attention
+and the GELU activation, are the same as in the WeightedPFN used in our experiments.
+To keep the analysis tractable, as in previous theoretical studies of in-context learning
+(Garg et al., 2022; Ching et al., 2026), we omit some components, including multiple
+heads and layer normalization.
+A task law P is a distribution of (X, Y, W) satisfying the bounds in (3.1). Let P be a
+family of task laws, and let Πtrain and Πeval be the pretraining and evaluation distributions
+on P. They may assign different probabilities to regression functions, designs, and weight
+mechanisms. For the theoretical analysis, we fix the context and query sizes at n and m ≥
+1, respectively. A complete task is generated by first drawing P from the corresponding
+task distribution, then drawing n context samples and m query samples independently
+from P. The pretraining tasks T1, . . . , TM consist of a context and queries as in Section 2.3,
+with nt = n and mt = m.
+Assumption 1: The M pretraining tasks are generated independently with task laws
+P1, . . . , PM drawn from Πtrain. Independently of pretraining, an evaluation task law P is
+drawn from Πeval, and its context and queries are generated as above.
+Write c
+Rtrain
+n,M (f) = M −1 PM
+t=1 ℓf(Tt) for the pretraining loss, with ℓf in (2.1) and the
+squared-error loss. Let bθM denote the parameters returned by an optimization algorithm
+applied to the pretraining loss c
+Rtrain
+n,M (fθ). Write bfM = fbθM ∈F and Eopt = c
+Rtrain
+n,M ( bfM) −
+inff∈F c
+Rtrain
+n,M (f), where the optimization error Eopt depends on the optimization algorithm.
+15
+
+
+Let Eeval denote expectation over a task law P ∼Πeval, its context, and an independent
+query. Define the evaluation risk and its oracle benchmark as
+Reval
+n
+(f) = Eeval
+ W
+EPW {f(Dn, X)−Y }2
+
+,
+Reval
+∗
+= Eeval
+ W
+EPW {Y −mP(X)}2
+
+. (3.2)
+Our prediction criterion is the excess risk Reval
+n
+( bfM) −Reval
+∗
+, which equals the average
+over P ∼Πeval of EP[W{ bfM(Dn, X) −mP(X)}2]/EPW. This criterion is natural for two
+reasons. First, because the weighted conditional mean mP is the target of each task, the
+excess risk measures how far the prediction is from this target. Second, normalizing by
+the mean weight EPW makes the tasks whose weights are on different scales contribute
+comparably to the average over evaluation tasks.
+We now state the assumptions. For a multi-index ν = (ν1, . . . , νd) ∈Nd
+0 with |ν| =
+P
+j νj, we write ∂ν as shorthand for the mixed partial derivative ∂|ν|/(∂xν1
+1 · · · ∂xνd
+d ).
+Assumption 2: For a fixed Bp ≥1 and every task law P, the covariate vector X
+has a density pP on [0, 1]d with B−1
+p
+≤pP(x) ≤Bp for all x ∈[0, 1]d.
+Assumption 3: For a fixed Ba ≥1, the conditional mean weight EP[W | X = x] for
+every task law P satisfies EP[W | X = x] ≥B−1
+a
+for all x ∈[0, 1]d.
+Assumption 4: For fixed s > 0 and Bm ≥1, the weighted regression function mP
+for every task law P lies in the Hölder ball Hs([0, 1]d; Bm). That is, with k = ⌈s⌉−1, the
+partial derivatives ∂νmP with |ν| ≤k extend continuously to [0, 1]d and satisfy
+max
+|ν|≤k sup
+x∈[0,1]d |∂νmP(x)| ≤Bm,
+max
+|ν|=k
+sup
+x,z∈[0,1]d
+x̸=z
+|∂νmP(x) −∂νmP(z)|
+∥x −z∥s−k
+2
+≤Bm.
+Assumption 5: For a fixed κ ≥1, the evaluation task distribution is absolutely con-
+tinuous with respect to the pretraining task distribution, with Radon–Nikodym derivative
+bounded by κ:
+Πeval ≪Πtrain,
+dΠeval
+dΠtrain ≤κ.
+(3.3)
+16
+
+
+Assumptions 2–4 are standard conditions for establishing convergence rates in non-
+parametric regression (Stone, 1982). Assumption 5 requires that pretraining covers the
+kinds of tasks encountered at evaluation. This assumption motivates generating diverse
+synthetic pretraining tasks.
+We now provide the main theorem:
+Theorem 3.1. Suppose Assumptions 1–5 hold, and let rs = max{1, ⌈s⌉−1}. There
+are constants C1, C2, C3 ≥1, depending only on d, and Cs, C4, C5 ≥1, depending only
+on d, s, BY , BW, Bp, Ba, and Bm, such that the following holds: if dk ≥⌈C1rd
+s⌉, L ≥
+C2{1 + log(rs + 1)}, and WFFN ≥C3r2d
+s , then, for any δ ∈(0, 1), with probability at least
+1 −δ over the M pretraining tasks, the predictor bfM satisfies
+Reval
+n
+( bfM) −Reval
+∗
+≤κCsn−2s/(2s+d) + κCse−L/Cs
++ 2κC4
+
+
+L2D2
+FFN(n + 1)2(WFFN + dk)4
+s
+log(2M)
+M
++
+s
+log(2/δ)
+M
+
+
+
++ 2κC5
+m
++ κEopt.
+(3.4)
+Theorem 3.1 shows that a pretrained Transformer can learn a new weighted regression
+task in context. After pretraining, the same Transformer is applied to the context of each
+evaluation task without any further training or parameter update, and its excess risk on
+evaluation tasks is controlled by (3.4). We now explain what each term represents.
+The first two terms describe what happens within a single task.
+The first term,
+n−2s/(2s+d), is the statistical error of learning a task from its n context samples. For a
+new task, our method sees only the n context samples, and no estimator built from them
+can achieve a faster rate uniformly over regression functions with smoothness s (Stone,
+1982). Thus, learning in context loses nothing in convergence rate relative to the best
+estimator fitted directly to the task. The second term, e−L/Cs, is the computation error.
+Our Transformer-based method does not fit the new task by updating its parameters.
+Instead, its forward pass can be viewed as carrying out the fitting, and each of the L
+17
+
+
+blocks refines the prediction in the manner of one step of an iterative algorithm (von
+Oswald et al., 2023; Bai et al., 2023; Ching et al., 2026). A deeper Transformer performs
+more such steps, so this error decreases as L increases.
+The third term is the pretraining error, which arises because the parameters of our
+method are learned from M tasks generated from the pretraining distribution rather
+than from the whole pretraining distribution. As in a uniform law of large numbers, it
+decreases at a rate of {log(M)/M}1/2. The fourth term, 2κC5/m, arises because the
+training loss (2.1) is normalized using the empirical mean weight Pm
+j=1 W Q
+j /m rather
+than the population mean weight EPW. The last term, κEopt, is the optimization error
+of pretraining, which depends on the optimizer rather than on the statistical problem.
+Task distribution shift enters only through the factor κ. In-context learning transfers
+what is learned on pretraining tasks to new tasks. Because Assumption 5 ensures that
+the new tasks are covered by the pretraining distribution, a Transformer that performs
+well on average over pretraining tasks loses at most a factor κ on evaluation tasks. When
+Πeval = Πtrain, the bound holds with κ = 1.
+The next corollary chooses the network size and the numbers of queries and pretraining
+tasks so that our method can achieve the minimax rate.
+Corollary 3.1 (Minimax rate). Suppose Assumptions 1–5 hold, and let rs, C1, and
+C3 be as in Theorem 3.1.
+Take DFFN = 1, dk = ⌈C1rd
+s⌉, L = ⌈CL log(n + 1)⌉, and
+WFFN = ⌈C3r2d
+s ⌉, where CL ≥1 is a constant depending only on d, s, BY , BW, Bp, Ba,
+and Bm, given in Section S9 of the supplementary material. If, as n →∞, m ≥n2s/(2s+d),
+M/ log(2M) ≥(n + 1)4+4s/(2s+d) log4(n + 1), and Eopt = Op(n−2s/(2s+d)), then
+Reval
+n
+( bfM) −Reval
+∗
+= Op
+
+n−2s/(2s+d)
+.
+(3.5)
+Corollary 3.1 shows that our method attains the minimax rate for weighted regression
+on new tasks without retraining. This is the optimal convergence rate achievable from n
+context observations.
+18
+
+
+The conditions on the Transformer architecture are mild. The token dimension dk
+and the FFN width WFFN do not grow with n and depend only on d and s, and one
+hidden layer per FFN, DFFN = 1, suﬀices. The number of attention blocks L grows only
+logarithmically in n. The condition on the number of queries per task during pretraining,
+m, is also mild. Since 2s/(2s+d) < 1, it requires fewer queries than context samples n. For
+example, splitting each pretraining task into context and queries in a fixed proportion,
+as in our implementation, satisfies it for all suﬀiciently large n. The condition on the
+number of pretraining tasks is the most demanding: M must grow polynomially in n,
+roughly n4+4s/(2s+d) up to logarithmic factors. Because pretraining tasks are generated
+synthetically, this condition can be met by generating more tasks. The condition on the
+optimization error Eopt is determined by the optimization algorithm.
+4
+Experiments
+In this section, we first describe the implementation details for pretraining our weighted
+regression and classification models on synthetic missing-data tasks. We then introduce
+the competing methods and compare their performance with our models on two groups
+of tasks based on real datasets. The first consists of missing-data tasks, while the second
+consists of causal tasks used to assess out-of-distribution task generalization.
+4.1
+Implementation
+We generate synthetic tasks with 128 to 1,024 observations and 4 to 16 covariates before
+imposing missingness. The task generator samples the X+Y, Y-only, X-only, and MCAR
+mechanisms of Section 2.1.1 with probabilities 0.4, 0.4, 0.1, and 0.1, respectively. Weight
+construction uses oracle, perturbed, or TabPFN-estimated observation probabilities, as
+detailed in Section S1.3 of the supplementary material. Each task supplies 70% of its
+weighted samples as context and the remainder as queries. We initialize from the released
+parameters of TabPFN-3.5 and use AdamW (Loshchilov and Hutter, 2019) with a learning
+19
+
+
+rate of 10−5, weight decay of 0.01, gradient-norm clipping at 1, and a batch of 16 tasks
+per update. We use the checkpoint after 800 updates. Thus, WeightedPFN is fine-tuned
+on 12,800 synthetic datasets. Fine-tuning takes about 0.5 hours on a single NVIDIA
+H100 GPU for both weighted regression and weighted classification.
+4.2
+Comparison methods
+Competing methods for weighted regression. We compare our WeightedPFN regressor with
+the unweighted TabPFN-3.5 regressor and five baselines: weighted ridge linear regression
+(Ridge), weighted support vector regression with a radial basis function kernel (SVR;
+Smola and Schölkopf, 2004), weighted random forests (RF; Breiman, 2001), weighted
+LightGBM (LightGBM; Ke et al., 2017), and a weighted multilayer perceptron (MLP;
+Rumelhart et al., 1986). Each of the five baselines uses Wi as a sample weight in its
+training loss. Hyperparameters are chosen by five-fold cross-validation within the context,
+minimizing weighted held-out prediction error.
+The tuned hyperparameters for these
+methods are listed in Section S6.1 of the supplementary material.
+Competing methods for weighted classification. We compare our WeightedPFN clas-
+sifier with the unweighted TabPFN-3.5 classifier and five baselines: weighted logistic re-
+gression (Logistic), a weighted support vector machine with a radial basis function kernel
+(SVM; Cortes and Vapnik, 1995), weighted random forests (RF), weighted LightGBM
+(LightGBM), and a weighted multilayer perceptron (MLP). Each of the five baselines
+uses Wi as a sample weight in its training loss. Hyperparameters are chosen by five-
+fold cross-validation within the context, maximizing weighted held-out accuracy. The
+tuned hyperparameters for these methods are listed in Section S6.2 of the supplementary
+material.
+For both regression and classification, TabPFN-3.5 receives the same context covari-
+ates and responses as WeightedPFN but does not use the sample weights. Both in-context
+models make predictions without updating their parameters on the evaluation tasks.
+20
+
+
+4.3
+Missing-data prediction
+We use 110 regression datasets and 156 classification datasets from the TALENT bench-
+mark collection to evaluate competing methods in missing-data prediction tasks (Liu et al.,
+2025). For each dataset, we employ five-fold cross-validation to evaluate the performance
+of different methods. Specifically, the dataset is divided into five folds, with four folds
+used for training and the remaining fold held out for evaluation. Within each training
+set, we introduce missingness under the four mechanisms used in synthetic pretraining:
+X+Y, Y-only, X-only, and MCAR. The sampling functions and masking procedure are
+detailed in Section S2 of the supplementary material. We then construct weighted re-
+gression and classification samples from the complete cases, with weights Wi = 1/ˆπS(Zi).
+Specifically, ˆπS is estimated through five-fold cross-fitting using TabPFN-3.5. The result-
+ing weights are therefore estimated rather than known, reflecting the setting encountered
+in real-world missing-data applications. The validation fold remains complete, and the
+performance of each method is averaged across the five folds.
+For regression, our objective is to estimate the conditional mean under the original
+data distribution Po. Since the validation folds are kept complete, we evaluate prediction
+error using unweighted root mean squared error (RMSE), scaled by the response stan-
+dard deviation (SD) to allow comparisons across datasets. Specifically, let Ib denote the
+validation set in fold b, and let ˆf (−b) denote the predictor learned from the other four
+folds. We define the five-fold cross-validated scaled RMSE as
+\
+RMSE( ˆf)
+ˆσY
+=
+1
+5ˆσY
+5
+X
+b=1
+
+1
+|Ib|
+X
+i∈Ib
+{ ˆf (−b)(Xi) −Yi}2
+
+
+1/2
+,
+where ˆσY is the standard deviation of the responses. Lower scaled RMSE indicates better
+predictive performance.
+For classification, our objective is to learn a classification rule that minimizes the
+0–1 loss under the original data distribution Po.
+Since the validation folds are kept
+complete, we evaluate each method using unweighted classification accuracy. With ˆf (−b)
+21
+
+
+3.0
+4.5
+6.0
+10−1
+100
+101
+102
+X+Y
+2
+4
+6
+Y-only
+2.5
+5.0
+X-only
+2.5
+5.0
+MCAR
+Mean rank across datasets
+Mean time (s)
+WeightedPFN
+TabPFN-3.5
+Ridge
+SVR
+RF
+LightGBM
+MLP
+Figure 2: Mean RMSE rank and runtime (log scale) on 110 TALENT regression datasets.
+Lower values are better.
+1.5
+3.0
+4.5
+10−1
+100
+101
+X+Y
+1.5
+3.0
+4.5
+Y-only
+2
+4
+X-only
+2
+4
+6
+MCAR
+Mean rank across datasets
+Mean time (s)
+WeightedPFN
+TabPFN-3.5
+Logistic
+SVM
+RF
+LightGBM
+MLP
+Figure 3: Mean accuracy rank and runtime (log scale) on 156 TALENT classification
+datasets. Lower values are better.
+denoting the classification rule learned from the other four folds, we define the five-fold
+cross-validated accuracy as
+d
+Acc( ˆf) = 1
+5
+5
+X
+b=1
+1
+|Ib|
+X
+i∈Ib
+1{ ˆf (−b)(Xi) = Yi}.
+Figures 2 and 3 show the mean rank and mean runtime across datasets, and Table 1
+reports scaled RMSE for regression and accuracy as a percentage for classification under
+each missingness mechanism.
+Figures 2–3 and Table 1 show that WeightedPFN achieves the best mean rank and
+the best prediction performance for both regression and classification under X+Y and
+Y-only selection. Under X-only and MCAR selection, TabPFN-3.5 performs best, with
+22
+
+
+Table 1: TALENT performance (mean ± SD across datasets). Lower scaled RMSE and
+higher accuracy are better. Bold indicates the best mean in each column.
+TALENT regression
+Scaled RMSE (mean ± SD)
+Method
+X+Y
+Y-only
+X-only
+MCAR
+WeightedPFN
+0.547 ± 0.310
+0.554 ± 0.316
+0.474 ± 0.298
+0.458 ± 0.295
+TabPFN-3.5
+0.583 ± 0.378
+0.585 ± 0.367
+0.467 ± 0.294
+0.448 ± 0.289
+Ridge
+0.728 ± 0.249
+0.767 ± 0.319
+0.704 ± 0.247
+0.692 ± 0.243
+SVR
+0.652 ± 0.274
+0.667 ± 0.300
+0.584 ± 0.283
+0.562 ± 0.280
+RF
+0.615 ± 0.282
+0.634 ± 0.306
+0.534 ± 0.283
+0.513 ± 0.279
+LightGBM
+0.612 ± 0.292
+0.629 ± 0.312
+0.528 ± 0.292
+0.509 ± 0.290
+MLP
+0.629 ± 0.287
+0.678 ± 0.460
+0.555 ± 0.291
+0.540 ± 0.292
+TALENT classification
+Accuracy (%) (mean ± SD)
+Method
+X+Y
+Y-only
+X-only
+MCAR
+WeightedPFN
+81.28 ± 14.93
+79.33 ± 16.03
+83.52 ± 13.81
+84.18 ± 13.74
+TabPFN-3.5
+75.74 ± 18.48
+75.84 ± 18.04
+83.68 ± 13.71
+84.27 ± 13.71
+Logistic
+76.25 ± 16.33
+73.95 ± 17.58
+77.58 ± 16.10
+77.73 ± 16.18
+SVM
+77.29 ± 15.66
+75.17 ± 16.77
+79.25 ± 15.14
+79.79 ± 15.07
+RF
+77.31 ± 16.40
+75.40 ± 17.15
+80.14 ± 15.47
+80.91 ± 15.17
+LightGBM
+77.85 ± 16.25
+75.86 ± 17.18
+80.53 ± 15.30
+81.36 ± 15.05
+MLP
+77.42 ± 16.02
+75.28 ± 17.00
+79.58 ± 15.51
+80.08 ± 15.43
+WeightedPFN close behind. This is expected, since under X-only and MCAR selection,
+the conditional distribution of Y given X is preserved, so weighting does not change
+the optimal predictor. The results suggest a trade-off: WeightedPFN gains substantially
+under X+Y and Y-only selection at the cost of a slight loss under X-only and MCAR
+selection. For classification in Table 1, for example, mean accuracy increases by 5.54
+and 3.49 percentage points under X+Y and Y-only selection and decreases by at most
+0.16 percentage points under X-only and MCAR selection. We consider this trade-off
+acceptable because the loss is small. In terms of computational cost, WeightedPFN has
+runtimes comparable to those of the linear baselines and substantially lower than those
+of the nonlinear baselines. Its favorable performance and low runtime place it near the
+lower-left corner of Figures 2 and 3.
+23
+
+
+4.4
+Treatment selection
+We use 78 publicly available datasets from randomized experiments to assess out-of-
+distribution generalization of our WeightedPFN to causal tasks. Most of them are ran-
+domized clinical trials from RCT_Bench (Shao et al., 2026). The datasets used in our
+evaluation are listed in Section S3 of the supplementary material. Of the 78 datasets, 55
+have two arms and 23 have three or more arms.
+To evaluate weighted regression tasks, we form binary treatment pairs and apply
+covariate-dependent sampling within each pair to induce covariate-dependent treatment
+propensities. Without this step, balanced randomized experiments have constant propen-
+sity scores of 0.5, so the CATE estimation task in Section 2.1.2 reduces to unweighted
+regression and does not assess the model’s ability to use sample weights. We retain 148
+treatment-pair tasks with at least 25 selected observations per arm. For each task, we
+construct the four weighted regression samples described in Section 2.1.2, which combine
+ordinary or residualized modified outcomes with IPW or overlap weighting. All these
+constructions target the same CATE.
+To evaluate weighted classification, we use the observed treatment assignments with-
+out additional covariate-dependent sampling. The sample weights depend on outcome
+information and can therefore vary even when treatment propensities are constant. We
+construct weighted classification samples using DR and RWL for 163 binary treatment-
+pair tasks. For OWL, we use all available arms jointly. Because multiple outcomes from
+one dataset define separate tasks, this yields 84 tasks from the 78 datasets. All three
+constructions target the optimal treatment rule. Further details on DR and RWL are
+provided in Section S5 of the supplementary material.
+For regression, our objective is to estimate the CATE. Since the true CATE is un-
+known in real datasets, we cannot directly evaluate its estimation error. We therefore
+construct a treatment rule from the sign of the estimated CATE and evaluate its policy
+value. For classification, the model directly learns a treatment rule, which we evaluate
+using the same criterion. In both cases, we estimate policy value on held-out evaluation
+24
+
+
+observations using a doubly robust estimator (Zhang et al., 2012b). Specifically, let Ib
+denote the validation set in fold b, and let ˆφ(−b) denote the treatment rule learned from
+the other four folds. We define the five-fold cross-validated scaled policy value as
+bV ( ˆφ)
+ˆσR
+=
+1
+5ˆσR
+5
+X
+b=1
+1
+|Ib|
+X
+i∈Ib
+"
+ˆµ(−b)
+ˆφ(−b)(Xi)(Xi) + 1{Ai = ˆφ(−b)(Xi)}
+πAi(Xi)
+n
+Ri −ˆµ(−b)
+Ai (Xi)
+o#
+,
+where ˆσR is the standard deviation of the observed outcomes, ˆµ(−b)
+a
+is the outcome model
+fitted on the training folds, and πa is the known propensity score.
+Outcome models
+and propensity estimation are described in Section S4.3 of the supplementary material.
+Higher values indicate better treatment selection.
+Figures 4 and 5 show the mean rank and mean runtime across tasks, and Table 2
+reports scaled policy values for regression and classification tasks.
+Figures 4–5 and Table 2 show that WeightedPFN achieves the best mean rank and
+highest mean scaled policy value in all four weighted regression and three weighted classifi-
+cation settings. For regression, the largest gain occurs for the ordinary modified outcome
+with overlap weighting: the mean rank improves from 4.20 for TabPFN-3.5 to 3.46. For
+classification, the largest improvement occurs under OWL, where the mean rank improves
+from 4.78 for TabPFN-3.5 to 3.35. The gains over TabPFN-3.5 suggest that weighting
+helps recover the intended CATE or treatment rule. WeightedPFN also has runtimes
+comparable to those of the linear baselines and substantially lower than those of the non-
+linear baselines. Its favorable performance and low runtime place it near the lower-left
+corner of Figures 4 and 5. These results support its generalization from pretraining on
+synthetic missing-data tasks to real causal tasks.
+4.5
+Ablation
+This ablation study examines how fine-tuning on synthetic missing-data tasks and the
+use of sample weights when making predictions contribute to model performance.
+25
+
+
+3.6
+3.9
+4.2
+10−1
+100
+101
+Ordinary / IPW
+3.6
+4.0
+Ordinary / overlap
+3.75
+4.00
+4.25
+Residualized / IPW
+3.8
+4.0
+4.2
+Residualized / overlap
+Mean rank across datasets
+Mean time (s)
+WeightedPFN
+TabPFN-3.5
+Ridge
+SVR
+RF
+LightGBM
+MLP
+Figure 4: Mean policy-value rank and runtime (log scale) on 148 regression tasks. Lower
+values are better.
+3.6
+3.9
+4.2
+10−1
+100
+101
+DR
+3.6
+3.9
+4.2
+RWL
+3.5
+4.0
+4.5
+OWL
+Mean rank across datasets
+Mean time (s)
+WeightedPFN
+TabPFN-3.5
+Logistic
+SVM
+RF
+LightGBM
+MLP
+Figure 5: Mean policy-value rank and runtime (log scale) on 163 classification tasks each
+for DR and RWL and 84 for OWL. Lower values are better.
+26
+
+
+Table 2: Treatment selection performance (mean ± SD across tasks). Higher scaled policy
+values are better. Bold indicates the best mean in each column.
+Causal regression
+Scaled policy value (mean ± SD)
+Method
+Ordinary
+IPW
+Ordinary
+overlap
+Residualized
+IPW
+Residualized
+overlap
+WeightedPFN
+1.296 ± 2.398
+1.298 ± 2.403
+1.310 ± 2.420
+1.311 ± 2.421
+TabPFN-3.5
+1.280 ± 2.401
+1.280 ± 2.401
+1.301 ± 2.424
+1.301 ± 2.424
+Ridge
+1.279 ± 2.407
+1.278 ± 2.408
+1.302 ± 2.421
+1.307 ± 2.419
+SVR
+1.283 ± 2.399
+1.280 ± 2.403
+1.303 ± 2.412
+1.305 ± 2.413
+RF
+1.287 ± 2.406
+1.283 ± 2.413
+1.298 ± 2.423
+1.297 ± 2.418
+LightGBM
+1.286 ± 2.398
+1.282 ± 2.407
+1.294 ± 2.415
+1.292 ± 2.413
+MLP
+1.282 ± 2.406
+1.290 ± 2.401
+1.306 ± 2.418
+1.302 ± 2.417
+Causal classification
+Scaled policy value (mean ± SD)
+Method
+DR
+RWL
+OWL
+WeightedPFN
+1.198 ± 2.484
+1.198 ± 2.485
+1.417 ± 2.548
+TabPFN-3.5
+1.191 ± 2.487
+1.190 ± 2.488
+1.332 ± 2.546
+Logistic
+1.194 ± 2.483
+1.192 ± 2.485
+1.386 ± 2.554
+SVM
+1.180 ± 2.487
+1.181 ± 2.485
+1.392 ± 2.543
+RF
+1.185 ± 2.488
+1.188 ± 2.484
+1.380 ± 2.529
+LightGBM
+1.186 ± 2.481
+1.185 ± 2.479
+1.381 ± 2.538
+MLP
+1.191 ± 2.481
+1.188 ± 2.481
+1.376 ± 2.545
+For both regression and classification, we compare four variants: (i) TabPFN-3.5 with-
+out incorporating sample weights; (ii) TabPFN-3.5 with sample weights using weighted
+attention in Section 2.2; (iii) WeightedPFN without sample weights, so that weighted
+attention reduces to standard attention; and (iv) WeightedPFN. The two WeightedPFN
+variants use the same checkpoint after 800 fine-tuning updates.
+Tables 3 and 4 report scaled RMSE and accuracy for missing-data tasks and scaled
+policy value for causal tasks.
+On TALENT missing-data tasks, combining fine-tuning with sample weights yields the
+lowest mean scaled RMSE for regression and the highest mean accuracy for classification
+under X+Y and Y-only selection.
+In these settings, WeightedPFN, which uses both
+weighted attention and fine-tuning on synthetic missing-data tasks, outperforms both
+TabPFN-3.5 with sample weights and WeightedPFN without sample weights.
+Under
+X-only and MCAR selection, WeightedPFN performs slightly worse than unweighted
+27
+
+
+TabPFN-3.5, and most of this gap is already present when WeightedPFN predicts without
+weights. This reflects the trade-off noted in Section 4.3: fine-tuning brings large gains
+under X+Y and Y-only selection at the cost of a small loss under X-only and MCAR
+selection. On causal tasks, our WeightedPFN using both weighted attention and fine-
+tuning achieves the highest mean scaled policy value in all seven settings. These results
+suggest that the benefits of fine-tuning with weighted attention extend to causal tasks
+outside the missing-data task family used for pretraining.
+Table 3: TALENT ablation: scaled RMSE and accuracy (%), reported as mean ± SD
+across datasets. Bold indicates the best mean in each setting.
+TabPFN-3.5
+WeightedPFN
+Weights off
+Weights on
+Weights off
+Weights on
+Regression
+Setting
+Scaled RMSE
+Scaled RMSE
+Scaled RMSE
+Scaled RMSE
+X+Y
+0.583 ± 0.378
+0.580 ± 0.358
+0.591 ± 0.390
+0.547 ± 0.310
+Y-only
+0.585 ± 0.367
+0.587 ± 0.357
+0.583 ± 0.356
+0.554 ± 0.316
+X-only
+0.467 ± 0.294
+0.470 ± 0.296
+0.473 ± 0.297
+0.474 ± 0.298
+MCAR
+0.448 ± 0.289
+0.448 ± 0.289
+0.458 ± 0.295
+0.458 ± 0.295
+Classification
+Setting
+Accuracy (%)
+Accuracy (%)
+Accuracy (%)
+Accuracy (%)
+X+Y
+75.74 ± 18.48
+76.09 ± 17.49
+75.66 ± 18.60
+81.28 ± 14.93
+Y-only
+75.84 ± 18.04
+75.58 ± 17.26
+75.78 ± 18.04
+79.33 ± 16.03
+X-only
+83.68 ± 13.71
+83.53 ± 13.85
+83.57 ± 13.74
+83.52 ± 13.81
+MCAR
+84.27 ± 13.71
+84.27 ± 13.71
+84.18 ± 13.74
+84.18 ± 13.74
+Table 4: Causal ablation: scaled policy value (mean ± SD across tasks). Bold indicates
+the highest mean in each setting.
+TabPFN-3.5
+WeightedPFN
+Weights off
+Weights on
+Weights off
+Weights on
+Setting
+Scaled value
+Scaled value
+Scaled value
+Scaled value
+Regression
+Ordinary / IPW
+1.280 ± 2.401
+1.280 ± 2.401
+1.287 ± 2.402
+1.296 ± 2.398
+Ordinary / overlap
+1.280 ± 2.401
+1.278 ± 2.401
+1.287 ± 2.402
+1.298 ± 2.403
+Residualized / IPW
+1.301 ± 2.424
+1.305 ± 2.416
+1.308 ± 2.418
+1.310 ± 2.420
+Residualized / overlap
+1.301 ± 2.424
+1.310 ± 2.415
+1.308 ± 2.418
+1.311 ± 2.421
+Classification
+DR
+1.191 ± 2.487
+1.195 ± 2.481
+1.190 ± 2.487
+1.198 ± 2.484
+RWL
+1.190 ± 2.488
+1.196 ± 2.480
+1.191 ± 2.487
+1.198 ± 2.485
+OWL
+1.332 ± 2.546
+1.390 ± 2.549
+1.334 ± 2.539
+1.417 ± 2.548
+28
+
+
+5
+Discussion
+In this paper, we propose a general pipeline that adapts attention-based tabular founda-
+tion models to weighted regression and classification by combining synthetic missing-data
+tasks, weighted attention, and a normalized weighted loss. Applied to TabPFN-3.5, it
+yields WeightedPFN after approximately half an hour of fine-tuning on a single H100
+GPU. Across real missing-data and out-of-distribution causal tasks, WeightedPFN com-
+bines strong performance with runtimes close to those of linear baselines, without task-
+specific fine-tuning. Because the pipeline is not specific to TabPFN-3.5, it can also be
+applied to future attention-based tabular foundation models, carrying their advances over
+to weighted statistical learning.
+Our theory shows that, under regularity and task-coverage conditions, a suitably
+pretrained weighted Transformer attains the nonparametric minimax rate for weighted
+regression on new tasks without task-specific fitting. This result could be extended to
+weighted classification and to Transformer architectures that more closely match practical
+tabular foundation models.
+A related direction is to establish theoretical conditions
+under which pretraining on missing-data tasks supports generalization to other weighted
+problems, such as those arising in causal inference. We leave these extensions to future
+work.
+Data availability statement
+The TALENT datasets used in Section 4.3 are publicly available (Liu et al., 2025). The
+randomized-experiment datasets used in Section 4.4, most of which are from RCT_Bench
+(Shao et al., 2026), are publicly available and are listed in Section S3 of the supplementary
+material. The fine-tuned weights of WeightedPFN are available at https://huggingface.
+co/xiajunwen/WeightedPFN, and the inference code is available at https://github.
+com/xiajunwen1007/WeightedPFN.
+29
+
+
+Acknowledgments
+Generative AI tools were used for English polishing and coding assistance.
+References
+Bai, Y., Chen, F., Wang, H., Xiong, C., and Mei, S. (2023). Transformers as statisticians:
+Provable in-context learning with in-context algorithm selection. In Advances in Neural
+Information Processing Systems, volume 36, pages 57125–57211.
+Breiman, L. (2001). Random forests. Machine Learning, 45(1):5–32.
+Ching, M., Popescu, I., Smith, N., Ma, T., Underwood, W. G., and Samworth, R. J.
+(2026). Eﬀicient and minimax optimal in-context nonparametric regression with Trans-
+formers. In Proceedings of the 43rd International Conference on Machine Learning,
+volume 306 of Proceedings of Machine Learning Research, pages 19581–19610. PMLR.
+CMS Collaboration (2025). Reweighting simulated events using machine-learning tech-
+niques in the CMS experiment. The European Physical Journal C, 85(5):495.
+Cortes, C. and Vapnik, V. (1995). Support-vector networks. Machine Learning, 20(3):273–
+297.
+Eremeev, D., Platonov, O., Bazhenov, G., Babenko, A., and Prokhorenkova, L. (2026).
+GraphPFN: A prior-data fitted graph foundation model. In Proceedings of the 43rd
+International Conference on Machine Learning, volume 306 of Proceedings of Machine
+Learning Research, pages 28149–28165. PMLR.
+Erickson, N., Purucker, L., Tschalzev, A., Holzmüller, D., Desai, P. M., Salinas, D., and
+Hutter, F. (2025). TabArena: A living benchmark for machine learning on tabular
+data. In Advances in Neural Information Processing Systems, volume 38.
+30
+
+
+Garg, S., Tsipras, D., Liang, P., and Valiant, G. (2022). What can Transformers learn
+in-context? A case study of simple function classes. In Advances in Neural Information
+Processing Systems, volume 35, pages 30583–30598.
+Hendrycks, D. and Gimpel, K. (2016).
+Gaussian Error Linear Units (GELUs).
+arXiv:1606.08415.
+Hernán, M. A. and Robins, J. M. (2020).
+Causal Inference: What If.
+Chapman &
+Hall/CRC, Boca Raton.
+Hollmann, N., Müller, S., Eggensperger, K., and Hutter, F. (2023). TabPFN: A trans-
+former that solves small tabular classification problems in a second. In International
+Conference on Learning Representations.
+Hollmann, N., Müller, S., Purucker, L., Krishnakumar, A., Körfer, M., Hoo, S. B.,
+Schirrmeister, R. T., and Hutter, F. (2025). Accurate predictions on small data with
+a tabular foundation model. Nature, 637(8045):319–326.
+Hoo, S. B., Müller, S., Salinas, D., and Hutter, F. (2025). From tables to time: Extending
+TabPFN-v2 to time series forecasting. arXiv:2501.02945.
+Jäger, B., Erickson, N., Grinsztajn, L., Birkel, F., Flöge, K., Key, O., Kaya, K., Kübler,
+J., Frankel, A., Schröder, T., Garg, A., Metzen, J. H., Salinas, D., Bing, S., Collins, K.,
+Çelik, T., Balazadeh, V., Sidhoum, L., Pereda, T., Roof, B., Tschalzev, A., Guo, S.,
+Singer, P., Purucker, L., Robertson, J., Salmon, M., Jund, P., Chen, J., Kriuchkova,
+D., Cahu, A., Kalfon, E., Hayler, A., Grab, G., Monteiro, V., Wehrhahn, L., Safaric,
+D., Cornu, C., Arazi, A., Grace, R., Alessi, S., Manium, M., Schölkopf, B., LeCun,
+Y., Hulsebos, M., Gambhir, S., Hollmann, N., and Hutter, F. (2026). TabPFN-3.5:
+Technical report. arXiv:2609.17895.
+Ke, G., Meng, Q., Finley, T., Wang, T., Chen, W., Ma, W., Ye, Q., and Liu, T.-Y. (2017).
+LightGBM: A highly eﬀicient gradient boosting decision tree. In Advances in Neural
+Information Processing Systems, volume 30, pages 3146–3154.
+31
+
+
+Kim, J., Nakamaki, T., and Suzuki, T. (2024). Transformers are minimax optimal non-
+parametric in-context learners. In Advances in Neural Information Processing Systems,
+volume 37, pages 106667–106713.
+Li, F., Morgan, K. L., and Zaslavsky, A. M. (2018). Balancing covariates via propensity
+score weighting. Journal of the American Statistical Association, 113(521):390–400.
+Liu, S.-Y., Cai, H.-R., Zhou, Q.-L., Yin, H.-H., Zhou, T., Jiang, J.-P., and Ye, H.-J.
+(2025).
+TALENT: A tabular analytics and learning toolbox.
+Journal of Machine
+Learning Research, 26(226):1–16.
+Liu, S.-Y. and Ye, H.-J. (2026). TabSwift: An eﬀicient tabular foundation model with
+row-wise attention. In Proceedings of the 43rd International Conference on Machine
+Learning, volume 306 of Proceedings of Machine Learning Research, pages 79463–79479.
+PMLR.
+Loshchilov, I. and Hutter, F. (2019). Decoupled weight decay regularization. In Interna-
+tional Conference on Learning Representations.
+McCullagh, P. and Nelder, J. A. (1989). Generalized Linear Models. Chapman and Hall,
+London.
+Meng, H. and Qiao, X. (2022).
+Augmented direct learning for conditional average
+treatment effect estimation with double robustness. Electronic Journal of Statistics,
+16(1):3523–3560.
+Nadaraya, E. A. (1964). On estimating regression. Theory of Probability and Its Appli-
+cations, 9(1):141–142.
+Pfeffermann, D. (1993). The role of sampling weights when modeling survey data. Inter-
+national Statistical Review/Revue Internationale de Statistique, 61(2):317–337.
+Qu, J., Holzmüller, D., Varoquaux, G., and Le Morvan, M. (2026). TabICLv2: A bet-
+ter, faster, scalable, and open tabular foundation model. In Proceedings of the 43rd
+32
+
+
+International Conference on Machine Learning, volume 306 of Proceedings of Machine
+Learning Research, pages 102477–102555. PMLR.
+Ren, M., Zeng, W., Yang, B., and Urtasun, R. (2018). Learning to reweight examples for
+robust deep learning. In Proceedings of the 35th International Conference on Machine
+Learning, volume 80 of Proceedings of Machine Learning Research, pages 4334–4343.
+PMLR.
+Robertson, J., Reuter, A., Guo, S., Hollmann, N., Hutter, F., and Schölkopf, B. (2025).
+Do-PFN: In-context learning for causal effect estimation. In Advances in Neural Infor-
+mation Processing Systems, volume 38, pages 174811–174848.
+Robins, J. M. and Rotnitzky, A. (1995). Semiparametric eﬀiciency in multivariate re-
+gression models with missing data. Journal of the American Statistical Association,
+90(429):122–129.
+Rubin, D. B. (1976). Inference and missing data. Biometrika, 63(3):581–592.
+Rumelhart, D. E., Hinton, G. E., and Williams, R. J. (1986). Learning representations
+by back-propagating errors. Nature, 323(6088):533–536.
+Schiff, D., Lindenbaum, O., and Efroni, Y. (2026). ICR-RL: Deep reinforcement learn-
+ing via in-context-regression. In Proceedings of the 43rd International Conference on
+Machine Learning, volume 306 of Proceedings of Machine Learning Research, pages
+108204–108217. PMLR.
+Seletkov, D., Hager, P., Kaissis, G., Braren, R., Rueckert, D., and Rehms, R. (2026).
+Survival in-context: Amortized Bayesian survival analysis via prior-fitted networks.
+arXiv:2603.29475.
+Shao, Y., Lyu, L., Yu, M., and Wang, B. (2026). How should covariates be handled in
+randomized trials? Empirical evidence from 50 trials and recommendations for practice.
+Journal of Clinical Epidemiology, 197:112374.
+33
+
+
+Shimodaira, H. (2000). Improving predictive inference under covariate shift by weighting
+the log-likelihood function. Journal of Statistical Planning and Inference, 90(2):227–
+244.
+Smola, A. J. and Schölkopf, B. (2004). A tutorial on support vector regression. Statistics
+and Computing, 14(3):199–222.
+Stone, C. J. (1982). Optimal global rates of convergence for nonparametric regression.
+The Annals of Statistics, 10(4):1040–1053.
+Tian, L., Alizadeh, A. A., Gentles, A. J., and Tibshirani, R. (2014). A simple method for
+estimating interactions between a treatment and a large number of covariates. Journal
+of the American Statistical Association, 109(508):1517–1532.
+Vaswani, A., Shazeer, N., Parmar, N., Uszkoreit, J., Jones, L., Gomez, A. N., Kaiser, Ł.,
+and Polosukhin, I. (2017). Attention is all you need. In Advances in Neural Information
+Processing Systems, volume 30, pages 5998–6008.
+von Oswald, J., Niklasson, E., Randazzo, E., Sacramento, J., Mordvintsev, A., Zhmogi-
+nov, A., and Vladymyrov, M. (2023). Transformers learn in-context by gradient descent.
+In Proceedings of the 40th International Conference on Machine Learning, volume 202
+of Proceedings of Machine Learning Research, pages 35151–35174. PMLR.
+Wang, L., Rotnitzky, A., and Lin, X. (2010). Nonparametric regression with missing out-
+comes using weighted kernel estimating equations. Journal of the American Statistical
+Association, 105(491):1135–1146.
+Watson, G. S. (1964). Smooth regression analysis. Sankhyā: The Indian Journal of
+Statistics, Series A, 26(4):359–372.
+Zhang, B., Tsiatis, A. A., Davidian, M., Zhang, M., and Laber, E. B. (2012a). Estimating
+optimal treatment regimes from a classification perspective. Stat, 1(1):103–114.
+34
+
+
+Zhang, B., Tsiatis, A. A., Laber, E. B., and Davidian, M. (2012b). A robust method for
+estimating optimal treatment regimes. Biometrics, 68(4):1010–1018.
+Zhang, T. (2004). Statistical analysis of some multi-category large margin classification
+methods. Journal of Machine Learning Research, 5:1225–1251.
+Zhang, X., Ren, G., Yuan, H., Zou, H., Tan, H., Wang, H., Song, J., Li, J., Zhang, J.,
+Zhang, J., Li, K., Mo, L., Mao, L., Hao, M., Xu, N., Ding, R., Zhang, R., Li, S., Mei,
+S., Zhang, T., Mu, W., Dong, Y., Wei, Y., Xue, Y., Wang, Y., He, Y., Yang, Z., Li, Z.,
+Li, D., Wang, F., Liu, J., Chen, J., Du, J., Cheng, K., Li, K., Sun, L., Zhou, L., Dai,
+N., Wang, Q., Xu, R., Du, S., Yang, S., Lu, W., Chu, W., Huang, X., Lin, X., Ai, X.,
+Han, X., Li, X., Su, X., Zhang, X., Lu, Y., Zhang, Y., Qin, Y., Huang, Y., Xu, Y., Lv,
+Y., Jiang, Y., Han, Y., and Cui, P. (2026). LimiX-2: A contextual mechanism network
+towards general structured-data intelligence. arXiv:2609.17488.
+Zhao, Y., Zeng, D., Rush, A. J., and Kosorok, M. R. (2012). Estimating individualized
+treatment rules using outcome weighted learning. Journal of the American Statistical
+Association, 107(499):1106–1118.
+Zhou, X., Mayer-Hamblett, N., Khan, U., and Kosorok, M. R. (2017). Residual weighted
+learning for estimating individualized treatment rules. Journal of the American Statis-
+tical Association, 112(517):169–187.
+35

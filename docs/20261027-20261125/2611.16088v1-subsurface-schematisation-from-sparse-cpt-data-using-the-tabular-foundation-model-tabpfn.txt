@@ -1,0 +1,2014 @@
+Subsurface schematisation from sparse CPT data
+using the tabular foundation model TabPFN
+Taiga Saitoa,b,∗, Fabian Campos Monterob, Bruno Zuada Coelhob, Ana Martins Teixeirab,
+Stephen Wuc,d, Timo Schweckendiekb, Yu Otakea
+aDepartment of Civil and Environmental Engineering, Tohoku University, Sendai, Japan
+bSafe and Resilient Infrastructure, Deltares, Delft, the Netherlands
+cResearch Organization of Information and Systems, The Institute of Statistical Mathematics, Tachikawa, Japan
+dThe Graduate University for Advanced Studies, Department of Statistical Science, Tachikawa, Japan
+Abstract
+Subsurface schematisation supports geotechnical decisions but remains challenging because sparse site-
+investigation data leave substantial gaps in information about ground conditions. This study explores
+TabPFN, a foundation model pretrained on general synthetic tabular data, for this task. Using only
+grid coordinates and soil behaviour type index observations from sparse cone penetration tests (CPTs),
+we first reconstruct two-dimensional sections without geotechnical fine-tuning or predefined layer
+boundaries. We evaluate the approach on synthetic sections and at two field sites in the Netherlands,
+comparing it with SchemaGAN, a conditional generative adversarial network trained on synthetic
+geotechnical sections, and with reference interpolation methods. In the baseline comparisons, TabPFN
+achieved mean errors close to SchemaGAN’s on synthetic sections and lower mean errors at both field
+sites. On synthetic sections, TabPFN’s mean absolute error decreased at each tested increase in CPT
+count, and, under the baseline input setting, its pointwise prediction intervals had mean coverage close
+to nominal levels. Subsequent fine-tuning on the synthetic sections used to train SchemaGAN improved
+synthetic test accuracy but increased mean errors at both field sites. These findings indicate that
+general-purpose tabular foundation models offer a promising route for updating subsurface predictions
+from sparse and evolving site-investigation data without retraining.
+Keywords:
+Tabular foundation model, In-context learning, Subsurface schematisation, Cone
+penetration test, Uncertainty quantification
+1. Introduction
+Geotechnical engineers need to characterise subsurface stratigraphy and spatially varying ground
+properties to inform design and construction [1]. Phoon and Kulhawy [2] described inherent soil
+variability in terms of its magnitude and spatial scale and distinguished it from measurement error and
+transformation uncertainty. Otake and Honjo [3] emphasised the need to examine how uncertainty in
+ground conditions propagates to predictions of structural performance. To support such assessments,
+engineers require spatial predictions of ground conditions between investigation locations, together
+with the uncertainty of these predictions. Site-investigation data are often multivariate, sparse and
+incomplete, making it difficult to estimate spatial correlation structures or assess assumptions such
+as stationarity [4]. Cone penetration tests (CPTs), for example, provide detailed vertical profiles but
+only at a limited number of locations, leaving layer geometry and within-layer variability between
+profiles to be inferred. Engineers therefore draw on assumptions about spatial dependence, geological
+knowledge and data from other sites to interpret ground conditions between observations.
+∗Corresponding author
+Email address: taiga.saito.r3@dc.tohoku.ac.jp (Taiga Saito)
+arXiv:2611.16088v1  [cs.LG]  11 Nov 2026
+
+
+Researchers have addressed the sparsity of site observations by modelling spatial dependence
+and incorporating data from other sites. Geostatistical methods such as Kriging represent spatial
+dependence through a specified covariance model, with parameters typically estimated from the
+available observations. Yoshida et al. [5] used Gaussian process regression to estimate trend and
+random components of soil spatial variability. Zhao and Wang [6] combined Bayesian interpolation of
+a multilayer soil-property profile with clustering of the interpolated profile to identify stratification
+from sparse measurements. For multivariate soil-property estimation, Ching et al. [7] developed a
+hierarchical Bayesian model that combines site observations with information from a database of
+multiple sites while accounting for differences among sites. Using this framework, Saito et al. [8]
+compared local and global clay databases for soil-property estimation and argued that the definition of
+a site in such databases should account for the complexity of vertical stratigraphy. Engineers applying
+spatial models need to assess the suitability of the assumed spatial correlation structure, while those
+using data from other sites need to evaluate the relevance of that information to the target site [4].
+Hu and Wang [9] combined random-field modelling with Monte Carlo simulation to infer soil
+classes and stratification in two-dimensional sections from limited CPT soundings, accounting for
+both interpolation and classification-model uncertainty. Shi and Wang [10] used iterative convolution
+XGBoost to infer geological cross-sections from limited boreholes and a training section representing
+similar geological conditions. Other approaches use deep-learning models to learn spatial patterns
+from collections of training sections, so the amount and representativeness of the training data become
+central considerations at a new site. Campos Montero et al. [11] introduced SchemaGAN, a conditional
+generative adversarial network trained on synthetic geotechnical sections for subsurface schematisation,
+and evaluated it on synthetic sections and at two field sites. The authors noted that its performance
+depends on the layering patterns and complexity represented in the synthetic training database.
+Foundation models rely on pretraining, using broad data distributions to support a range of
+downstream tasks [12]. The Tabular Prior-data Fitted Network (TabPFN) is a Transformer-based
+foundation model for tabular prediction that, like SchemaGAN, is pretrained on synthetic data, but on
+general tabular prediction tasks rather than geotechnical sections [13, 14]. We use TabPFN-3, which is
+pretrained on synthetic tabular datasets generated from a prior that includes spatial relationships [14].
+At inference, the model returns predictive distributions for query targets conditioned on the observed
+feature–target pairs supplied as context, without updating its pretrained weights [14]. This use of
+in-context learning, referred to here as in-context inference, allows the same pretrained regressor to be
+used with different features and targets. Civil-engineering applications of TabPFN include estimation
+of pavement roughness [15] and prediction of pavement condition states [16]. Geotechnical applications
+include estimation of rock properties and horizontal stresses [17], as well as spatial prediction of
+undrained shear strength and imputation of missing mechanical parameters [18]. Related work has
+explored the interpretability of TabPFN predictions through embeddings and feature attribution, with
+a view to supporting future geotechnical decision-making [19]. In digital soil mapping, Schmidinger et
+al. [20] evaluated TabPFN by augmenting environmental covariates with spatial features derived from
+ordinary Kriging, assessing both point and probabilistic predictions. In an extended benchmark, they
+also evaluated geographic coordinates as additional features alongside those covariates.
+Building on previous TabPFN applications to property prediction and imputation, we examine
+whether general tabular pretraining can also support subsurface schematisation.
+Following the
+terminology of Campos Montero et al. [11], we use this term for the reconstruction of two-dimensional
+subsurface sections from sparse CPT profiles. This study focuses on reconstructing a continuous
+field of the soil behaviour type index Ic; delineating soil units and assigning engineering properties
+are subsequent steps beyond its scope. For this reconstruction, we deliberately adopt a minimal
+input representation based on grid coordinates and observed Ic values alone, although geological
+interpretations, borehole logs and geophysical measurements could be supplied as additional features
+or context observations. For TabPFN, horizontal and vertical grid coordinates are the only features,
+observed Ic values are the context targets, and the coordinates of all grid locations in each section
+are the queries. No geological labels or predefined layer boundaries are supplied, and no covariance
+model is explicitly prescribed. If effective for this task, TabPFN could offer an additional option for
+subsurface schematisation alongside conventional interpolation and task-specific deep learning. By
+2
+
+
+adding new CPT observations to the context, we can update predictions and their uncertainty without
+updating the pretrained weights, potentially supporting sequential site investigation.
+Our contribution is a comparative evaluation of two-dimensional Ic reconstruction from sparse
+CPT profiles, using grid coordinates as TabPFN’s only features and the released SchemaGAN model
+as the principal comparator. We include Kriging and nearest-neighbour interpolation as reference
+methods. From the SchemaGAN study, we use the synthetic sections, generated using GeoSyn [21],
+and the field CPT data [11, 22], with input observations and evaluation pixels matched across methods
+in the accuracy and prediction-interval comparisons. The comparison evaluates complete prediction
+procedures with different priors, including SchemaGAN’s task-specific geotechnical prior and TabPFN’s
+general tabular prior. Because the two models differ in their input representations and inference
+procedures, their relative errors do not isolate the effect of either the prior or the network architecture.
+With both neural models’ released pretrained weights fixed, we first assess accuracy on synthetic
+sections and at held-out CPT locations in the field sections. On synthetic sections, we extend this
+assessment by varying the number of input CPTs and evaluating pointwise prediction intervals, an
+aspect not assessed in the original SchemaGAN study. At each field site, we examine how held-out
+errors vary across random input placements in the two sections used for comparison. To illustrate
+flexibility in spatial extent and context size, we reconstruct the two sections at each site jointly with
+TabPFN using their combined input CPTs. In a separate experiment, we test whether updating
+TabPFN’s weights through fine-tuning on the synthetic sections used to train SchemaGAN improves
+prediction on both datasets. As an initial proof of concept, this study examines the potential of
+general tabular pretraining for subsurface schematisation using one synthetic dataset and two field sites.
+Finally, we discuss these results in terms of transfer from general tabular pretraining, sequential site
+investigation, and future ways to incorporate geotechnical information through context or fine-tuning.
+2. Methods
+2.1. Problem formulation
+We formulate subsurface schematisation as the reconstruction of the soil behaviour type index Ic
+over a two-dimensional vertical section from sparse CPT observations. Each section is represented on
+a grid of m pixels. Let sj = (xj, zj) denote the horizontal and vertical grid coordinates of pixel j, and
+let yj = Ic,j denote its target value, for j = 1, . . . , m. The CPTs supplied as input occupy a limited
+number of grid columns (the input columns) and may cover different depth ranges; we refer to one
+such configuration as an input placement. For a given input placement, let O ⊆{1, . . . , m} denote the
+index set of the valid input pixels, that is, the pixels in the input columns that hold an observed Ic
+value. We define the context set C and the query set Q as
+C = {(si, yi) : i ∈O},
+Q = {sj : j = 1, . . . , m}.
+(1)
+The context contains n = |O| = |C| rows, each holding the coordinates and observed Ic value of one
+valid input pixel. The query set Q covers every grid location, including those represented in C. Given
+C, each method returns a point prediction ˆyj of yj at every sj ∈Q. The pixels used to evaluate the
+predictions are specified for each experiment in Section 2.5.
+Figure 1 illustrates the subsurface schematisation task and the input representations used by
+SchemaGAN and TabPFN. SchemaGAN receives the values in C as an image, with each value placed
+at its grid location and the unobserved pixels, whose indices are outside O, set to zero (Figure 1b).
+TabPFN receives the same C as tabular rows and predicts Ic at the locations in Q (Figure 1c). The
+datasets and preprocessing are described in Section 2.2, the prediction methods in Sections 2.3 and 2.4,
+and the experimental design and evaluation in Section 2.5.
+2.2. Datasets and preprocessing
+We evaluate TabPFN and the comparison methods on the subsurface reconstruction task studied
+by Campos Montero et al. [11], using the released synthetic dataset and the preprocessed field sections
+3
+
+
+0
+256
+511
+Horizontal position x [pixel]
+0
+16
+31
+Depth z [pixel]
+x
+z
+Ic
+34
+0
+3.98
+⋮
+⋮
+⋮
+484
+20
+3.37
+x
+z
+0
+0
+⋮
+⋮
+511
+31
+1.3
+2
+3
+4.2
+Ic
+(b) SchemaGAN: image input
+(c) TabPFN: tabular input
+Synthetic truth
+(a) Section and observations
+Observed values
+Input image
+Unobserved pixels: filled with 0
+SchemaGAN
+Reconstructed section (̂yj)
+Context : n=161 rows
+Queries : m=16,384 rows
+TabPFN
+Reconstructed section (̂yj)
+Trained on 16,000
+synthetic sections
+Trained on synthetic
+tabular tasks
+Figure 1: Input representations of SchemaGAN and TabPFN for subsurface schematisation from six input columns.
+(a) Synthetic test section and sampled observations; cyan bars mark the observed depth ranges. (b) Image input and
+reconstruction with SchemaGAN; unobserved pixels are filled with zero to mark missing input, and the input image
+is then normalised as described in Section 2.4. (c) Tabular input and reconstruction with TabPFN; the context set C
+contains the observed (x, z, Ic) rows, and the query set Q contains only the (x, z) coordinates of all grid pixels, including
+input locations. Both reconstructed sections show point predictions ˆyj at the grid locations. The vertical scale and
+input-column widths are exaggerated for clarity.
+0
+50
+100
+150
+200
+250
+Easting [km]
+300
+350
+400
+450
+500
+550
+600
+Northing [km]
+Delft–Schiedam
+Groningen–Delfzijl
+86
+87
+Easting [km]
+438
+439
+440
+441
+442
+Northing [km]
+246
+247
+248
+249
+250
+Easting [km]
+588.5
+589.0
+589.5
+590.0
+590.5
+591.0
+591.5
+Northing [km]
+(a) The Netherlands
+(b) Delft–Schiedam
+(c) Groningen–Delfzijl
+Section 1 CPTs
+Section 2 CPTs
+Figure 2: Locations of the field CPTs and their assignment to the two sections at each site. Panel (a) shows the locations
+of the two sites in the Netherlands, and panels (b) and (c) show CPT locations overlaid on aerial photographs. In
+panels (b) and (c), white and orange triangles mark the CPTs in sections 1 and 2, respectively. Axes show RD New
+(EPSG:28992) coordinates in kilometres. Aerial photographs (2025): Beeldmateriaal Nederland; province boundaries:
+Kadaster; both obtained via PDOK under CC BY 4.0 (https://creativecommons.org/licenses/by/4.0/). Land and
+lakes: Natural Earth (public domain).
+4
+
+
+from two sites in the Netherlands. Each synthetic section represents up to five layers on a grid of 32
+depth rows and 512 horizontal columns (Figure 1a). Layer boundaries follow randomly parameterised
+periodic functions, and each layer is assigned one of five soil types. Within each layer, Ic values are
+generated using an anisotropic Gaussian random field with mean and standard deviation determined
+by the assigned soil type [21]. The released dataset [22] comprises 16,000 training, 4,000 validation
+and 4,000 test sections generated using the same procedure. SchemaGAN was trained on the training
+split; in the main experiments, we use TabPFN without geotechnical fine-tuning. We use the released
+test split for the synthetic comparisons and the training and validation splits for TabPFN fine-tuning
+and checkpoint selection, respectively (Section 2.5.1).
+We use the preprocessed field sections from the original study unchanged, with two 32 × 512
+grids per site (Figure 2). The original preprocessing included a top cutoff to create a flat surface
+and averaging of Ic within the depth intervals represented by the 32 rows. Sections 1 and 2 at
+Delft–Schiedam contain 18 and 14 CPTs, respectively (32 in total), and those at Groningen–Delfzijl
+contain 50 and 51 CPTs, respectively (101 in total). Each CPT occupies a separate grid column,
+termed a measured column, with contiguous measurements from the top row to its termination depth;
+in Delft–Schiedam section 1, no CPT reaches the bottom. Zero entries mark missing measurements
+and are excluded from the input observations.
+2.3. Spatial prediction with TabPFN
+TabPFN is a Transformer-based foundation model for tabular prediction [13]. We use TabPFN-3,
+pretrained exclusively on synthetic tabular datasets generated from a structural causal model prior,
+with a reported training scale exceeding eight trillion tokens. The prior covers diverse relationships
+among variables, including spatial relationships, but the TabPFN-3 report describes no pretraining
+task specific to geotechnical sections [14]. During pretraining, the model learns to predict targets for
+query rows from context rows with known features and targets. At inference, TabPFN predicts targets
+from the supplied context without updating its weights.
+For each grid and input placement, we supply the grid coordinates (x, z) as the only features
+and Ic as the context target (Figure 1c). Each valid input pixel contributes one context row, giving
+n ≤32K rows for K input columns (at most 192 for six input columns). We use zero-based column
+and row indices as x and z, with x increasing to the right and z increasing downwards from the
+top-left pixel. For a 32 × 512 section, x ∈{0, . . . , 511} and z ∈{0, . . . , 31}, giving m = 16,384 query
+locations. For reconstruction, we query all grid locations in Q and score predictions on the pixels
+specified in Section 2.5. In all experiments, including fine-tuning, we use these grid indices without
+supplying physical grid spacings or section aspect ratios, and we do not assign physical dimensions to
+the synthetic sections.
+We use the released TabPFN-3 default regression weights, identified by the checkpoint tabpfn-v3-
+regressor-v3_default.ckpt, except when evaluating the fine-tuned models. For reconstruction, we
+use the TabPFN package’s inference-time ensemble of eight members that share the same network
+weights, with inference seed 0 (tabpfn version 8.5.0). We retain TabPFN’s default preprocessing,
+including feature-wise standardisation. Each member applies one of the four combinations of feature and
+target preprocessing supplied with the released model and a random permutation of the preprocessed
+features. The predictive distribution of each member is computed with the package’s default softmax
+temperature of 0.9, and the eight distributions are averaged to obtain pθ(yj | sj, C) in the original Ic
+units, where θ denotes the model weights.
+Let qτ(sj; C) denote the τ quantile of this distribution. The point prediction is its median,
+ˆyj = q0.5(sj; C),
+(2)
+which we use for both the mean absolute error (MAE) and the root mean squared error (RMSE).
+For the comparison of predictive medians and means in Section 2.4, we obtain both summaries from
+the averaged predictive distribution and use the predictive mean for RMSE. Let α ∈(0, 1) denote
+the nominal probability that the target value lies outside the prediction interval, so that 1 −α is its
+nominal coverage. A nominal 100(1 −α)% pointwise prediction interval (PI) is
+PI1−α(sj) =
+
+qα/2(sj; C), q1−α/2(sj; C)
+
+.
+(3)
+5
+
+
+For example, α = 0.10 gives a nominal 90% prediction interval bounded by the 0.05 and 0.95 quantiles.
+2.4. Comparison methods
+We focus on comparing TabPFN and SchemaGAN, which have different pretraining tasks. Schema-
+GAN incorporates a task-specific prior learned from synthetic geotechnical sections [11], whereas
+TabPFN incorporates a general tabular prior [14]. Both models receive the observations in C, with
+spatial positions encoded by pixel locations in the input image for SchemaGAN and supplied as
+grid-coordinate features for TabPFN. Their pretraining data, input representations and inference
+procedures differ, so the comparison evaluates the complete prediction procedures and does not isolate
+the effect of either the prior or the network architecture. We include Kriging and Nearest Neighbour,
+the two interpolation methods compared with SchemaGAN at the field sites in the original study [11].
+SchemaGAN is a conditional generative adversarial network based on pix2pix [23] that reconstructs
+a complete Ic section from a sparse CPT-like input image [11]. Its modified U-Net generator was
+trained against a patch-based discriminator using adversarial and L1 reconstruction losses. The
+released training implementation uses six input columns per section [24]. We retain the released
+pretrained weights [22] and 32 × 512 image dimensions throughout the experiments. Following the
+released implementation [24], we apply the same linear normalisation used during pretraining to
+the input image after the unobserved pixels have been set to zero, and map model outputs back to
+the original Ic units. In the released generator, dropout remains active during inference and batch
+normalisation uses the statistics of the current batch. As in the released evaluation code, each input
+image is processed in a separate forward pass with batch size 1.
+Unless stated otherwise, we use 100 SchemaGAN reconstructions per input placement, generated
+using Monte Carlo dropout [25] with inference seeds 0–99. We score each reconstruction separately
+and average the resulting errors to reduce dependence on a single dropout realisation (Section 2.5.2).
+To examine how the choice of point prediction affects the comparison, we also evaluate the predictive
+medians of both models using MAE and their predictive means using RMSE. For SchemaGAN, we
+use the pixelwise sample median and mean of these reconstructions. We assess these summaries
+for pointwise accuracy; they need not preserve the spatial structure of an individual generated
+reconstruction. We also use the same generated reconstructions to construct pointwise prediction
+intervals, which were not evaluated in the original study [11]. The released SchemaGAN model was
+trained for reconstruction, and we apply no calibration procedure targeting nominal coverage to the
+intervals constructed here. At nominal level 100(1 −α)%, we use a normal approximation at each
+pixel to define the interval as the sample mean plus or minus Φ−1(1 −α/2) times the sample standard
+deviation across these reconstructions, where Φ−1 is the standard normal quantile function.
+Kriging and Nearest Neighbour follow the implementations released with the original study [11, 24],
+using the same grid coordinates as TabPFN. The Kriging implementation uses Gaussian process
+regression with a covariance given by the sum of an anisotropic radial basis function kernel and a
+white-noise kernel. For each fit, we centre and scale the input Ic values using their mean and standard
+deviation and transform predictions back to Ic units; the Gaussian process has no spatial trend term.
+The kernel parameters are fitted separately for each input placement by maximising the log marginal
+likelihood with the L-BFGS-B optimiser and ten random restarts. The two length scales and the
+noise variance are bounded between 10−5 and 105, and the seed of the random restarts is fixed to the
+zero-based index assigned to each combination of section and input placement. We use the posterior
+mean for point prediction. We construct central pointwise prediction intervals from the Gaussian
+posterior predictive distribution, including the white-noise contribution in the predictive variance. The
+median fitted horizontal and vertical length scales were 136 and 2.5 pixels on the synthetic sections,
+67 and 1.6 pixels at Delft–Schiedam and 54 and 1.5 pixels at Groningen–Delfzijl. Of the 8,000 fits,
+72 produced warnings, including one L-BFGS-B convergence warning; all other warnings concerned
+parameters close to their bounds, and all predictions were retained. Comparisons with Kriging refer to
+this particular covariance and fitting procedure. Nearest Neighbour assigns each pixel the value of the
+nearest observed pixel, using Euclidean distance in grid coordinates, and provides point predictions
+only.
+6
+
+
+2.5. Experimental design and evaluation
+For each input placement in the accuracy and prediction-interval comparisons, the methods being
+compared received the same input observations C and were evaluated on the same pixels. After
+inference, predictions were neither clipped to a prescribed Ic range nor replaced with observed values
+at input pixels.
+2.5.1. Experimental setup
+The baseline accuracy comparisons on both datasets included all four methods. For each synthetic
+section, the baseline input was drawn by the released sampling procedure [24] and comprised K = 6
+randomly selected input columns subject to its minimum-spacing constraint, with randomly truncated
+depths. These inputs covered approximately 1% of the grid pixels on average. We evaluated prediction
+errors over all m grid pixels in Q, including the input pixels [24] (Section 3.1). With the same
+inputs, we analysed TabPFN and SchemaGAN errors at unobserved pixels by Euclidean distance
+in grid coordinates to the nearest observed pixel (Section 3.2). Using the baseline six-CPT inputs,
+we evaluated prediction intervals from TabPFN, SchemaGAN and Kriging over unobserved pixels at
+nominal levels of 50, 80, 90 and 95%, without additional calibration (Section 3.3).
+To assess how the released models respond to changes in CPT count without retraining, we
+evaluated TabPFN and SchemaGAN with K ∈{3, 6, 12, 24, 48} input columns (Section 3.2). For
+SchemaGAN, counts other than six differ from its released training configuration. We used each
+synthetic section’s baseline input for K = 6 and a random subset of three of its columns for K = 3.
+Starting from the six-column input, we successively added randomly selected unused columns to obtain
+the 12-, 24- and 48-column inputs, without a minimum-spacing constraint. Existing observations were
+retained, and added columns used the same random depth truncation as the baseline inputs. In each
+section, predictions were scored on the pixels unobserved in all five input placements.
+For the baseline field accuracy comparisons (Section 3.4), we drew 1,000 input placements per
+section, each comprising K = 6 measured columns. Following the original study’s procedure for
+selecting field inputs [11, 24], we drew columns sequentially at random subject to its minimum-spacing
+constraint, retaining repeated six-column combinations as separate input placements. All remaining
+measured columns were held out for evaluation regardless of their distance from the input columns.
+For both datasets, the comparison of predictive medians and means (Section 2.4) used the same inputs
+and evaluation pixels as the baseline comparisons.
+For the field reconstruction examples in Section 3.5, we reconstructed each site’s two 32 × 512
+sections independently with SchemaGAN and TabPFN, using six input CPTs per section. For joint
+reconstruction, we placed the two original section grids side by side without rescaling to form a
+32 × 1,024 grid, assuming that equal row indices represented the same depth interval. TabPFN
+reconstructed this joint grid using the combined observations from the 12 input CPTs. The split and
+joint TabPFN reconstructions used the same model weights and inference settings. No boundary
+smoothing was applied to any split or joint reconstruction.
+The preceding experiments used TabPFN without training it specifically on geotechnical sections.
+To assess the effect of such training (Section 3.6), we fine-tuned all TabPFN weights θ on the same
+16,000 synthetic training sections used to train SchemaGAN. At each training step, we used C as
+context and sampled prediction targets at unobserved locations. The loss was the sum of the continuous
+ranked probability score (CRPS) and the mean squared error (MSE) of the predictive mean, both
+computed in TabPFN’s internal target space. We trained for five epochs with optimisation seed
+0. We selected the checkpoint with the lowest mean MAE over unobserved pixels, using only the
+original study’s 4,000 synthetic validation sections [11]. The selected checkpoint was evaluated on the
+synthetic test and field sections using the inference settings in Section 2.3. Training details are given
+in Appendix A. To characterise how the synthetic training sections differ from the field sections, we
+also compared three descriptors of Ic: its mean, the mean absolute difference between adjacent depth
+rows, and the mean absolute difference between neighbouring measured columns at the same depth
+row. For each field section, we calculated these descriptors at its CPT locations and depth rows and
+at the same grid positions in each of the 16,000 synthetic training sections.
+7
+
+
+2.5.2. Metrics and statistical comparison
+We assessed each method’s point predictions ˆyj against target values yj using MAE and RMSE in
+Ic. Following the original evaluation code [11, 24], field errors in each held-out column were averaged
+over all 32 rows, with zero residuals assigned below the CPT’s termination depth. Synthetic errors
+were calculated per section; field errors were calculated per held-out column and averaged equally
+across columns within each input placement. For field RMSE, the square root was taken within each
+held-out column before averaging across columns. Unless stated otherwise, SchemaGAN errors were
+averaged across the 100 reconstructions for each input placement before calculating the statistical
+summaries.
+The accuracy tables in Sections 3.1 and 3.4 report means and sample standard deviations across the
+4,000 synthetic sections or the 2,000 input placements per field site. We also report the percentage of
+synthetic sections or field input placements in which each method had lower error than SchemaGAN. For
+these tables, we paired errors by synthetic section or by input placement within each field section and
+calculated mean differences (method minus SchemaGAN) with normal-approximation 95% confidence
+intervals. Field standard errors were based on variation in paired differences within each section, with
+equal weight given to the two section means. Field confidence intervals quantify input-placement
+uncertainty conditional on the two observed sections and inference seeds. For the CPT-count and
+distance curves, pointwise 95% confidence intervals used the same normal approximation, with standard
+errors estimated across contributing sections. In all box plots, boxes span the first to third quartiles
+and the central lines indicate medians. To complement MAE and RMSE, we calculated ratios of the
+mean and median absolute Ic differences in each reconstructed section to the corresponding values in its
+target section, using all pixel pairs separated vertically by 1, 2, 4 or 8 rows, or horizontally by 1, 2, 4, 8,
+16, 32, 64 or 128 columns. Ratios below one indicate smaller mean or median absolute differences than
+in the target section at the same separation. Using the baseline six-CPT reconstructions, we calculated
+ratios separately for each section and separation and report medians across the 4,000 synthetic test
+sections. For SchemaGAN, we first averaged the ratios from 100 individually evaluated reconstructions
+within each section.
+In addition to evaluating point predictions, we assessed pointwise prediction intervals PI1−α(sj)
+using empirical coverage, mean width and interval score. For each synthetic section s, let Us be the
+set of unobserved pixel indices. For each method at a fixed nominal level 1 −α, write [Lsj, Usj] for the
+interval at pixel j, constructed as described in Sections 2.3 and 2.4, and ysj for its target value. The
+empirical coverage and mean interval width in section s are
+bCs =
+1
+|Us|
+X
+j∈Us
+1{Lsj ≤ysj ≤Usj},
+(4)
+W s =
+1
+|Us|
+X
+j∈Us
+(Usj −Lsj),
+(5)
+where 1{·} equals one if its condition is satisfied and zero otherwise. The interval score combines
+interval width with a penalty for targets outside the interval [26]. For each pixel, it is
+ISα,sj = (Usj −Lsj) + 2
+α(Lsj −ysj)1{ysj < Lsj} + 2
+α(ysj −Usj)1{ysj > Usj}.
+(6)
+We obtain the section mean ISα,s = |Us|−1 P
+j∈Us ISα,sj. We average bCs, W s and ISα,s equally across
+all 4,000 synthetic test sections, with coverage reported as a percentage. For the example sections in
+Section 3.3, we report bCs and W s at α = 0.10.
+3. Results
+In the main experiments, we observed three principal findings. First, without geotechnical fine-
+tuning, TabPFN achieved mean errors close to those of SchemaGAN on synthetic test sections and the
+lowest mean MAE and RMSE among the four methods at held-out CPT columns in both field sites
+8
+
+
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+Per-section MAE of Ic
+TabPFN
+SchemaGAN
+Kriging
+Nearest
+Neighbour
+TabPFN
+SchemaGAN
+Kriging
+Nearest
+Neighbour
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+Per-section RMSE of Ic
+Figure 3: Distributions of section-wise MAE (top) and RMSE (bottom) in Ic, computed over all pixels of each of the
+4,000 synthetic test sections. Whiskers extend to the most extreme values within 1.5 interquartile ranges of the box. In
+total, 18 MAE values lie above the displayed range.
+in the baseline comparison (Sections 3.1 and 3.4). Second, with fixed pretrained weights, TabPFN’s
+mean MAE decreased at each tested increase in CPT count on synthetic sections, and it reconstructed
+the two field-section grids at each site jointly using their combined input CPTs (Sections 3.2 and 3.5).
+Third, on the synthetic test sections with six input CPTs, TabPFN’s pointwise prediction intervals
+had mean coverage close to the nominal levels and narrower mean widths than those of Kriging
+(Section 3.3). In the fine-tuning experiment, mean MAE and RMSE decreased on synthetic test
+sections but increased at both field sites (Section 3.6).
+3.1. Prediction accuracy on synthetic sections
+Figure 3 shows the distributions of MAE and RMSE across the 4,000 synthetic test sections under
+the baseline input setting (Section 2.5.1), and Table 1 reports their means and paired comparisons
+with SchemaGAN. Without geotechnical fine-tuning, TabPFN achieved mean MAE and RMSE close
+to those of SchemaGAN, which was trained specifically on synthetic geotechnical sections, although its
+errors varied more across sections than SchemaGAN’s, with more upper-tail outliers. Both models
+achieved lower mean MAE and RMSE than Kriging and Nearest Neighbour. Using predictive medians
+for both models preserved the MAE ordering shown in Table 1. With predictive means, however,
+TabPFN had lower mean RMSE than SchemaGAN (0.2544 versus 0.2561), reversing their ordering in
+the baseline comparison (Section 2.4).
+Figure 4a shows a representative section selected for a near-median within-section standard deviation
+of Ic and typical MAE across all four methods. The other two sections maximise the MAE difference
+computed as SchemaGAN minus TabPFN (b) and TabPFN minus SchemaGAN (c), respectively. In
+the representative section, TabPFN and SchemaGAN both recovered the main layer geometry, although
+TabPFN reproduced less of the within-layer variation than SchemaGAN (Figure 4a). Kriging produced
+diffuse layer transitions, and Nearest Neighbour introduced abrupt lateral steps. TabPFN preserved the
+9
+
+
+Table 1: Section-wise errors in Ic evaluated over all pixels, including the input pixels, of the 4,000 synthetic test sections,
+reported as mean (SD) across sections. Comparisons with SchemaGAN are paired by section; negative differences
+indicate lower error. The final column reports the percentage of sections with lower error than SchemaGAN. SchemaGAN
+results are averaged over 100 separately scored inference seeds; TabPFN uses one seed, Kriging uses a fixed optimisation
+seed for each fit, and Nearest Neighbour is deterministic.
+Metric
+Method
+Mean (SD)
+Mean difference (95 % CI)
+Sections with
+lower error (%)
+MAE
+TabPFN
+0.123 (0.038)
+−0.0052 (−0.0059, −0.0045)
+63.4
+SchemaGAN
+0.128 (0.035)
+—
+—
+Kriging
+0.191 (0.059)
++0.0628 (+0.0614, +0.0641)
+1.8
+Nearest Neighbour
+0.170 (0.058)
++0.0417 (+0.0404, +0.0430)
+9.5
+RMSE
+TabPFN
+0.264 (0.094)
++0.0043 (+0.0027, +0.0058)
+47.9
+SchemaGAN
+0.260 (0.085)
+—
+—
+Kriging
+0.299 (0.091)
++0.0398 (+0.0380, +0.0417)
+17.2
+Nearest Neighbour
+0.365 (0.130)
++0.1053 (+0.1024, +0.1081)
+6.0
+0
+100
+200
+300
+400
+500
+0
+31
+(a)
+Observed input
+0
+100
+200
+300
+400
+500
+Horizontal position [pixel]
+(b)
+Observed input
+0
+100
+200
+300
+400
+500
+(c)
+Observed input
+ 
+0
+31
+Truth
+ 
+ 
+Truth
+ 
+ 
+Truth
+ 
+ 
+0
+31
+TabPFN
+MAE 0.117   RMSE 0.284
+ 
+ 
+TabPFN
+MAE 0.168   RMSE 0.419
+ 
+ 
+TabPFN
+MAE 0.266   RMSE 0.528
+ 
+ 
+0
+31
+SchemaGAN
+MAE 0.123   RMSE 0.287
+ 
+ 
+SchemaGAN
+MAE 0.339   RMSE 0.686
+ 
+ 
+SchemaGAN
+MAE 0.115   RMSE 0.244
+ 
+ 
+0
+31
+Kriging
+MAE 0.179   RMSE 0.292
+ 
+ 
+Kriging
+MAE 0.319   RMSE 0.488
+ 
+ 
+Kriging
+MAE 0.211   RMSE 0.329
+ 
+ 
+0
+31
+Nearest Neighbour
+MAE 0.173   RMSE 0.370
+ 
+ 
+Nearest Neighbour
+MAE 0.519   RMSE 0.968
+ 
+ 
+Nearest Neighbour
+MAE 0.189   RMSE 0.451
+ 
+1.3
+2
+3
+4.2
+Ic
+Depth [pixel]
+Figure 4: Reconstructions of three sections selected from the 4,000 synthetic test sections: (a) a representative section,
+(b) the section maximising SchemaGAN MAE minus TabPFN MAE, and (c) the section maximising TabPFN MAE
+minus SchemaGAN MAE. For selection, SchemaGAN MAE is averaged over 100 inference seeds; displayed SchemaGAN
+predictions and errors use inference seed 0. MAE and RMSE are computed over all pixels. The vertical scale and
+input-column widths are exaggerated for clarity.
+10
+
+
+3
+6
+12
+24
+48
+Number of CPTs
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+MAE of Ic
+(a)
+SchemaGAN training: 6 CPTs
+0
+20
+40
+60
+80
+100
+Distance to the nearest observed pixel [pixel]
+0.05
+0.10
+0.15
+0.20
+0.25
+0.30
+0.35
+MAE of Ic
+(b)
+≈11 px
+TabPFN
+SchemaGAN
+Figure 5: Mean MAE of Ic at unobserved pixels in the 4,000 synthetic test sections against (a) the number of CPTs and (b)
+the Euclidean distance in grid coordinates to the nearest observed pixel. In (a), model weights and unobserved evaluation
+pixels were fixed across CPT counts; the dotted line marks SchemaGAN’s released six-CPT training configuration. In
+(b), the baseline six-CPT input is used; only 4-pixel distance bins represented in at least 200 sections (5%) are shown.
+Error bars and shading show pointwise 95% confidence intervals for the mean across contributing sections. The dashed
+line in (b) marks the interpolated crossing of the mean curves (approximately 11 pixels).
+continuous high-Ic layer near the bottom where SchemaGAN lost its continuity (Figure 4b), whereas
+SchemaGAN recovered the thin inclined layer that TabPFN reconstructed as disconnected patches
+(Figure 4c). Despite the small differences in mean MAE and RMSE across the synthetic test sections
+(Figure 3; Table 1), TabPFN and SchemaGAN differed in their reconstruction of layer continuity and
+within-layer variation in the illustrated sections.
+Across all 4,000 synthetic test sections, we quantified spatial variation using reconstructed-to-
+target ratios of mean absolute Ic differences at each separation (Section 2.5.2; Table B.1). At a
+vertical separation of one grid row, the across-section median ratios were 0.65 for TabPFN and
+0.76 for SchemaGAN. Across the tested horizontal separations between 1 and 128 grid columns, the
+corresponding medians ranged from 0.37 to 0.82 and from 0.74 to 1.23, respectively. TabPFN’s median
+ratios were below one at every tested separation, whereas SchemaGAN’s were higher than TabPFN’s
+at every separation and exceeded one at horizontal separations of one and two grid columns. We
+observed the same pattern for the ratios of median absolute differences in the same table.
+3.2. Dependence of accuracy on CPT count and distance to observations
+Figure 5a shows mean MAE across the 4,000 synthetic test sections for different numbers of input
+CPTs, with both models’ pretrained weights held fixed (Section 2.5.1). For TabPFN, mean MAE
+11
+
+
+Table 2: Pointwise prediction interval performance for Ic over the 4,000 synthetic test sections. Metrics are computed
+over unobserved pixels within each section and averaged equally across sections. SchemaGAN intervals were constructed
+in this study using Monte Carlo dropout and a pixelwise normal approximation (Section 2.4). Lower interval scores
+indicate better performance at a given nominal level.
+Nominal level (%)
+Method
+Coverage (%)
+Mean width
+Interval score
+50
+TabPFN
+51.6
+0.219
+0.412
+SchemaGAN (MC dropout)
+5.7
+0.025
+0.489
+Kriging
+68.5
+0.393
+0.689
+80
+TabPFN
+79.9
+0.440
+0.636
+SchemaGAN (MC dropout)
+10.9
+0.048
+1.107
+Kriging
+86.1
+0.747
+1.108
+90
+TabPFN
+89.2
+0.597
+0.822
+SchemaGAN (MC dropout)
+13.9
+0.062
+2.071
+Kriging
+90.8
+0.959
+1.441
+95
+TabPFN
+94.1
+0.762
+1.039
+SchemaGAN (MC dropout)
+16.6
+0.074
+3.915
+Kriging
+93.5
+1.142
+1.825
+decreased with every increase in CPT count from 3 to 48. SchemaGAN achieved its lowest mean
+MAE at six CPTs, matching the input count in its released training implementation. The difference
+between the mean curves was smallest at six CPTs. Above six CPTs, SchemaGAN’s mean MAE
+increased as more input columns were added. This increase does not establish an inherent inability
+of the SchemaGAN architecture to use additional observations. Figure 5b shows that mean MAE
+generally increased with distance to the nearest observed pixel for both methods under the baseline
+six-CPT input setting. SchemaGAN had lower mean MAE near the observed pixels, whereas TabPFN
+had lower mean MAE at greater distances, with the mean curves crossing at approximately 11 pixels.
+Local reconstruction differences and the relation to training observation conditions are discussed in
+Sections 4.1 and 4.2, respectively.
+3.3. Calibration and sharpness of prediction intervals
+Table 2 summarises interval performance across all 4,000 synthetic test sections (Section 2.5.1).
+TabPFN’s mean coverage remained close to the nominal level at all four tested levels, while its mean
+interval widths were smaller than those of Kriging. Kriging’s mean coverage exceeded the nominal
+levels at 50% and 80%, reaching 68.5% and 86.1%, respectively. At the nominal 90% level, mean
+coverage was 89.2% for TabPFN, 90.8% for Kriging and 13.9% for the Monte Carlo dropout intervals
+constructed here for SchemaGAN. At this level, TabPFN’s mean width was approximately 38% smaller
+than Kriging’s. The SchemaGAN Monte Carlo dropout intervals had the smallest mean widths at
+every level, with mean coverage reaching 16.6% at the nominal 95% level. At the 50% level, the
+SchemaGAN dropout intervals had a lower mean interval score than Kriging’s (0.489 versus 0.689),
+despite substantial undercoverage. TabPFN achieved the lowest mean interval score at every nominal
+level.
+Figure 6 shows the widths of the pointwise nominal 90% prediction intervals (Section 2.5.2) and
+the predictive distributions at the marked unobserved points for the same three sections as Figure 4.
+TabPFN produced spatially varying widths, with wider intervals near layer transitions and in gaps
+between input CPTs. Kriging’s widths varied much less than those of TabPFN, with local increases
+below the depths reached by shallower input CPTs in all three panels, most extensively in panel
+(b). TabPFN’s mean interval width was larger in panels (b) and (c) than in panel (a), and exceeded
+Kriging’s in panel (c). The Monte Carlo dropout intervals constructed here for SchemaGAN showed
+bands of increased width near layer boundaries and were much narrower than those of the other two
+methods. Their coverage remained far below the nominal level in all three examples, including panel
+12
+
+
+0
+100
+200
+300
+400
+500
+0
+31
+(a)
+Observed input
+0
+100
+200
+300
+400
+500
+Horizontal position [pixel]
+(b)
+Observed input
+0
+100
+200
+300
+400
+500
+(c)
+Observed input
+0
+31
+Truth
+ 
+Truth
+ 
+Truth
+ 
+ 
+ 
+ 
+0
+31
+TabPFN
+Mean width 0.456   Coverage 86.4 %
+ 
+TabPFN
+Mean width 1.004   Coverage 91.3 %
+ 
+TabPFN
+Mean width 1.304   Coverage 92.3 %
+ 
+2
+3
+4
+Ic
+0
+4
+1.6
+2.4
+Ic
+0
+5
+2
+4
+Ic
+0.0
+1.5
+Density
+ 
+ 
+ 
+0
+31
+Mean width 0.065   Coverage 15.0 %
+ 
+Mean width 0.125   Coverage 13.8 %
+ 
+Mean width 0.069   Coverage 15.5 %
+ 
+SchemaGAN (MC dropout)
+SchemaGAN (MC dropout)
+SchemaGAN (MC dropout)
+2
+3
+4
+Ic
+0
+8
+1.6
+2.4
+Ic
+0
+60
+2
+4
+Ic
+0
+6
+Density
+ 
+ 
+ 
+0
+31
+Kriging
+Mean width 1.012   Coverage 93.8 %
+ 
+Kriging
+Mean width 1.142   Coverage 89.1 %
+ 
+Kriging
+Mean width 1.212   Coverage 91.2 %
+ 
+2
+3
+4
+Ic
+0.0
+0.8
+1.6
+2.4
+Ic
+0
+1
+2
+4
+Ic
+0.0
+0.6
+Density
+ 
+ 
+ 
+10−2
+10−1
+100
+90 % prediction interval width of Ic
+Depth [pixel]
+Depth [pixel]
+Depth [pixel]
+Depth [pixel]
+Depth [pixel]
+True value
+90% prediction interval
+SchemaGAN normal approximation
+Figure 6: Pointwise 90 % prediction interval widths and predictive distributions for the same three synthetic sections as
+Figure 4. The observed input and truth rows use the Ic scale of that figure; interval-width maps share the logarithmic
+colour scale below. Density panels show the predictive distributions at the unobserved point (x, z) = (256, 16) marked by
+white circles; SchemaGAN’s histogram uses 100 dropout draws. Mean width and coverage are computed over unobserved
+pixels; the maps show all pixels. The vertical scale and input-column widths of the maps are exaggerated for clarity.
+13
+
+
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+MAE of Ic
+per input placement
+Delft–Schiedam
+Groningen–Delfzijl
+0.0
+0.2
+0.4
+0.6
+0.8
+1.0
+RMSE of Ic
+per input placement
+TabPFN
+SchemaGAN
+Kriging
+Nearest Neighbour
+Figure 7: Distributions of MAE (top) and RMSE (bottom) in Ic per input placement, computed at held-out CPT
+columns for 2,000 input placements per site (1,000 on each of two sections). Whiskers extend to the most extreme values
+within 1.5 interquartile ranges of the box. In total, 10 RMSE values lie above the displayed range.
+(c), where SchemaGAN had lower point-prediction MAE than TabPFN (Figure 4c). In the density
+panels, TabPFN’s predictive distributions at the marked points were concentrated in (a) and (b) but
+broad and multimodal in (c). The intervals from TabPFN and Kriging contained the target value at
+all three points, whereas SchemaGAN’s intervals were the narrowest and excluded it in panels (b) and
+(c).
+3.4. Prediction accuracy on field CPT sections
+Figure 7 shows the distributions of MAE and RMSE at held-out CPT columns in the two field sites,
+and Table 3 reports their means and paired comparisons with SchemaGAN. Without geotechnical
+fine-tuning, TabPFN achieved the lowest mean MAE and RMSE among the four methods at both
+sites in the baseline comparison. Depending on the site and metric, TabPFN had lower error than
+SchemaGAN in 60.1–88.5% of the 2,000 evaluated input placements per site. SchemaGAN had lower
+mean MAE and RMSE than Kriging and Nearest Neighbour at both sites. In Delft–Schiedam section
+1, however, Kriging had lower mean MAE and RMSE than SchemaGAN, and Nearest Neighbour also
+had lower mean MAE. In Groningen–Delfzijl section 2, SchemaGAN’s mean RMSE was lower than
+TabPFN’s (0.459 versus 0.469). Using predictive medians for both models (Section 2.4) preserved the
+site-level MAE orderings shown in Table 3. With predictive means, TabPFN retained the lowest mean
+RMSE at Delft–Schiedam but moved from first to third at Groningen–Delfzijl, behind SchemaGAN
+and Kriging.
+Figure 8 shows reconstructions and held-out CPT profiles for TabPFN and SchemaGAN. For
+each site, we show one input placement from the section with more held-out CPT columns. At
+Delft–Schiedam, both models recovered the broad high-Ic layer but smoothed several measured peaks
+and troughs within it (Figure 8a,c). Below the depths reached by the input CPTs, TabPFN produced
+14
+
+
+Table 3: Errors in Ic at held-out CPT columns, reported as mean (SD) over 2,000 input placements per site. Comparisons
+with SchemaGAN are paired by input placement; negative differences indicate lower error. The final column reports
+the percentage of input placements with lower error than SchemaGAN. Confidence intervals quantify input-placement
+uncertainty within the two fixed sections of each site. SchemaGAN results are averaged over 100 separately scored
+inference seeds for each placement; TabPFN uses one seed, Kriging uses a fixed optimisation seed for each fit, and
+Nearest Neighbour is deterministic.
+Metric
+Method
+Mean (SD)
+Mean difference (95 % CI)
+Placements with
+lower error (%)
+Delft–Schiedam
+MAE
+TabPFN
+0.278 (0.040)
+−0.0272 (−0.0281, −0.0263)
+88.5
+SchemaGAN
+0.305 (0.034)
+—
+—
+Kriging
+0.323 (0.070)
++0.0183 (+0.0163, +0.0202)
+43.4
+Nearest Neighbour
+0.351 (0.119)
++0.0465 (+0.0429, +0.0500)
+37.9
+RMSE
+TabPFN
+0.464 (0.058)
+−0.0328 (−0.0341, −0.0315)
+86.6
+SchemaGAN
+0.497 (0.050)
+—
+—
+Kriging
+0.504 (0.078)
++0.0072 (+0.0051, +0.0093)
+52.1
+Nearest Neighbour
+0.560 (0.133)
++0.0625 (+0.0583, +0.0666)
+31.9
+Groningen–Delfzijl
+MAE
+TabPFN
+0.276 (0.041)
+−0.0078 (−0.0086, −0.0069)
+69.3
+SchemaGAN
+0.284 (0.043)
+—
+—
+Kriging
+0.304 (0.046)
++0.0201 (+0.0192, +0.0210)
+12.4
+Nearest Neighbour
+0.326 (0.044)
++0.0419 (+0.0408, +0.0430)
+1.7
+RMSE
+TabPFN
+0.456 (0.040)
+−0.0024 (−0.0039, −0.0009)
+60.1
+SchemaGAN
+0.459 (0.028)
+—
+—
+Kriging
+0.472 (0.032)
++0.0130 (+0.0118, +0.0142)
+33.2
+Nearest Neighbour
+0.540 (0.055)
++0.0816 (+0.0796, +0.0836)
+0.8
+comparatively uniform predictions that underestimated the measured values in profile P4, whereas
+SchemaGAN showed greater spatial variation. At Groningen–Delfzijl, the two reconstructions differed
+near the bottom of the section, while both missed much of the measured variation around rows 8–12
+in profiles P3 and P4 (Figure 8b,d). Despite its lower mean errors at both sites (Figure 7; Table 3),
+TabPFN was not closer to the measurements at every depth in the illustrated profiles.
+3.5. Joint reconstruction over an extended domain
+Figure 9 illustrates split and joint reconstructions using one of the randomly generated input
+placements for each section. The joint reconstructions retained the broad low- and high-Ic regions
+visible in the split TabPFN reconstructions, with changes in local layer shapes. At Delft–Schiedam,
+for example, the joint reconstruction incorporated deeper CPT observations from the right section and
+showed greater spatial variation below the deepest input observations in the left section (Figure 9a).
+These reconstructions demonstrate flexibility in context size and prediction extent with fixed pretrained
+weights; they do not establish an improvement in prediction accuracy. The implications for investigation
+updates are discussed in Section 4.2.
+3.6. Effect of fine-tuning with synthetic data
+Figure 10 compares the error distributions before and after fine-tuning under the same input
+and evaluation conditions (Section 2.5.1). On the synthetic test sections, fine-tuning reduced mean
+MAE by 22.1% and mean RMSE by 16.0% (Figure 10a). Both metrics showed lower medians and
+narrower interquartile ranges. By contrast, mean MAE and RMSE increased by 7.2% and 5.6% at
+Delft–Schiedam and by 8.8% and 9.7% at Groningen–Delfzijl (Figure 10b). The mean field errors also
+15
+
+
+0
+15
+31
+Depth [pixel]
+TabPFN
+0
+100
+200
+300
+400
+500
+Horizontal position [pixel]
+0
+15
+31
+Depth [pixel]
+P1
+P2
+P3
+P4
+SchemaGAN
+1
+2
+3
+4
+Ic
+0
+8
+16
+24
+31
+Depth [pixel]
+P1
+d = 25 px
+1
+2
+3
+4
+Ic
+P2
+d = 25 px
+1
+2
+3
+4
+Ic
+P3
+d = 50 px
+1
+2
+3
+4
+Ic
+P4
+d = 50 px
+0
+15
+31
+Depth [pixel]
+TabPFN
+0
+100
+200
+300
+400
+500
+Horizontal position [pixel]
+0
+15
+31
+Depth [pixel]
+P1
+P2
+P3
+P4
+SchemaGAN
+1
+2
+3
+4
+Ic
+0
+8
+16
+24
+31
+Depth [pixel]
+P1
+d = 11 px
+1
+2
+3
+4
+Ic
+P2
+d = 21 px
+1
+2
+3
+4
+Ic
+P3
+d = 39 px
+1
+2
+3
+4
+Ic
+P4
+d = 62 px
+1.3
+2
+3
+4.2
+Ic
+(a)  Delft–Schiedam
+(c)
+(b)  Groningen–Delfzijl
+(d)
+Measured
+TabPFN
+SchemaGAN
+Input column
+Profile column
+Figure 8: Field reconstructions and held-out CPT profiles of Ic for one section per site: Delft–Schiedam (a, c) and
+Groningen–Delfzijl (b, d). In (a) and (b), TabPFN is shown above SchemaGAN, whose predictions use inference seed 0.
+Orange triangles mark the six input columns, and grey triangles labelled P1–P4 mark the profile locations. Panels (c)
+and (d) compare predictions and measurements at four held-out columns per section. Profile columns were selected at
+distances closest to the quartiles and maximum of the horizontal distance to the nearest input column, without reference
+to prediction errors. Profile titles give this distance, d, in pixels. Axes use grid coordinates. Lines are drawn only at
+rows with CPT measurements.
+increased in each section, and the overall trends were unchanged with a different optimisation seed
+(Table A.1).
+Figure 11 illustrates pronounced changes after fine-tuning in a synthetic section (a) and a field
+input placement (b). In the synthetic example, fine-tuning improved the reconstruction of the lower
+high-Ic band, particularly its rise towards the right edge, largely beyond the rightmost input column.
+Neither TabPFN without fine-tuning nor SchemaGAN reproduced this rise. In the Delft–Schiedam
+example, selected for the largest MAE increase, fine-tuning lowered predicted Ic below the upper
+high-Ic band to the left of all input columns. This increased the underestimation below approximately
+row 12 in profiles P3 and P4, while predictions in profiles P1 and P2 between input columns changed
+less.
+To put these contrasting fine-tuning outcomes in context, we compared the three Ic descriptors
+between the synthetic training and field sections (Figure 12). Mean Ic lay within the corresponding
+synthetic 5th–95th percentile range in all four field sections. Vertical differences exceeded the 95th
+percentile in both Delft–Schiedam sections but remained within the 5th–95th percentile range in
+both Groningen–Delfzijl sections. Between-CPT differences were 2.17–4.27 times the corresponding
+synthetic medians and exceeded the 99.9th percentile in all four field sections. The implications of
+these findings for synthetic training data and field validation are discussed in Section 4.3.
+16
+
+
+0
+16
+31
+SchemaGAN (split)
+0
+16
+31
+SchemaGAN (split)
+0
+16
+31
+TabPFN (split)
+0
+16
+31
+TabPFN (split)
+0
+256
+512
+768
+1023
+0
+16
+31
+TabPFN (joint)
+0
+256
+512
+768
+1023
+0
+16
+31
+TabPFN (joint)
+1.3
+2
+3
+4.2
+Ic
+(a) Delft–Schiedam
+(b) Groningen–Delfzijl
+Grid row
+Grid column
+Split location
+Input CPT
+Figure 9: Reconstructions of Ic at (a) Delft–Schiedam and (b) Groningen–Delfzijl. In the split reconstructions, each
+section is reconstructed independently using six input CPTs; the joint TabPFN reconstruction uses the 12 input
+CPTs from both sections. TabPFN maps show predictive medians and SchemaGAN maps show individual generated
+reconstructions, all using inference seed 0. Axes use grid coordinates.
+4. Discussion
+4.1. Transfer from general tabular pretraining
+Building on applications of TabPFN to soil-property prediction and digital soil mapping [18, 20],
+we evaluated its ability to reconstruct two-dimensional Ic sections from sparse CPT observations
+under varying observation conditions, using grid coordinates as the only features. Our results provide
+initial evidence that general tabular pretraining can support this reconstruction without geotechnical
+fine-tuning. With its pretrained weights held fixed, TabPFN recovered the main layer geometry in a
+representative synthetic section and achieved mean errors close to those of SchemaGAN across the
+synthetic test sections (Section 3.1). In the baseline field comparison, it achieved the lowest site-level
+mean MAE and RMSE among the four methods at both sites (Section 3.4).
+Both Kriging and TabPFN combine prior assumptions with the observed data: Kriging uses a
+specified covariance model, whereas TabPFN draws on its general tabular prior. This prior covers diverse
+relationships among variables, including spatial relationships [14]. Subsurface patterns may share
+statistical regularities with the synthetic pretraining data, allowing TabPFN to use learned relationships
+to represent local smoothness, larger-scale trends and interactions between the coordinate variables.
+However, we did not analyse the model’s internal representations or isolate the contributions of these
+learned relationships. The reconstructions therefore do not establish that the model has geological
+understanding or recovers the processes that formed the ground. Future work could investigate the
+internal representations underlying these spatial predictions through embedding analyses, as explored
+in previous geotechnical applications of TabPFN [19].
+TabPFN and SchemaGAN differ in their pretraining data, input representations and inference
+procedures, so their relative errors do not isolate the effect of either the prior or the network architecture
+17
+
+
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+MAE of Ic
+(a)
+0.0
+0.1
+0.2
+0.3
+0.4
+0.5
+MAE of Ic
+(b)
+Synthetic test
+0.0
+0.2
+0.4
+0.6
+0.8
+RMSE of Ic
+Delft–Schiedam
+Groningen–Delfzijl
+0.0
+0.2
+0.4
+0.6
+0.8
+RMSE of Ic
+TabPFN
+TabPFN (fine-tuned, seed 0)
+SchemaGAN
+Figure 10: Distributions of MAE (top) and RMSE (bottom) in Ic before and after fine-tuning of TabPFN, with
+SchemaGAN for comparison. In (a), errors are computed over all pixels of the 4,000 synthetic test sections; in (b), errors
+are computed at held-out CPT columns for 2,000 input placements per site (1,000 on each of two sections). Whiskers
+extend to the most extreme values within 1.5 interquartile ranges of the box.
+(Section 2.4). SchemaGAN’s field errors may also depend on how well its training sections represent
+site layering [11]. On the synthetic sections, the crossing of the distance curves (Figure 5b) shows
+that the MAE ordering of TabPFN and SchemaGAN also depends on proximity to observations.
+TabPFN achieved lower MAE than SchemaGAN farther from observations while producing smaller
+spatial differences overall than those in the target sections (Table B.1). TabPFN’s preservation of
+layer continuity and SchemaGAN’s recovery of a thin inclined layer in different examples illustrate
+why local layer geometry should be assessed alongside mean errors (Figure 4b,c). Overall, these results
+suggest that, without geotechnical fine-tuning, TabPFN can provide initial section reconstructions for
+examining the main layer geometry between sparse CPTs.
+4.2. In-context inference and investigation updates
+With in-context inference, we can incorporate additional CPT observations and extend the prediction
+domain without updating TabPFN’s weights. In the synthetic experiments, TabPFN’s mean MAE
+decreased at every tested increase in CPT count from 3 to 48, indicating that it benefited from
+additional observations supplied as context (Section 3.2). SchemaGAN’s response to additional CPTs
+should be interpreted in relation to its training configuration: its released training implementation uses
+six input columns per section. The released model accepted other CPT counts in our experiments, but
+its mean MAE increased above six CPTs, possibly reflecting changes in observation density and column
+spacing relative to this configuration. Retraining SchemaGAN on larger datasets with more varied
+layer geometries and mixed CPT counts could change this response and the comparison with TabPFN.
+For larger prediction domains, SchemaGAN can combine predictions from overlapping sections [27].
+TabPFN instead combined the input CPT observations from each site’s two sections into a single
+context, allowing these observations to inform predictions throughout the joint grid (Section 3.5).
+These results suggest that a model pretrained on general tabular data can provide an initial section
+reconstruction with default preprocessing, without requiring a representative geotechnical training
+dataset. During sequential site investigation, CPT observations from each stage could then be added to
+18
+
+
+0
+15
+31
+Observed input
+0
+15
+31
+Truth
+0
+15
+31
+SchemaGAN   MAE 0.349
+0
+15
+31
+TabPFN   MAE 0.329
+0
+100
+200
+300
+400
+500
+Horizontal position [pixel]
+0
+15
+31
+TabPFN (fine-tuned)   MAE 0.140
+0
+15
+31
+SchemaGAN   MAE 0.329
+0
+15
+31
+TabPFN   MAE 0.278
+0
+100
+200
+300
+400
+500
+Horizontal position [pixel]
+0
+15
+31
+P1
+P2
+P3
+P4
+TabPFN (fine-tuned)   MAE 0.432
+1
+2
+3
+4
+Ic
+0
+8
+16
+24
+31
+Depth [pixel]
+P1
+d = 25 px
+1
+2
+3
+4
+Ic
+P2
+d = 25 px
+1
+2
+3
+4
+Ic
+P3
+d = 93 px
+1
+2
+3
+4
+Ic
+P4
+d = 168 px
+1.3
+2
+3
+4.2
+Ic
+(a)  Synthetic test
+(b)  Delft–Schiedam
+Depth [pixel]
+Depth [pixel]
+Measured
+SchemaGAN
+TabPFN
+TabPFN (fine-tuned, seed 0)
+Input column
+Profile column
+Figure 11: Examples of pronounced changes after fine-tuning, selected from the full evaluation sets: (a) a synthetic
+test section and (b) a field input placement at Delft–Schiedam. The synthetic section maximises the smaller of the
+MAE reductions relative to TabPFN without fine-tuning and SchemaGAN, with SchemaGAN MAE averaged over
+100 inference seeds for selection. The field input placement maximises the MAE increase relative to TabPFN without
+fine-tuning. The displayed MAEs are calculated from the reconstructions shown, using all pixels in (a) and all held-out
+CPT columns in (b). In (b), P1–P4 mark the held-out CPT profiles selected using the distance criterion in Figure 8; d is
+the distance to the nearest input column in pixels. Axes use grid coordinates. The vertical scale of the section maps and
+the input-column widths in (a) are exaggerated for clarity.
+the context to update predictions and their uncertainty in previously reconstructed areas and extend
+the reconstruction as the investigated area grows. The synthetic prediction-interval results (Section 3.3)
+motivate testing whether TabPFN’s predictive uncertainty can inform the selection of subsequent
+CPT locations, once its intervals have been validated at held-out field CPTs. Zuada Coelho et al. [28]
+used deep reinforcement learning to select investigation locations adaptively in synthetic geotechnical
+sections. Future work could couple a reinforcement learning policy with TabPFN’s prediction updates.
+Such a policy would require its own training and validation, balancing investigation cost against the
+value of additional observations for site characterisation and engineering decisions.
+Beyond adding CPT observations, in-context inference allows the same pretrained model to be used
+with different features and targets, so the coordinate-only formulation could serve as a baseline for
+evaluating richer inputs. Possible extensions include topography, other CPT-derived parameters, and
+information from borehole logs, geophysical measurements or geological interpretations. Implementing
+these extensions would require aligning depth references, accounting for the spatial extent represented
+by each measurement, defining compatible prediction targets, and specifying which features are
+available at query locations.
+19
+
+
+2.0
+2.5
+3.0
+3.5
+Mean Ic
+Delft–Schiedam
+Section 1
+Delft–Schiedam
+Section 2
+Groningen–Delfzijl
+Section 1
+Groningen–Delfzijl
+Section 2
+(a) Mean Ic
+0.0
+0.1
+0.2
+0.3
+0.4
+Mean absolute Ic difference
+between adjacent depth rows
+(b) Vertical differences
+0.0
+0.1
+0.2
+0.3
+0.4
+Mean absolute Ic difference
+between neighbouring CPTs
+(c) Between-CPT differences
+Synthetic training sections
+Field section
+Figure 12: Comparison of Ic descriptors between 16,000 synthetic training sections and four field sections using matched
+CPT locations and depth rows, with the deepest non-zero row of each field CPT excluded. Panels show (a) mean Ic, (b)
+mean absolute differences between adjacent depth rows, and (c) mean absolute differences between neighbouring CPT
+columns at the same depth row. Grey boxes span the 25th–75th percentiles, whiskers the 5th–95th percentiles, and
+central lines indicate medians across synthetic sections; purple diamonds indicate field values.
+4.3. Fine-tuning and geotechnical training data
+Under the training and checkpoint-selection procedure used here, fine-tuning improved synthetic test
+accuracy but increased mean MAE and RMSE at both field sites (Section 3.6). In the Delft–Schiedam
+example, fine-tuning increased underestimation to the left of all input CPTs while predictions between
+them changed less (Figure 11b). In the descriptor comparison, between-CPT differences in all four
+field sections exceeded the 99.9th percentile of the corresponding synthetic training distributions,
+while vertical differences exceeded the synthetic 95th percentile only in the Delft–Schiedam sections
+(Figure 12). One possible explanation for the field deterioration is that fine-tuning adapted the model
+more closely to the layer geometries and within-layer variability represented in the synthetic training
+data, reducing its ability to generalise to field conditions with different characteristics. We compared
+descriptors calculated on the section grids, so the observed differences may reflect how the field CPT
+data were preprocessed and averaged into grid rows (Section 2.2). The present experiments do not
+establish the cause of the field deterioration or rule out overfitting to individual training sections. We
+did not separately assess the effects of the training distribution, optimisation hyperparameters and
+checkpoint selection.
+Future comparisons across different ground conditions and synthetic data-generation procedures
+should investigate the causes of the field deterioration and examine whether site information is better
+introduced through context or weight updates. Training sets could vary layer geometries, within-layer
+variability and observation patterns, with generation parameters informed by field CPTs. Context
+selection could use observations from similar sites, drawing on the concept of site recognition in
+geotechnical engineering [4]. Site characteristics, such as depositional history or stratigraphic structure,
+could guide the selection of context observations or synthetic training sections, and could also be
+included as features when C combines observations from multiple sites. Comparisons of context
+selection and fine-tuning at sites not used to design these approaches, using the same available field
+information, would test whether each approach improves field prediction and which is preferable when
+site information is limited.
+4.4. Limitations and future validation
+Across the field accuracy experiments, we evaluated two fixed sections at each of two sites in the
+Netherlands, using random input placements to assess sensitivity to observation selection. These
+placements do not provide independent tests across geological settings, and accuracy at locations
+without CPT measurements remains unverified. We have also not tested how field accuracy changes
+20
+
+
+with CPT count or how TabPFN’s predictions vary with its inference seed. Further validation should
+include independent sites with different depositional histories, stratigraphic structures and investigation
+patterns. Regarding spatial representation, the field targets are depth-averaged Ic values, so the
+results do not establish reconstruction of variations finer than the grid intervals. Grid indices also omit
+physical spacings and aspect ratios (Section 2.3). For the joint reconstructions, we placed the two
+section grids at each site side by side without rescaling and assumed that equal row indices represented
+the same depth interval (Section 2.5.1). The illustrated comparisons cover one input placement per
+site; they do not establish an accuracy benefit of the combined context across input placements or
+assess sensitivity to the assumed depth correspondence (Section 3.5). More generally, sensitivity
+to grid resolution and the resulting changes in observation aggregation remains untested. Further
+work should examine how these factors and site geometry affect reconstruction accuracy, and how
+coordinate representations and internal preprocessing influence TabPFN’s representation of spatial
+anisotropy. For the difference ratios (Table B.1), we evaluated TabPFN’s pixelwise predictive medians
+and SchemaGAN’s individual generated reconstructions; using the pixelwise median of SchemaGAN’s
+100 reconstructions instead changed the across-section medians of both ratio types by less than 0.03 at
+every tested separation and preserved the orderings of these ratios reported in Section 3.1. Neither the
+difference ratios, which do not distinguish within-layer changes from layer transitions, nor MAE and
+RMSE directly measure boundary locations or layer connectivity. Dedicated evaluation of stratigraphic
+geometry and engineering-property assignments is therefore needed to assess the engineering usefulness
+of the reconstructions.
+We evaluated prediction intervals only on synthetic sections with six input CPTs; field point-
+prediction accuracy does not establish interval calibration at the field sites. Although TabPFN’s
+mean pointwise coverage was close to nominal levels on these sections, this average does not establish
+calibration at every location or simultaneous coverage of an entire section. SchemaGAN’s undercoverage
+concerns the narrow intervals obtained here from Monte Carlo dropout with a pixelwise normal
+approximation; we did not evaluate other uncertainty formulations.
+These narrow intervals are
+consistent with the limited output variation under dropout reported for pix2pix [23], on which
+SchemaGAN is based. Future work should test interval calibration at other CPT counts and at
+held-out field CPTs, including at independent sites. To support engineering decisions, future studies
+should also develop joint representations of uncertainty that account for spatial dependence. These
+representations should be used to propagate uncertainty in reconstructed ground conditions through
+geotechnical analyses, including uncertainty in any conversion from Ic to engineering properties. Case
+studies of sequential investigation (Section 4.2) could then evaluate whether additional observations
+improve predictions of engineering responses and decisions about safety, serviceability and cost. A
+longer-term objective is to generate spatially coherent alternative ground models that represent
+uncertainty in layer continuity, boundary geometry and material distribution.
+5. Conclusion
+This study provides initial evidence that TabPFN, pretrained on general synthetic tabular data, can
+reconstruct two-dimensional Ic sections from grid coordinates and sparse CPT observations without
+geotechnical fine-tuning. In the baseline comparison, TabPFN had mean prediction errors close to
+those of SchemaGAN on synthetic sections and the lowest site-level mean MAE and RMSE among the
+four methods at held-out CPT locations at both field sites. With fixed pretrained weights, TabPFN’s
+mean MAE decreased at each tested increase in CPT count on the synthetic sections, and the model
+reconstructed the two field-section grids at each site jointly from their combined input CPTs. Without
+additional calibration, its pointwise prediction intervals achieved mean coverage close to the nominal
+levels on synthetic sections with six input CPTs, with narrower mean widths than those of the Kriging
+implementation compared here. Under the training and checkpoint-selection procedure used here,
+fine-tuning on synthetic sections improved synthetic test accuracy but increased mean MAE and
+RMSE at both field sites.
+Future research should investigate how similarity in ground conditions can guide the selection of
+additional context observations from other sites, and whether synthetic training data informed by
+21
+
+
+field CPTs can improve field prediction after fine-tuning. Validation at independent field sites and in
+sequential investigations should assess prediction accuracy and interval calibration across different
+ground and observation conditions. Further studies should account for the spatial dependence of
+prediction errors when propagating uncertainty through geotechnical analyses to assess the implications
+for investigation and design decisions. More broadly, the results from adding CPT observations and
+extending the prediction domain with fixed pretrained TabPFN weights indicate that general-purpose
+tabular foundation models offer a promising route for updating subsurface predictions from sparse and
+evolving site-investigation data.
+Data availability
+The synthetic dataset is available at https://doi.org/10.5281/zenodo.13143431. Code for
+reproducing the synthetic experiments is available at https://github.com/tigtie09/tabpfn-for-
+subsurface-schematisation.
+22
+
+
+Table A.1: Mean MAE and RMSE in Ic before and after fine-tuning with optimisation seeds 0 and 1, using the baseline
+input placements. Synthetic errors are averaged over the 4,000 test sections using all pixels; field errors are calculated at
+held-out CPT columns and averaged over 2,000 input placements per site.
+Dataset
+Metric
+Before fine-tuning
+Seed 0
+Seed 1
+Synthetic
+MAE
+0.1228
+0.0956
+0.0957
+RMSE
+0.2638
+0.2215
+0.2217
+Delft–Schiedam
+MAE
+0.2777
+0.2978
+0.3013
+RMSE
+0.4644
+0.4905
+0.4943
+Groningen–Delfzijl
+MAE
+0.2760
+0.3002
+0.2957
+RMSE
+0.4565
+0.5006
+0.4934
+Appendix A. Inference and fine-tuning settings
+TabPFN inference (float32 precision) and both fine-tuning runs used PyTorch 2.11.0 with CUDA
+12.8, and SchemaGAN inference used TensorFlow 2.15.1. Each fine-tuning step used one section and
+2,048 query locations sampled uniformly without replacement from its unobserved pixels. Training
+used one ensemble member with a softmax temperature of 0.9, cycling through the four preprocessing
+combinations in Section 2.3. Preprocessing was fitted only to the context observations; context and
+query targets were standardised using the mean and standard deviation of the context targets before
+the selected target transformation. We used AdamW with a peak learning rate of 10−5 and weight
+decay of 0.01, with 500 steps of linear warmup followed by cosine decay. The gradient norm was
+clipped at 1.0, and automatic mixed precision was used.
+The training and validation inputs were drawn once per section using the baseline sampling procedure
+(Section 2.5.1). Because each split’s inputs were sampled with seed 20232023 in lexicographic file-path
+order, placements coincided at corresponding positions in the validation and test splits and the first
+4,000 training sections, although the target sections differed. We therefore also evaluated TabPFN
+before and after fine-tuning on the same 4,000 synthetic test sections with fresh six-column inputs
+drawn by the same procedure (seed 20261022), none of which repeated a training, validation or baseline
+test placement. For optimisation seed 0, fine-tuning reduced mean MAE and RMSE by 22.6% and
+16.5% with fresh inputs, compared with 22.1% and 16.0% with the baseline inputs. To keep the
+evaluation pixels fixed across input placements, we also scored only pixels unobserved under both
+placements; the improvements from fine-tuning persisted.
+We repeated fine-tuning with optimisation seed 1, keeping the training and validation data, input
+placements, initial weights and hyperparameters fixed (Table A.1). Both runs were validated after each
+epoch using the inference settings in Section 2.3. The mean validation MAE in Ic over unobserved
+pixels decreased at every epoch, from 0.1271 before fine-tuning to 0.0981 and 0.0983 for seeds 0 and 1,
+respectively; both runs selected epoch 5. For seed 1, mean training CRPS in the internal target space
+decreased from 0.1482 at epoch 1 to 0.1243 at epoch 5. Mean training MSE decreased from 0.3180
+to 0.2298 by epoch 4 before increasing to 0.3396 at epoch 5. The seed 1 run, including validation,
+took 18.1 hours on one NVIDIA RTX 6000 Ada Generation GPU and one CPU thread, with a peak
+allocated GPU memory of 3.21 GiB.
+23
+
+
+Appendix B. Spatial variation in synthetic reconstructions
+Table B.1: Reconstructed-to-target ratios of absolute Ic differences for the 4,000 synthetic test sections using baseline
+inputs. Cells report medians across sections; SchemaGAN ratios are first averaged over 100 individually evaluated
+reconstructions within each section. The two blocks use mean and median absolute differences over all pixel pairs at
+each indicated grid separation, including pairs involving input pixels. For Nearest Neighbour at the tested horizontal
+separations from 1 to 32 columns, more than half of the pixel pairs have identical values in every section, giving zero
+ratios of median absolute differences. Ratios below one indicate smaller differences than in the target sections; neither
+type of ratio isolates within-layer variation or measures boundary locations or layer connectivity.
+Method
+Vertical separation
+(rows)
+Horizontal separation
+(columns)
+1
+2
+4
+8
+1
+2
+4
+8
+16
+32
+64
+128
+Ratios of mean absolute differences
+TabPFN
+0.65
+0.75
+0.86
+0.94
+0.82
+0.53
+0.40
+0.37
+0.40
+0.48
+0.62
+0.76
+SchemaGAN
+0.76
+0.83
+0.91
+0.97
+1.23
+1.03
+0.86
+0.77
+0.74
+0.77
+0.83
+0.88
+Kriging
+0.76
+0.85
+0.91
+0.91
+0.30
+0.31
+0.31
+0.32
+0.37
+0.47
+0.65
+0.83
+Nearest Neighbour
+0.85
+0.87
+0.89
+0.93
+0.38
+0.38
+0.39
+0.41
+0.47
+0.61
+0.88
+1.03
+Ratios of median absolute differences
+TabPFN
+0.34
+0.41
+0.56
+0.93
+0.46
+0.29
+0.21
+0.18
+0.19
+0.23
+0.34
+0.51
+SchemaGAN
+0.59
+0.64
+0.75
+0.94
+1.22
+1.18
+0.94
+0.81
+0.73
+0.72
+0.77
+0.82
+Kriging
+1.12
+1.20
+1.27
+0.92
+0.36
+0.36
+0.36
+0.37
+0.40
+0.52
+0.79
+1.12
+Nearest Neighbour
+0.78
+0.80
+0.81
+0.88
+0.00
+0.00
+0.00
+0.00
+0.00
+0.00
+0.58
+1.03
+References
+[1] G. B. Baecher, J. T. Christian, Reliability and Statistics in Geotechnical Engineering, John Wiley
+& Sons, 2003.
+[2] K.-K. Phoon, F. H. Kulhawy, Characterization of geotechnical variability, Canadian Geotechnical
+Journal 36 (4) (1999) 612–624. doi:10.1139/t99-038.
+[3] Y. Otake, Y. Honjo, Challenges in geotechnical design revealed by reliability assessment: Review
+and future perspectives, Soils and Foundations 62 (3) (2022) 101129. doi:10.1016/j.sandf.
+2022.101129.
+[4] K.-K. Phoon, J. Ching, T. Shuku, Challenges in data-driven site characterization, Georisk:
+Assessment and Management of Risk for Engineered Systems and Geohazards 16 (1) (2022)
+114–126. doi:10.1080/17499518.2021.1896005.
+[5] I. Yoshida, Y. Tomizawa, Y. Otake, Estimation of trend and random components of conditional
+random field using Gaussian process regression, Computers and Geotechnics 136 (2021) 104179.
+doi:10.1016/j.compgeo.2021.104179.
+[6] T. Zhao, Y. Wang, Interpolation and stratification of multilayer soil property profile from
+sparse measurements using machine learning methods, Engineering Geology 265 (2020) 105430.
+doi:10.1016/j.enggeo.2019.105430.
+[7] J. Ching, S. Wu, K.-K. Phoon, Constructing quasi-site-specific multivariate probability distribution
+using hierarchical Bayesian model, Journal of Engineering Mechanics 147 (10) (2021) 04021069.
+doi:10.1061/(ASCE)EM.1943-7889.0001964.
+[8] T. Saito, Y. Otake, S. Wu, D. Takano, Y. Sugiyama, I. Yoshida, What defines a “site” in
+geotechnical engineering?: A comparative study between local and global big indirect databases,
+Computers and Geotechnics 177 (2025) 106826. doi:10.1016/j.compgeo.2024.106826.
+24
+
+
+[9] Y. Hu, Y. Wang, Probabilistic soil classification and stratification in a vertical cross-section from
+limited cone penetration tests using random field and Monte Carlo simulation, Computers and
+Geotechnics 124 (2020) 103634. doi:10.1016/j.compgeo.2020.103634.
+[10] C. Shi, Y. Wang, Development of subsurface geological cross-section from limited site-specific
+boreholes and prior geological knowledge using iterative convolution XGBoost, Journal of Geotech-
+nical and Geoenvironmental Engineering 147 (9) (2021) 04021082. doi:10.1061/(ASCE)GT.1943-
+5606.0002583.
+[11] F. A. Campos Montero, B. Zuada Coelho, E. Smyrniou, R. Taormina, P. J. Vardon, SchemaGAN: A
+conditional generative adversarial network for geotechnical subsurface schematisation, Computers
+and Geotechnics 183 (2025) 107177. doi:10.1016/j.compgeo.2025.107177.
+[12] R. Bommasani, D. A. Hudson, E. Adeli, et al., On the opportunities and risks of foundation
+models, arXiv preprint arXiv:2108.07258 (2021). doi:10.48550/arXiv.2108.07258.
+URL https://arxiv.org/abs/2108.07258
+[13] N. Hollmann, S. Müller, L. Purucker, A. Krishnakumar, M. Körfer, S. B. Hoo, R. T. Schirrmeister,
+F. Hutter, Accurate predictions on small data with a tabular foundation model, Nature 637 (8045)
+(2025) 319–326. doi:10.1038/s41586-024-08328-6.
+[14] L. Grinsztajn, K. Flöge, O. Key, F. Birkel, P. Jund, B. Roof, M. Manium, S. B. Hoo, M. Bühler,
+A. Garg, D. Safaric, J. Robertson, B. Jäger, S. Alessi, A. Hayler, V. Moroshan, L. Purucker,
+P. Singer, A. Arazi, J. Siems, J. H. Metzen, G. Grab, N. Erickson, S. Guo, E. Kalfon, S. Bing,
+D. Salinas, C. Cornu, L. C. Wehrhahn, D. Kriuchkova, K. Kaya, L. Sidhoum, M. Salmon, J. Chen,
+M. Hulsebos, Y. LeCun, S. Müller, B. Schölkopf, S. Gambhir, N. Hollmann, F. Hutter, TabPFN-3:
+Technical report, arXiv preprint arXiv:2605.13986 (2026). doi:10.48550/arXiv.2605.13986.
+URL https://arxiv.org/abs/2605.13986
+[15] X. Pang, X. Wang, Y. Li, R. Zhang, An international roughness index estimation model using
+TabPFN, IEEE Sensors Journal 26 (1) (2026) 889–900. doi:10.1109/JSEN.2025.3635347.
+[16] D. Mizutani, A. Kurabe, T. Saito, Y. Nakazato, T. Nakamura, Y. Otake, Pavement performance
+prediction via a tabular foundation model, Computer-Aided Civil and Infrastructure Engineering
+49 (2026) 100097. doi:10.1016/j.cacaie.2026.100097.
+[17] Z. Xiang, M. Gao, S. Holford, R. King, S. Mildren, J. Sage, J. Oh, An integrated data-driven frame-
+work for subsurface geomechanical characterisation via tabular foundation model, Engineering
+Geology 372 (2026) 108992. doi:10.1016/j.enggeo.2026.108992.
+[18] T. Saito, Y. Otake, S. Wu, Applying a tabular foundation model to geotechnical site characteriza-
+tion, Geodata and AI 6 (2026) 100040. doi:10.1016/j.geoai.2025.100040.
+[19] T. Saito, Y. Otake, D. Mizutani, S. Wu, TabPFN extensions for interpretable geotechnical
+modelling, Georisk: Assessment and Management of Risk for Engineered Systems and Geohazards
+(2026). doi:10.1080/17499518.2026.2707500.
+[20] J. Schmidinger, V. Barkov, S. Vogel, M. Atzmueller, G. B. M. Heuvelink, Kriging prior regression:
+A case for kriging-based spatial features with TabPFN in soil mapping, Computers and Electronics
+in Agriculture 243 (2026) 111352. doi:10.1016/j.compag.2025.111352.
+[21] F. Campos Montero, E. Smyrniou, B. Zuada Coelho, R. Taormina, P. J. Vardon, GeoSyn:
+Synthetic geotechnical cross-sections for machine learning applications, in: 29th European Young
+Geotechnical Engineers Conference, Croatian Geotechnical Society; University of Rijeka, Faculty
+of Civil Engineering, 2025, pp. 115–119. doi:10.32762/eygec.2025.23.
+[22] F. Campos Montero, SchemaGAN: Dataset and pre-trained model for subsoil schematization,
+Zenodo (2024). doi:10.5281/zenodo.13143431.
+25
+
+
+[23] P. Isola, J.-Y. Zhu, T. Zhou, A. A. Efros, Image-to-image translation with conditional adversarial
+networks, in: Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition,
+2017, pp. 5967–5976. doi:10.1109/CVPR.2017.632.
+[24] SchemaGAN: source code, GitHub repository, accessed 28 September 2026 (n.d.).
+URL https://github.com/fabcamo/schemaGAN
+[25] Y. Gal, Z. Ghahramani, Dropout as a Bayesian approximation: Representing model uncertainty
+in deep learning, in: Proceedings of the 33rd International Conference on Machine Learning,
+Vol. 48 of Proceedings of Machine Learning Research, PMLR, 2016, pp. 1050–1059.
+URL https://proceedings.mlr.press/v48/gal16.html
+[26] T. Gneiting, A. E. Raftery, Strictly proper scoring rules, prediction, and estimation, Journal of the
+American Statistical Association 102 (477) (2007) 359–378. doi:10.1198/016214506000001437.
+[27] F. Campos Montero, C. Bremmer, K. S. Lam, Toepassing SchemaGAN in een Digital Twin:
+Verkenning aan de hand van de Digital Twin ARK, Tech. Rep. 11211566-007-ZWS-0001, Deltares,
+in Dutch (Dec. 2025).
+URL https://publications.deltares.nl/11211566_007_0001.pdf
+[28] B. Zuada Coelho, E. Smyrniou, F. A. Campos Montero, Optimizing geotechnical in-situ site
+investigations using Deep Reinforcement Learning, Geodata and AI 6 (2026) 100038.
+doi:
+10.1016/j.geoai.2025.100038.
+26

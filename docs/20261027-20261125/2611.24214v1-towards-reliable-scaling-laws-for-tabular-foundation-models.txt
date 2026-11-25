@@ -1,0 +1,1250 @@
+Towards Reliable Scaling Laws for Tabular Foundation
+Models
+Johannes Hog1,∗,†
+Neeratyoy Mallik1,2,∗
+Steven Adriaensen1
+Jan Hendrik Metzen3
+Tom Viering4
+Danny Stoll1
+Frank Hutter3,5,1
+1University of Freiburg
+2Zuse School ELIZA
+3Prior Labs
+4Delft University of Technology
+5ELLIS Institute Tübingen ∗Equal contribution
+†Corresponding author: hogj@cs.uni-freiburg.de
+Abstract
+Scaling laws are widely used to predict foundation model performance and guide compute
+allocation. However, tabular foundation models (TFMs) differ from conventional founda-
+tion models in that they are pretrained on virtually unlimited synthetic data from config-
+urable distributions, while ultimately being evaluated on real-world datasets. We investi-
+gate whether scaling laws for TabPFNv2-style models reliably extrapolate to larger compute
+budgets and generalize across evaluation settings. Our analysis reveals differences between
+synthetic and real-world scaling behavior and shows that accurately fitting a scaling law
+does not necessarily yield reliable prescriptions on unseen datasets. In particular, select-
+ing configurations using too few evaluation datasets leads to systematically over-optimistic
+performance estimates. We further demonstrate that compute-optimal scaling requires ex-
+panding the range of synthetic pretraining dataset sizes alongside model size and training
+compute. Increasing the maximum numbers of rows and features sampled during pretraining
+improves performance and produces more predictable scaling trends. These insights guide
+the training of more efficient TabPFNv2-like models, using the open-source training pipeline
+of nanoTabPFN.
+1
+Introduction
+Tabular data underpins predictive tasks across diverse domains, including healthcare, finance, and scientific
+discovery (Borisov et al., 2022; Prior Labs, 2026). Unlike conventional models that require dataset-specific
+training, tabular foundation models (TFMs) achieve state-of-the-art performance on small- to medium-sized
+datasets without dataset-specific parameter updates (Erickson et al., 2026; Purucker et al., 2026; Jäger et al.,
+2026). Models such as TabPFN (Hollmann et al., 2025; Jäger et al., 2026), TabICL (Qu et al., 2025; 2026),
+LimiX (Zhang et al., 2025a), and Mitra (Zhang et al., 2025b) learn to perform in-context prediction by
+pretraining on synthetic datasets sampled from task priors.
+The success of TFMs has motivated extensions to time-series forecasting (Hoo et al., 2026), causal effect esti-
+mation (Robertson et al., 2025), survival prediction (Böhm et al., 2026; Qi et al., 2026), and hyperparameter
+optimization (Müller et al., 2023; Rakotoarison et al., 2024). These applications motivate experimentation
+with task-specific priors and model architectures, increasingly facilitated by open-source implementations
+such as TabICL (Qu et al., 2026) and TFM-Playground (Pfefferle et al., 2026). However, while such exper-
+imentation is feasible at small scales, evaluating promising configurations at competitive compute budgets
+remains expensive, especially as models scale to hundreds of millions of parameters (Kong et al., 2026). Scal-
+ing laws, widely used to predict performance and guide compute allocation in language modeling (Kaplan
+et al., 2020; Hoffmann et al., 2022), offer a framework for bridging this gap.
+Previous studies have investigated scaling relationships for TFMs (Zhang et al., 2025a; Ma et al., 2025;
+Zhang et al., 2025b), but accurately fitting observed performance does not guarantee reliable extrapolation
+to larger compute budgets. In particular, unconstrained scaling-law formulations can yield predictions outside
+1
+arXiv:2611.24214v1  [cs.LG]  18 Nov 2026
+
+
+the valid range of evaluation metrics, such as ROC AUC (Zhang et al., 2025a). Selecting compute-optimal
+configurations on too few evaluation datasets can further yield over-optimistic performance estimates even
+with good scaling-law fits. Finally, the synthetic prior design and sampling contain many degrees of freedom
+that yield vastly different data mixtures while remaining finely controllable. This makes the prior itself
+a scaling axis for the compute-optimal performance of TFMs. We investigate these challenges using over
+6,000 training runs spanning model sizes, compute budgets, synthetic prior configurations, and training
+hyperparameters. Our main contributions are:
+• A systematic approach to study tabular scaling. We conduct a comprehensive scaling analysis
+of TabPFNv2-style models, jointly exploring model scale, training hyperparameters, and synthetic
+prior configurations. We derive scaling laws and prescriptions for these dimensions, considering both
+synthetic validation and real-world performance (Section 4.1).
+• Compute-optimal scaling of synthetic prior support. To our knowledge, we provide the first
+systematic investigation where we show that compute-optimal configurations favor increasing the
+maximum numbers of sampled rows and features (Section 4.2).
+• Robustness across evaluation settings. We compare scaling trends across synthetic and real-
+world evaluation data and metrics. We further demonstrate that accurate scaling-law fits can conceal
+substantial evaluation-set selection bias when configurations are selected on too few datasets, and
+we quantify how this bias decreases as the number of evaluation datasets grows (Section 4.3).
+The scaling-law data and code for reproducing the figures are available on GitHub1.
+2
+Related Work
+Scaling Laws
+Scaling laws characterize how loss varies with model size, training data, and compute,
+typically through parametric power-law fits (Kaplan et al., 2020; Hoffmann et al., 2022; Sorscher et al., 2022;
+Alabdulmohsin et al., 2023; Caballero et al., 2023). They are commonly estimated from scaling ladders of
+smaller training runs to predict performance and compute-optimal configurations at larger scales (Bhagia
+et al., 2025).
+However, scaling-law estimates are sensitive to experimental design, compute accounting,
+hyperparameter tuning, and fitting choices, potentially undermining extrapolation reliability (Viering &
+Loog, 2023; Mohr et al., 2022; Porian et al., 2024; Li et al., 2025). Recent work investigates reliable scaling-law
+estimation (Choshen et al., 2025), how to select informative small-scale experiments (Lourie et al., 2026), and
+benchmarks for comparing scaling-law methodologies across language and vision-language models (Sermaxhaj
+et al., 2026). The cost of tuning scaling ladders (Jha et al., 2026) has also motivated modeling how optimal
+hyperparameters vary with scale (Yang et al., 2021; Everett et al., 2024; Bjorck et al., 2025; Ajroldi et al.,
+2026).
+Scaling Laws for Tabular Foundation Models
+Recent work has investigated how tabular founda-
+tion models scale with model size, pretraining data, and compute. TabDPT (Ma et al., 2025) establishes
+power-law relationships between model size and real-world pretraining data, while LimiX (Zhang et al.,
+2025a) studies scaling on synthetic data. Its successor, LimiX-2 (Zhang et al., 2026), fits downstream perfor-
+mance scaling laws across multiple benchmarks and extrapolates to larger models. MegaTabICL (Kaushal
+et al., 2026) investigates compute-optimal model sizing and training duration. Beyond these scaling stud-
+ies, TabFM (Kong et al., 2026) demonstrates strong downstream performance through large-scale synthetic
+pretraining, while Mitra (Zhang et al., 2025b) and TabPFN-Wide (Kolberg et al., 2025) highlight the im-
+portance of synthetic prior design. While prior work shows consistent scaling trends, it has not sufficiently
+evaluated predictive reliability beyond the fitted range. We assess extrapolation errors and transferability to
+unseen evaluation datasets, while investigating synthetic prior support as an additional scaling dimension.
+1https://github.com/JohannesHog/tfm-scaling-laws
+2
+
+
+3
+A Reliable Scaling Analysis for Tabular Foundation Models
+We describe our scaling analysis, experimental setup, and fitting procedure, focusing on deriving compute-
+dependent scaling prescriptions and validating their predictive reliability at unseen scales.
+Design of the Scaling Analysis
+We explore a search space spanning eight architectural, training, and
+synthetic prior parameters, including the maximum number of rows and features sampled during pretraining
+(see Table 1). We investigate the trade-off between model size and training data volume, fit scaling laws to the
+empirical compute-optimal performance frontier, and derive power-law scaling prescriptions for individual
+parameters. To assess their reliability, we apply these prescriptions at unseen compute scales and compare
+the resulting performance with scaling-law predictions.
+We consider both synthetic validation loss and
+real-world evaluation metrics, including NLL and ROC AUC.
+Tabular Foundation Model Pipeline
+We use TFM-Playground (Pfefferle et al., 2026) to train nano-
+TabPFN (Pfefferle et al., 2025), a simplified implementation of the TabPFNv2 architecture (Hollmann et al.,
+2025), on classification tasks sampled from the TabICLv1 MLP prior (Qu et al., 2025). We chose this archi-
+tecture because, at the outset of our study, it was among the few strong TFM architectures with an openly
+available training pipeline, enabling systematic experimentation with model configurations and synthetic
+priors. We evaluate synthetic validation performance on two fixed, held-out sets of small and medium-sized
+datasets, combining their losses into a single validation score. We additionally evaluate downstream perfor-
+mance on TabArena (Erickson et al., 2026), restricting the benchmark to datasets with at most 500 features
+and 10,000 samples, consistent with the TabPFNv2 evaluation setting. To efficiently obtain scaling measure-
+ments at multiple compute budgets, we train with a constant learning rate and save intermediate checkpoints
+at geometrically spaced FLOP intervals. We provide further experimental details in Appendix A.
+Fitting Procedure
+For each evaluation metric, we construct the Pareto frontier over training configu-
+rations and intermediate checkpoints to estimate the best observed performance achievable within a given
+compute budget, excluding configurations dominated by alternatives requiring equal or less compute. For
+metrics to be maximized and bounded above by 1, such as accuracy and ROC AUC, we transform the
+objective y into L = 1 −y. We model the resulting loss L as a function of training compute C using,
+L(C) = AC−α + L0,
+(1)
+where A > 0 is a scaling coefficient, α > 0 is the scaling exponent, and L0 > 0 is the asymptotic loss. For
+transformed metrics, this formulation ensures that predictions increase monotonically with compute but never
+exceed the metric’s upper bound avoiding invalid extrapolations and improving robustness. Optimization
+details, initialization settings and the fitting procedure for scaling parameters are provided in Appendix B.
+4
+Results
+4.1
+Reliable Scaling Laws and Prescriptions
+Compute-optimal scaling performance is the best metric value attained at a given FLOP budget (see FLOP
+calculation in Appendix A.3). In Figure 1 we exhibit the Pareto front of performance over FLOPs for the
+runs we collect over our scaling grid (Table 1). We measure performance over two evaluation sets: a fixed
+held-out set of synthetic datasets drawn from the prior, and the set of real-world datasets (Section 3). We
+fit the parameters of Eq. 1 on the lower compute scales of our scaling grid (in blue in Fig. 1), and use the
+higher compute scales of this grid to evaluate the extrapolation quality of this scaling fit (in red in Fig. 1;
+Table 3). For all considered metrics, we see that performance continues to improve with more compute
+(top row, Fig. 1). From the selected Pareto configurations, we also fit the relationship of compute with the
+number of parameters, and of compute with the total number of data cells observed. In the bottom row of
+Fig. 1, we show these configurations in the plane of parameters and data cells for each performance metric,
+and observe that the relative rate of scaling parameters and data depends on the metric. In Figure 2 we
+make this comparison explicit by showing the fitted trends of parameters and data cells against compute for
+3
+
+
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+10
+0
+8 × 10
+1
+9 × 10
+1
+Synthetic: Loss
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+Real: NLL
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+0.6
+0.7
+0.8
+Real: ROC AUC
+10
+3
+10
+4
+10
+5
+10
+6
+Parameters
+10
+8
+10
+10
+10
+12
+Total Cells
+10
+3
+10
+4
+10
+5
+10
+6
+Parameters
+10
+8
+10
+10
+10
+12
+10
+3
+10
+4
+10
+5
+10
+6
+Parameters
+10
+8
+10
+10
+10
+12
+0.8
+0.9
+1.0
+0.4
+0.5
+0.6
+0.7
+0.8
+Figure 1: Pareto Trends for Different Metrics. We observe typical compute-optimal performance scaling for
+both synthetic validation loss and aggregated metrics on real datasets. With more high-compute observations,
+scaling fits on any performance metric can extrapolate reliably. However, the relative scaling trends of data
+and parameters depend heavily on the choice of metric. Solid lines: in-sample fit; Dashed: extrapolation.
+each metric (also refer to Figures 5-6). The fits show that the synthetic evaluation set demands parameter
+scaling more than the real-world metrics do, whereas performance on real-world benchmarks benefits more
+from additional synthetic pretraining data. These results illustrate that the basic signal for scaling can be
+obtained from any of the considered performance metrics. However, for a reliable extrapolation prescription,
+both synthetic and real-world metrics need to be measured. The synthetic fit and the real-world fit can
+together give the bracket within which practical large-compute runs can be operated.
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+10
+3
+10
+4
+10
+5
+10
+6
+Parameters (N)
+Synthetic: Loss
+Real: NLL
+Real: ROC AUC
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+10
+7
+10
+8
+10
+9
+10
+10
+10
+11
+10
+12
+Total Cells (D)
+Synthetic: Loss
+Real: NLL
+Real: ROC AUC
+10
+3
+10
+4
+10
+5
+10
+6
+Parameters (N)
+10
+7
+10
+8
+10
+9
+10
+10
+10
+11
+10
+12
+Total Cells (D)
+Synthetic: Loss
+Real: NLL
+Real: ROC AUC
+Figure 2: Comparing trends for scaling parameters across synthetic and real-world evaluation.
+Scaling
+prescriptions generally agree within real and synthetic data but disagree between synthetic and real-world
+data. Solid lines: in-sample fit; Dashed: extrapolation.
+4.2
+Scaling the Support of the Training Prior
+The design of the synthetic prior family is a crucial component in the TFM pipeline. Typically, the prior
+itself exposes many degrees of freedom that can be configured for performance scaling. For this experiment,
+we look only at the role of the size of the synthetic datasets sampled for TFM pretraining, under a fixed
+prior family. In Figure 3, we extract Pareto fronts under different data prior conditions from our entire
+scaling grid collection. For the narrow prior, we restrict the sampling range of dataset sizes (i.e., number
+of rows and columns) to a small range. For the wide prior, we sample datasets from a wide range (narrow
+⊂wide). The scaled prior is the global Pareto front when no conditioning on dataset size is applied. All
+synthetic losses are measured on the same held-out set as in the previous section. The key observation is that
+neither the full wide range nor the narrow restricted range matches the global selection represented by the
+scaled prior. The scaled prior follows Eq. 1 across the full compute range, for any metric chosen. For ROC
+AUC, the wide prior performance frontier deviates from the typical parametric relationships drastically (see
+Figure 7 for more details on the custom logistic fit). We then take these scaled prior Pareto configurations
+and analyze their dataset properties in the bottom row (Fig. 3), where γ denotes the fitted exponent in
+FLOPs. Under compute scaling, the Pareto configurations use larger synthetic datasets as compute grows,
+and that holds for both dimensions of the dataset size: rows and columns. The relative rate of scaling of
+4
+
+
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+10
+0
+7 × 10
+1
+8 × 10
+1
+9 × 10
+1
+Synthetic: Loss
+fixed narrow prior
+fixed wide prior
+scaled prior
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+3 × 10
+1
+4 × 10
+1
+6 × 10
+1
+Real: NLL
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+0.5
+0.6
+0.7
+0.8
+0.9
+Real: ROC AUC
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+10
+2
+10
+3
+Row count
+Loss: = 0.194
+NLL: = 0.188
+AUC: = 0.225
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+10
+1
+Feature count
+Loss: = 0.125
+NLL: = 0.118
+AUC: = 0.193
+10
+12
+10
+14
+10
+16
+10
+18
+FLOPs
+10
+2
+10
+3
+10
+4
+10
+5
+Rows x Features
+Loss: = 0.319
+NLL: = 0.305
+AUC: = 0.417
+Figure 3:
+The size of the pretraining synthetic dataset has two degrees of freedom: the size of rows and
+columns. Both are scaling variables that need scaling with compute, irrespective of the metric measured.
+The γ is the exponent on the compute when modeling the y-axis metric as a power law a Cγ.
+1
+5
+10
+15
+20
+evaluation datasets n
+0.00
+0.02
+0.04
+0.06
+0.08
+ ROC AUC
+selection bias
+residual of the law
+1
+5
+10
+15
+20
+evaluation datasets n
+0.00
+0.05
+0.10
+ NLL
+Figure 4: Selection bias of the scaling frontier versus the number of evaluation datasets n. Solid: gap between
+the in-sample frontier built from n datasets and the same runs scored on a held-out dataset (median, 10–90%
+band over draws). Dotted: in-sample residual of the fitted scaling law, taken as the noise floor. The gap
+reaches the residual at n = 8 for NLL but only at n = 20 for ROC AUC.
+these variables depends on the metric measured: synthetic loss and real-world NLL agree closely, whereas
+the bounded AUC metric prescribes faster growth with compute.
+4.3
+Robustness of the Scaling Analysis
+Until now, we observed the importance of measuring different evaluation metrics for gauging scaling perfor-
+mance, where we measure the aggregated NLL or ROC AUC on the set of selected datasets. However, a
+scaling fit can be overfit when the evaluation set is small. To investigate this selection effect and validate
+the robustness of scaling fits, we hold out each evaluation dataset i from the total evaluation set. We iterate
+over different subset sizes n ∈{1, . . . , 20}, randomly sampling without replacement n datasets, excluding
+the i-th held-out set. For a given n, we obtain the metric scored under the subset of n datasets, and extract
+the corresponding Pareto frontier. For these selected Pareto configurations, we measure their score on the
+single i-th held-out set. Both of these scores are repeatedly computed multiple times for different held-out
+sets and n. The difference between these two aggregated scores is displayed as the solid line in Figure 4. The
+dotted line measures the in-sample mean residual of the scaling law averaged over the sampled n-datasets.
+This residual signal is treated as the accepted noise level where we qualify the difference in performance on
+the sampled-n and the held-out as negligible. This performance difference falls below the fitting residual
+at n = 8 for NLL but only reaches it at n = 20 for ROC AUC. These findings highlight that low fitting
+error alone does not establish reliable scaling laws and that an appropriately selected held-out evaluation is
+essential for assessing their generalization and therefore robustness.
+5
+
+
+5
+Conclusion
+In a large-scale scaling grid evaluation of the TabPFNv2 architecture, we studied three choices that shape
+a scaling analysis: the metric that is measured and modeled, the number of real-world evaluation datasets,
+and the size of the synthetic datasets sampled from the prior. TFMs follow typical scaling trends under
+every metric we measured, but synthetic and real-world metrics prescribe different allocations of parameters
+and data, so both must be measured for reliable extrapolation. The real-world evaluation set must be large
+enough to suppress selection bias. Most importantly, the size of the synthetic datasets is itself a scaling
+variable and belongs on the scaling ladder. This opens a clear future direction of developing functional forms
+that include the prior as a variable and give sharper prescriptions in practice. Our work offers a blueprint
+for making TFM scaling practice reliable.
+Acknowledgments
+JH acknowledges funding by the Deutsche Forschungsgemeinschaft (DFG, German Research Foundation)
+under SFB 1597 (SmallData), grant number 499552394. NM is supported by the Konrad Zuse School of Ex-
+cellence in Learning and Intelligent Systems (ELIZA) through the DAAD programme Konrad Zuse Schools
+of Excellence in Artificial Intelligence, sponsored by the Federal Ministry of Education and Research. FH
+acknowledges the financial support of the Hector Foundation. We acknowledge funding by the European
+Union via ERC Consolidator Grant DeepLearning 2.0, grant no. 101045765 and via the Horizon Europe
+research and innovation programme under grant agreement no.
+101214398 (ELLIOT). Funded by the Eu-
+ropean Union. Views and opinions expressed are however those of the author(s) only and do not necessarily
+reflect those of the European Union, the European Commission, or the European Research Council. Nei-
+ther the European Union nor the European Commission nor the European Research Council can be held
+responsible for them. This research was funded by the Deutsche Forschungsgemeinschaft (DFG, German
+Research Foundation) under grant number 539134284, through EFRE (FEIH_2698644) and the state of
+Baden-Württemberg. The authors gratefully acknowledge the computing time made available to them on
+the high-performance computer at the NHR Center of TU Dresden. This center is jointly supported by
+the Federal Ministry of Research, Technology and Space of Germany and the state governments participat-
+ing in the NHR (www.nhr-verein.de/unsere-partner). We acknowledge the EuroHPC Joint Undertaking for
+awarding this project access to the EuroHPC supercomputer LUMI, hosted by CSC (Finland) and the LUMI
+consortium through a EuroHPC Regular Access call.
+6
+
+
+References
+N. Ajroldi, D. A. Onut,u, H. Al-Tahan, J. Franke, S. Pyysalo, J. Jitsev, and A. Klein. Deriving scaling laws
+for openeurollm models: Learning rate, batch size and loss. arXiv preprint arXiv:2608.28308, 2026.
+I. Alabdulmohsin, X. Zhai, A. Kolesnikov, and L. Beyer. Getting Vit in Shape: Scaling laws for compute-
+optimal model design. In A. Oh, T. Naumann, A. Globerson, K. Saenko, M. Hardt, and S. Levine (eds.),
+Proceedings of the 36th International Conference on Advances in Neural Information Processing Systems
+(NeurIPS’23), 2023.
+A. Bhagia, J. Liu, A. Wettig, D. Heineman, O. Tafjord, A. H. Jha, L. Soldaini, N. A. Smith, D. Groeneveld,
+P. W. Koh, J. Dodge, and H. Hajishirzi. Establishing task scaling laws via compute-efficient model ladders.
+In Second Conference on Language Modeling, 2025.
+J. Bjorck, A. Benhaim, V. Chaudhary, F. Wei, and X. Song. Scaling optimal LR across token horizons. In
+The Thirteenth International Conference on Learning Representations, 2025.
+S. Böhm, L. Purucker, F. Hutter, and P. Schlosser.
+SurvPFN: Towards foundation models for survival
+predictions. In 2nd ICML Workshop on Foundation Models for Structured Data, 2026.
+V. Borisov, T. Leemann, K. Seßler, J. Haug, M. Pawelczyk, and G. Kasneci. Deep neural networks and
+tabular data: A survey. IEEE transactions on neural networks and learning systems, 35(6):7499–7519,
+2022.
+E. Caballero, K. Gupta, I. Rish, and D. Krueger. Broken neural scaling laws. In The Eleventh International
+Conference on Learning Representations (ICLR’23). ICLR, 2023.
+L. Choshen, Y. Zhang, and J. Andreas. A hitchhiker’s guide to scaling law estimation. In A. Singh, M. Fazel,
+D. Hsu, S. Lacoste-Julien, F. Berkenkamp, T. Maharaj, K. Wagstaff, and J. Zhu (eds.), Proceedings of
+the 42nd International Conference on Machine Learning, volume 267 of Proceedings of Machine Learning
+Research, pp. 10683–10699. PMLR, 2025.
+N. Erickson, L. Purucker, A. Tschalzev, D. Holzmüller, P. Desai, D. Salinas, and F. Hutter. TabArena:
+A living benchmark for machine learning on tabular data. Advances in Neural Information Processing
+Systems, 38, 2026.
+K. E. Everett, L. Xiao, M. Wortsman, A. A. Alemi, R. Novak, P. J. Liu, I. Gur, J. Sohl-Dickstein, L. P.
+Kaelbling, J. Lee, and J. Pennington. Scaling exponents across parameterizations and optimizers. In
+R. Salakhutdinov, Z. Kolter, K. Heller, A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (eds.), Pro-
+ceedings of the 41st International Conference on Machine Learning (ICML’24), volume 251 of Proceedings
+of Machine Learning Research. PMLR, 2024.
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. de Las Casas, L. A.
+Hendricks, J. Welbl, A. Clark, T. Hennigan, E. Noland, K. Millican, G. van den Driessche, B. Damoc,
+A. Guy, S. Osindero, K. Simonyan, E. Elsen, J. W. Rae, O. Vinyals, and L. Sifre. Training compute-
+optimal large language models. In S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh
+(eds.), Proceedings of the 35th International Conference on Advances in Neural Information Processing
+Systems (NeurIPS’22), 2022.
+N. Hollmann, S. Müller, L. Purucker, A. Krishnakumar, M. Körfer, S. B. Hoo, R. T. Schirrmeister, and
+F. Hutter.
+Accurate predictions on small data with a tabular foundation model.
+Nature, 637(8045):
+319–326, 2025.
+S. B. Hoo, S. Müller, D. Salinas, and F. Hutter. From tables to time: Extending tabPFN-v2 to time series
+forecasting. TMLR, 2026. ISSN 2835-8856.
+B. Jäger, N. Erickson, L. Grinsztajn, F. Birkel, K. Flöge, O. Key, K. Kaya, J. Kübler, A. Frankel, T. Schröder,
+et al. TabPFN-3.5: Technical report. arXiv preprint arXiv:2609.17895, 2026.
+7
+
+
+A. K. Jha, D. A. Onut,u, N. Mallik, S. Haldar, S. Laing, N. Ajroldi, S. Liu, J. Vanschoren, and A. Klein.
+Amortizing scaling law construction costs. In AXIOM: Foundations of Efficient Deep Learning, 2026.
+J. Kaplan, S. McCandlish, T. Henighan, T. Brown, B. Chess, R. Child, S. Gray, A. Radford, J. Wu, and
+D. Amodei. Scaling laws for neural language models. arXiv:2001.08361 [cs.LG], 2020.
+A. Kaushal, D. Yasafova, and I. Rish. MegaTabICL: Efficient scaling of tabular foundation model pretraining.
+In AXIOM: Foundations of Efficient Deep Learning, 2026.
+C. Kolberg, J. Kreuer, J. Huurdeman, S. Ouaari, K. Eggensperger, and N. Pfeifer. TabPFN-Wide: Continued
+pre-training for extreme feature counts. arXiv preprint arXiv:2510.06162, 2025.
+W. Kong, E. L. Ilan, S. Nie, T. Narayan, R. Sen, Y. Zhou, D. Fu, S. Oymak, and A. Das. Tabfm: A zero-shot
+foundation model for tabular data. arXiv preprint arXiv:2609.37959, 2026.
+M. Li, S. Kudugunta, and L. Zettlemoyer. (Mis)Fitting scaling laws: A survey of scaling law fitting techniques
+in deep learning. In International Conference on Learning Representations, volume 2025, pp. 51134–51165,
+2025.
+N. Lourie, K. Cho, K. Ullrich, and S. Lotfi. Small-scale experiments: Are we there yet?
+arXiv preprint
+arXiv:2608.11859, 2026.
+J. Ma, V. Thomas, R. Hosseinzadeh, A. Labach, J. C. Cresswell, K. Golestan, G. Yu, A. L. Caterini, and
+M. Volkovs.
+TabDPT: Scaling tabular foundation models on real data.
+In The Thirty-ninth Annual
+Conference on Neural Information Processing Systems, 2025.
+P. Meyer. Bi-logistic growth. Technological forecasting and social change, 47(1):89–102, 1994.
+F. Mohr, T. J. Viering, M. Loog, and J. N. van Rijn. Lcdb 1.0: An extensive learning curves database
+for classification tasks. In Joint European Conference on Machine Learning and Knowledge Discovery in
+Databases, pp. 3–19. Springer, 2022.
+S. Müller, M. Feurer, N. Hollmann, and F. Hutter. PFNs4BO: In-Context Learning for Bayesian Optimiza-
+tion. In A. Krause, E. Brunskill, K. Cho, B. Engelhardt, S. Sabato, and J. Scarlett (eds.), Proceedings of
+the 40th International Conference on Machine Learning (ICML’23), volume 202 of Proceedings of Machine
+Learning Research. PMLR, 2023.
+A. Pfefferle, J. Hog, L. Purucker, and F. Hutter. nanoTabPFN: A lightweight and educational reimplemen-
+tation of tabpfn. arXiv preprint arXiv:2511.03634, 2025.
+A. Pfefferle, J. Hog, S. B. Öztürk, K. Kaya, Z. Türkmen, and F. Hutter. TFM-Playground: A playground
+for tabular foundation models, 2026. URL https://github.com/automl/TFM-Playground/.
+T. Porian, M. Wortsman, J. Jitsev, L. Schmidt, and Y. Carmon. Resolving discrepancies in compute-optimal
+scaling of language models. Advances in Neural Information Processing Systems, 37:100535–100570, 2024.
+Prior Labs. Awesome tabpfn use cases. https://github.com/PriorLabs/awesome-tabpfn, 2026. Accessed:
+2026-09-05.
+L. Purucker, A. Tschalzev, N. Erickson, G. Blayer, D. Holzmüller, A. Arazi, A. Pfefferle, M. Tajjar, G. Varo-
+quaux, and F. Hutter. Beyond iid: How general are tabular foundation models, really?
+arXiv preprint
+arXiv:2606.30410, 2026.
+S. Qi, V. Balazadeh, M. Cooper, R. Greiner, and R. G. Krishnan.
+SurvivalPFN: Amortizing survival
+prediction via in-context bayesian inference. In 2nd ICML Workshop on Foundation Models for Structured
+Data, 2026.
+J. Qu, D. Holzmüller, G. Varoquaux, and M. Le Morvan. TabICL: A tabular foundation model for in-context
+learning on large data. In ICML, 2025.
+8
+
+
+J. Qu, D. Holzmüller, G. Varoquaux, and M. Le Morvan. TabICLv2: A better, faster, scalable, and open
+tabular foundation model. In ICML, 2026.
+H. Rakotoarison, S. Adriaensen, N. Mallik, S. Garibov, E. Bergman, and F. Hutter.
+In-context freeze-
+thaw bayesian optimization for hyperparameter optimization. In R. Salakhutdinov, Z. Kolter, K. Heller,
+A. Weller, N. Oliver, J. Scarlett, and F. Berkenkamp (eds.), Proceedings of the 41st International Confer-
+ence on Machine Learning (ICML’24), volume 251 of Proceedings of Machine Learning Research. PMLR,
+2024.
+J. Robertson, A. Reuter, S. Guo, N. Hollmann, F. Hutter, and B. Schölkopf. Do-PFN: In-context learning
+for causal effect estimation. In NeurIPS, 2025.
+A. Sermaxhaj, N. Alipour, D. Sinani, J. Hog, N. Mallik, J. Jitsev, and D. Stoll. ScAn-Bench: Evaluating
+scaling analysis methodology. arXiv preprint arXiv:2609.35707, 2026.
+B. Sorscher, R. Geirhos, S. Shekhar, S. Ganguli, and A. S. Morcos. Beyond neural scaling laws: beating power
+law scaling via data pruning. In S. Koyejo, S. Mohamed, A. Agarwal, D. Belgrave, K. Cho, and A. Oh
+(eds.), Proceedings of the 35th International Conference on Advances in Neural Information Processing
+Systems (NeurIPS’22), 2022.
+T. Viering and M. Loog. The shape of learning curves: a review. IEEE Transactions on Pattern Analysis
+and Machine Intelligence, 45(6):7799–7819, 2023.
+G. Yang, E. Hu, I. Babuschkin, S. Sidor, X. Liu, D. Farhi, N. Ryder, J. Pachocki, W. Chen, and J. Gao.
+Tuning large neural networks via zero-shot hyperparameter transfer. In M. Ranzato, A. Beygelzimer,
+K. Nguyen, P. Liang, J. Vaughan, and Y. Dauphin (eds.), Proceedings of the 34th International Conference
+on Advances in Neural Information Processing Systems (NeurIPS’21), 2021.
+X. Zhang, G. Ren, H. Yu, H. Yuan, H. Wang, J. Li, J. Wu, L. Mo, L. Mao, M. Hao, et al. LimiX: Unleashing
+structured-data modeling capability for generalist intelligence. arXiv preprint arXiv:2509.03505, 2025a.
+X. Zhang, G. Ren, H. Yuan, H. Zou, H. Tan, H. Wang, J. Song, J. Li, J. Zhang, J. Zhang, et al.
+LimiX-2: A contextual mechanism network towards general structured-data intelligence. arXiv preprint
+arXiv:2609.17488, 2026.
+X. Zhang, D. C. Maddix, J. Yin, N. Erickson, A. F. Ansari, B. Han, S. Zhang, L. Akoglu, C. Faloutsos, M. W.
+Mahoney, C. Hu, H. Rangwala, G. Karypis, and B. Wang. Mitra: Mixed synthetic priors for enhancing
+tabular foundation models. In The Thirty-ninth Annual Conference on Neural Information Processing
+Systems, 2025b.
+9
+
+
+Table 1: Hyperparameter values searched over all runs with a training budget up to 1016 FLOPs. Fixed in
+all runs: AdamW, MLP hidden size 4× the embedding size. Parameters follow from embedding size and
+layers; max. cells is max. features × max. datapoints.
+Hyperparameter
+Values
+Learning rate
+{5·10−5, 1.44·10−4, 4.16·10−4, 1.2·10−3, 2.1·10−3, 3.47·10−3, 5.72·10−3,
+7 · 10−3, 1 · 10−2, 3.47 · 10−2, 7.07 · 10−2, 5 · 10−1}
+Weight decay
+{0, 0.0001, 0.1}
+Batch size
+{32, 64, 128}
+Embedding size
+{8, 16, 32, 64}
+Layers
+{1, 2, 4, 6, 8, 10}
+Attention heads
+{2, 4}
+Max. features per table
+{2, 4, 8, 16}
+Max. datapoints per table
+{100, 200, 400, 800, 1200}
+Derived quantities (not searched directly)
+Parameters N
+[1,826–553,482] (20 distinct)
+Max. cells per table
+{200, 400, 800, 1600, 3200, 6400, 9600, 12800, 19200}
+Table 2: Number of training runs by nominal compute budget.
+The 1017-FLOP runs are reserved for
+extrapolation evaluation.
+Budget (FLOPs)
+1013
+1014
+1015
+1016
+1017
+Runs
+4,050
+1,651
+288
+86
+45
+A
+Detailed Experimental Setup
+A.1
+Training Configuration
+We use AdamW with β1 = 0.9, β2 = 0.999, ϵ = 10−6, and gradient-norm clipping at 1.0, optimizing
+cross-entropy loss. Training uses float32 precision without mixed precision or learning-rate warmup. We
+implement effective batch sizes through gradient accumulation, choosing a micro-batch size that fits within
+90% of available GPU memory. The data-gathering experiments were conducted primarily on NVIDIA RTX
+2080 Ti and L40S GPUs, using one GPU per training job. The data-gathering runs required approximately
+80,500 training GPU-hours, excluding evaluation and the extrapolation runs.
+A.2
+Search Space and Data Collection
+Table 1 summarizes the eight hyperparameters explored in our scaling analysis. We conducted manually
+designed sweeps at successive compute budgets, refining the search based on earlier results while extending
+the range of model and synthetic prior sizes. In total, we collected 6,075 data-gathering runs across four
+compute budgets, as summarized in Table 2. We additionally trained 45 configurations at 1017 FLOPs,
+selected around the fitted scaling prescriptions and therefore not restricted to the values in Table 1, and
+excluded them from scaling-law fitting.
+Prior Ablation
+For Figure 3, we compare three subsets of training configurations. The fixed narrow prior
+and fixed wide prior restrict configurations to maximum prior dimensions of 4 features and 100 rows, and 16
+features and 400 rows, respectively. The scaled prior uses the unrestricted frontier, allowing prior dimensions
+to vary with compute. The fixed wide prior is the largest considered in this ablation, rather than the largest
+configuration in the full search space.
+A.3
+FLOP calculation
+FLOP Accounting
+We estimate training compute using an architecture-specific count of matrix multi-
+plication FLOPs. Let T denote the number of rows, d the number of columns (including the target), n
+10
+
+
+the number of labeled context rows, E the embedding dimension, and L the number of layers. With MLP
+expansion factor M = 4 and K = 10 output classes, the FLOPs for one forward and backward pass over a
+table are
+f(T, n, d) = 3
+h
+2TdE
++ L
+ (12 + 4M)TdE2 + 4ndE2 + 4ET(d2 + nd)
+
++ 2ME(E + K)(T −n)
+i
+.
+(2)
+We count 2abc FLOPs for multiplying matrices of dimensions a×b and b×c, and approximate the backward
+pass as twice the forward-pass cost. The formula includes encoders, attention projections and products,
+MLPs, and the decoder, while excluding elementwise operations.
+Since synthetic table dimensions vary during training, we compute cumulative FLOPs by summing
+Bkf(Tk, nk, dk) over all micro-batches k, where Bk is the number of tables in each micro-batch, including
+those used for gradient accumulation. Earlier FLOP estimates obtained with calflops omitted attention
+products; we therefore recomputed the training compute of affected runs using Equation 2.
+FLOP-Grid Alignment
+Evaluations are recorded after optimizer steps and therefore do not necessarily
+coincide with the intended compute budgets.
+Recomputing FLOPs further shifted previously recorded
+evaluations away from their original milestones. To ensure consistent comparisons, we align all runs to a
+common grid Ck = 1011+k/4, k = 0, . . . , 32. For each grid point, we retain an observed evaluation if it
+lies within 0.01 dex (2.3%); otherwise, we interpolate linearly in log10 FLOPs between adjacent evaluations
+separated by at most 0.35 dex. We discard unmatched grid points without extrapolation and exclude runs
+with fewer than two valid evaluations. The same procedure applies to evaluation metrics and cumulative
+training cells, ensuring consistent compute alignment.
+A.4
+Evaluation Protocol
+Synthetic Validation Data
+We generate two held-out sets of synthetic classification datasets using the
+TabICLv1 prior (Qu et al., 2025). The small validation set contains 2,048 datasets with 500 to 1,000 rows
+and 5 to 50 features, while the medium set contains 1,024 datasets with 1,000 to 3,000 rows and 50 to 150
+features. Each dataset has at most 10 classes. Datasets are generated in batches of 32, with the number of
+rows sampled uniformly within the corresponding range. For each batch, we sample an in-context training
+fraction p ∼U(0.1, 0.9), assigning the first ⌊pN⌋rows to training and the remaining rows to testing. Both
+validation sets are generated once and reused across all checkpoints. We compute the mean loss within each
+set and average the two set-level losses equally to obtain the synthetic validation score.
+Evaluation-Set Selection Experiment
+For each of the 21 evaluation datasets, we hold out that dataset
+and sample n ∈{1, 2, 3, 5, 8, 12, 16, 20} datasets from the remaining 20, repeating the selection 20 times. At
+each compute budget, we select the configuration with the best mean performance on the selection datasets
+and record both its selection-set performance and its performance on the held-out dataset. We average these
+scores separately across the 21 held-out datasets and construct the corresponding performance frontiers by
+independently applying a running maximum for ROC AUC or a running minimum for NLL over compute
+budgets. We define the generalization gap as the difference between the resulting frontiers, with positive
+values indicating higher selection-set ROC AUC or lower selection-set NLL. We average this gap over the
+20 compute budgets and report its median and 10–90% quantiles across the 20 random repetitions. For
+comparison, we also report the fitting residuals of scaling laws fitted to the selection-set frontiers.
+B
+Scaling-Law Fitting
+Pareto Frontier Construction.
+For each evaluation metric, we collect performance measurements from
+the training configurations and their intermediate checkpoints. For metrics to be maximized and bounded
+above by 1, such as accuracy and ROC AUC, we transform the observations using L = 1−y. For loss metrics
+such as NLL, we use the original values.
+11
+
+
+Table 3: Scaling-law fit quality and extrapolation to unseen compute budgets. Fit R2 is computed on the
+training frontier in the original metric space, while extrapolation MAE is averaged over four held-out budgets
+from 1016.25 to 1017 FLOPs.
+Metric
+Observed at 1017
+Predicted at 1017
+Fit R2
+Extrapolation MAE
+Synthetic validation loss
+0.770
+0.769
+0.997
+0.001
+Real-world NLL
+0.309
+0.289
+0.986
+0.011
+Real-world ROC AUC
+0.877
+0.873
+0.991
+0.004
+We construct the empirical Pareto frontier over training compute and performance. An observation (Ci, Li)
+is dominated if another observation (Cj, Lj) satisfies Cj ≤Ci and Lj ≤Li, with at least one strict inequality.
+We retain only non-dominated observations for fitting, thereby approximating the best observed performance
+achievable within each compute budget.
+Parameter Estimation.
+We fit the scaling law in Equation 1 to the Pareto-optimal observations. Let P
+denote the indices of these observations and θ = (A, α, L0) the scaling-law parameters. Following Li et al.
+(2025), we minimize the Huber loss in logarithmic space:
+ˆθ = arg min
+θ∈Θ
+1
+|P|
+X
+i∈P
+ρδ
+ log Li −log
+ AC−α
+i
++ L0
+
+,
+(3)
+where ρδ denotes the Huber loss with δ = 10−3, and Θ = {(A, α, L0) : A > 0, L0 > 0, α ∈R}. We
+optimize the transformed parameters a = log A, ℓ0 = log L0, and α, evaluating predictions using log L(C) =
+logsumexp(ℓ0, a −α log C) for numerical stability.
+We minimize the objective using L-BFGS-B without
+explicit box bounds and retain the lowest-loss solution across 105 initializations. The initializations form a
+Cartesian grid over ℓ0 ∈{0, 0.1, 0.5}, a ∈{0.1, 1, 2, 5, 10, 50, 100}, and α ∈{−1, −0.5, 0, 0.5, 1}. We do not
+constrain the sign of α during optimization, and all fitted exponents are positive, consistent with α > 0 in
+Equation 1. The same fitting procedure is used for synthetic validation loss, real-world NLL, and transformed
+ROC AUC.
+We additionally derive compute-dependent scaling prescriptions h(C) = aCγ for all eight search parameters
+and derived quantities, including model parameter count, total training cells2, and maximum prior table
+size. Following Approach 1 of Hoffmann et al. (2022), we fit these power laws by ordinary least squares in
+log-log space to the configurations on each metric’s Pareto frontier.
+Extrapolation Protocol
+We assess extrapolation by evaluating both scaling-law predictions and
+compute-optimal scaling prescriptions at unseen compute budgets.
+For each metric, we fit Equation 1
+to Pareto-frontier observations up to 1016 FLOPs and evaluate predictions at four held-out budgets between
+1016.25 and 1017 FLOPs. We additionally train 45 configurations at a nominal budget of 1017 FLOPs, se-
+lected around the fitted scaling prescriptions and excluded from fitting. These configurations are included
+when constructing the observed performance frontiers at the held-out budgets. We measure extrapolation
+error using the mean absolute error (MAE) between predicted and best observed performance across the
+four budgets.
+Table 3 shows high in-sample fitting accuracy across all three metrics, with R2 ≥0.986. Extrapolation errors
+remain small for synthetic validation loss and real-world ROC AUC, with MAEs of 0.001 and 0.004, respec-
+tively. Real-world NLL exhibits a larger extrapolation error of 0.011, with the fitted law underestimating
+NLL by 0.020 at 1017 FLOPs.
+2We treat cells as the atomic unit of a dataset, i.e., a single cell is a 1 × 1 table.
+12
+
+
+Table 4: Comparison of representative functional forms. Maximum excess measures the largest difference
+between the fitted prior-specific curve and the all-configurations fit over 1011–1019 FLOPs. Negative values
+indicate that the prior-specific fit remains below the reference curve.
+Form
+RMSE
+Backtest MAE
+Max. excess
+Logistic
+0.0140
+0.024
++0.008
+Power law + deficit
+0.0048
+0.004
++0.030
+Two logistics
+0.0038
+0.008
+−0.002
+C
+Scaling Law Fit for Phase Shifting ROC AUC
+C.1
+Fitting the Shifted ROC AUC Frontier
+The ROC AUC frontier for the largest synthetic prior (16 features, 400 rows) exhibits an initial plateau,
+followed by a sharp increase and slower subsequent improvement (Figure 7). A single power law or logistic
+function cannot adequately capture both phases. We therefore compare several functional forms, including
+broken neural scaling laws (Caballero et al., 2023), and report three representative alternatives: a logistic
+glog, a power law with a logistic deficit gdef, and a sum of two logistics g2log (Meyer, 1994).
+Let x = log10 C, z = C/1013, and σ(t) = (1 + e−t)−1. The three forms are
+glog(C) = amin + (amax −amin)σ(κ(x −x0)),
+(4)
+gdef(C) = 1 −L0 −bz−α −hσ(−κ(x −x0)),
+(5)
+g2log(C) = amin +
+2
+X
+j=1
+hjσ(κj(x −xj)).
+(6)
+We fit each form to the 19 frontier observations using Huber loss (δ = 10−3) in ROC AUC space and bounded
+L-BFGS optimization with multiple initializations. We assess extrapolation using seven increasing compute
+cutoffs and an additional held-out observation at 1.8×1016 FLOPs. We also compare extrapolations against
+the fitted frontier over all configurations.
+As shown in Figure 7 and Table 4, the logistic fails to capture both phases, while the power law with
+a logistic deficit achieves lower backtest error but extrapolates above the all-configurations fit. The two-
+logistic formulation achieves the lowest fitting error and remains below the all-configurations fit over the
+examined range. We therefore use it for the largest-prior ablation.
+13
+
+
+10−3
+10−2
+10−1
+Learning rate
+γ = −0.12
+R2 = 0.76
+NLL
+(real data)
+γ = −0.15
+R2 = 0.72
+ROC AUC
+(real data)
+γ = −0.18
+R2 = 0.68
+Val. loss
+(prior)
+γ = −0.14
+R2 = 0.78
+Val. loss
+(small prior)
+γ = −0.18
+R2 = 0.67
+Val. loss
+(medium prior)
+0
+10−4
+10−1
+Weight decay
+32
+64
+128
+Batch size
+γ = 0.07
+R2 = 0.51
+γ = 0.01
+R2 = 0.03
+γ = 0.08
+R2 = 0.54
+γ = 0.08
+R2 = 0.66
+γ = 0.06
+R2 = 0.35
+8
+16
+24
+Embedding size
+γ = 0.09
+R2 = 0.67
+γ = 0.03
+R2 = 0.16
+γ = 0.12
+R2 = 0.72
+γ = 0.13
+R2 = 0.83
+γ = 0.09
+R2 = 0.63
+1
+2
+4
+6
+10
+Layers
+γ = 0.10
+R2 = 0.52
+γ = 0.14
+R2 = 0.83
+γ = 0.20
+R2 = 0.87
+γ = 0.16
+R2 = 0.80
+γ = 0.22
+R2 = 0.91
+2
+4
+Attention heads
+γ = 0.08
+R2 = 0.66
+γ = 0.06
+R2 = 0.36
+γ = 0.08
+R2 = 0.59
+γ = 0.07
+R2 = 0.57
+γ = 0.09
+R2 = 0.67
+2
+4
+8
+15
+24
+Max. features
+γ = 0.12
+R2 = 0.42
+γ = 0.19
+R2 = 0.86
+γ = 0.13
+R2 = 0.43
+γ = 0.08
+R2 = 0.31
+γ = 0.12
+R2 = 0.42
+1011
+1013
+1015
+1017
+100
+200
+400
+800
+1200
+Max. datapoints
+γ = 0.19
+R2 = 0.86
+1011
+1013
+1015
+1017
+γ = 0.22
+R2 = 0.84
+1011
+1013
+1015
+1017
+γ = 0.19
+R2 = 0.88
+1011
+1013
+1015
+1017
+γ = 0.16
+R2 = 0.85
+1011
+1013
+1015
+1017
+γ = 0.22
+R2 = 0.86
+Compute C (FLOPs)
+compute frontier ( ≤1016 FLOPs)
+power-law fit y ∝Cγ
+held out: best run per budget ( > 1016 FLOPs, shaded)
+Figure 5:
+Compute-optimal values of the searched hyperparameters. Each column is one metric, each row
+one hyperparameter. A filled point is the run on the compute frontier of that metric at the given FLOP
+budget, i.e. the best run at that budget that also beats every smaller budget; light horizontal lines mark the
+values in the search space. The dashed line is a power law y = c · Cγ fitted by least squares in log–log space
+to the frontier points up to 1016 FLOPs, with the exponent γ and the in-sample R2 given in each panel.
+Open points in the shaded region are the best runs at the four held-out budgets (1.8 · 1016 to 1017 FLOPs),
+which do not enter the fit. Weight decay is not fitted because the frontier contains zero.
+14
+
+
+104
+105
+Parameters
+γ = 0.25
+R2 = 0.84
+NLL
+(real data)
+γ = 0.19
+R2 = 0.67
+ROC AUC
+(real data)
+γ = 0.38
+R2 = 0.90
+Val. loss
+(prior)
+γ = 0.38
+R2 = 0.93
+Val. loss
+(small prior)
+γ = 0.35
+R2 = 0.90
+Val. loss
+(medium prior)
+107
+108
+109
+1010
+Training cells
+γ = 0.67
+R2 = 0.97
+γ = 0.71
+R2 = 0.96
+γ = 0.54
+R2 = 0.95
+γ = 0.57
+R2 = 0.96
+γ = 0.54
+R2 = 0.95
+103
+104
+Max. cells
+per table
+γ = 0.30
+R2 = 0.77
+γ = 0.42
+R2 = 0.94
+γ = 0.32
+R2 = 0.76
+γ = 0.24
+R2 = 0.72
+γ = 0.34
+R2 = 0.80
+100
+101
+Embedding size
+/ layers
+γ = −0.01
+R2 = 0.01
+γ = −0.11
+R2 = 0.51
+γ = −0.08
+R2 = 0.31
+γ = −0.03
+R2 = 0.05
+γ = −0.14
+R2 = 0.61
+1011
+1013
+1015
+1017
+101
+102
+Datapoints
+/ features
+γ = 0.07
+R2 = 0.19
+1011
+1013
+1015
+1017
+γ = 0.03
+R2 = 0.05
+1011
+1013
+1015
+1017
+γ = 0.07
+R2 = 0.19
+1011
+1013
+1015
+1017
+γ = 0.08
+R2 = 0.27
+1011
+1013
+1015
+1017
+γ = 0.09
+R2 = 0.24
+Compute C (FLOPs)
+compute frontier ( ≤1016 FLOPs)
+power-law fit y ∝Cγ
+held out: best run per budget ( > 1016 FLOPs, shaded)
+Figure 6: Compute-optimal values of quantities derived from the searched hyperparameters: parameter
+count, number of training cells seen, largest table in the prior (max. features × max. datapoints), and the
+ratios embedding size / layers and datapoints / features. Markers, lines and the shaded held-out region are
+as in Figure 5. Training cells and parameters follow a power law closely (R2 ≥0.84 for all metrics except
+ROC AUC on parameters), whereas the two ratios show no consistent trend with compute.
+1012
+1014
+1016
+1018
+FLOPs
+0.5
+0.6
+0.7
+0.8
+0.9
+ROC AUC
+(a) Logistic
+1012
+1014
+1016
+1018
+FLOPs
+(b) Power law + deficit
+1012
+1014
+1016
+1018
+FLOPs
+(c) Two logistics
+All-runs fit
+All runs, held out
+Wide prior
+Wide prior, held out
+Wide prior fit, power law
+Figure 7: ROC AUC frontier for the largest synthetic prior and three fitted functional forms: (a) logistic,
+(b) power law with a logistic deficit, and (c) two logistics. Hollow markers denote held-out observations; the
+dotted gray curve shows the fitted frontier over all configurations.
+15
