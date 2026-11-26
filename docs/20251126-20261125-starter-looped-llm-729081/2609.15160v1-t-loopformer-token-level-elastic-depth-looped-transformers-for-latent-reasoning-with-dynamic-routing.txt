@@ -1,0 +1,1359 @@
+[PREPRINT]T-LOOPFORMER:
+TOKEN-LEVEL
+ELASTIC-DEPTH
+LOOPED
+TRANSFORMERS
+FOR
+LATENT REASONING
+WITH DYNAMIC ROUTING
+UNDER REVIEW AT ICLR 2027
+Mingqian Yu1
+1Institute of Automation
+Chinese Academy of Sciences
+Beijing, China
+yumingqian2026@ia.ac.cn
+Wenpeng Zhang
+Independent Reasearcher
+zhangwenpeng0@gmail.com
+Peilin Zhao2,∗
+2School of Artificial Intelligence
+Shanghai Jiao Tong University
+Shanghai, China
+peilinzhao@sjtu.edu.cn
+LM Head 
+RMS Norm 
+𝑖< 𝑚𝜏 
+T-LoopFormer 
+ Block 
+𝐽× 
+𝐸𝜏 
+ Router 
+𝑓𝜃 
+𝑋 
+Input 
+𝑚𝜏 
+∆𝑚𝜏 
+ℎ(𝑖−1) 
+  𝑡𝑖−1 
+∆𝑖 
+MLP 
+MLP 
+𝑐𝑖 
+ 𝑐𝑖 
+RMS Norm 
+MLP 
+Scale 
+𝛾1 
+MHSA 
+Gate 
+𝛼1 
+RMS Norm 
+Scale 
+FFN 
+Gate 
+𝛼2 
+𝛾2 
+ℎ(0) 
+𝜏 
+𝜏 
+𝜏 
+ℎ(𝑖−1) 
+𝜏 
+Figure 1: The architecture of T-LoopFormer, which could achieve token-level elastic-depth through
+a dynamic token-choice router.
+ABSTRACT
+Looped Transformers have recently demonstrated strong performance in both rea-
+soning and language tasks by reusing a shared set of parameters across multi-
+ple iterations, achieving parameter efficiency without sacrificing representational
+power.
+Besides, looped Transformers perform inference directly in the latent
+space (latent reasoning) to reduce the number of tokens consumed during infer-
+ence, thereby achieving improved sample efficiency. However, these models typi-
+cally apply a fixed recursion depth uniformly to every token, leading to suboptimal
+compute allocation and leaving significant efficiency gains on the table. In this
+∗: Corresponding author.
+arXiv:2609.15160v1  [cs.AI]  14 Sep 2026
+
+
+work, we propose dynamic token-choice routing for looped transformers, en-
+abling each token to adaptively determine its own number of loop iterations based
+on its hidden state. We use a dynamic router to decide whether a token should con-
+tinue recursing or exit early, allowing simple tokens to bypass unnecessary com-
+putation while hard tokens receive deeper processing. To ensure that this adap-
+tive mechanism does not compromise decoding efficiency, we further introduce
+recursion-wise KV caching, which maintains an independent key-value cache for
+each recursion loop. This design ensures that tokens at different depths only attend
+to their corresponding cached states, effectively eliminating redundant computa-
+tions for exited tokens and enabling fast autoregressive decoding. Extensive exper-
+iments show that T-LoopFormer reaches the sota performance under the same pa-
+rameters on PPL and 10 zero-shot reasoning tasks, even surpassing the base model
+at 24x FLOPs and our model could reach the lowest inference latency, which vali-
+date the effectiveness of token-choice router and recursion-wise KV cache. Code:
+https://github.com/YuMingQian1234/T-LoopFormer.
+1
+INTRODUCTION
+Transformers with parameter sharing, often called looped or recurrent Transformers, have emerged
+as an efficient and capable alternative to deep non–shared stacks across vision and natural language
+Jeddi et al. (2026); Dehghani et al. (2018); Lan et al. (2019); Geiping et al. (2026). Notably, looped
+Transformers exhibit strong performance on a broad range of algorithmic and reasoning tasks when
+applied to language modeling Geiping et al. (2026); Jeddi et al. (2026); Saunshi et al. (2024). These
+models perform latent reasoning during inference this allows the models to consume fewer tokens at
+inference time with reduced context-length costs, thereby achieving improved sample efficiency and
+yielding better results on reasoning benchmarks and other downstream tasks Geiping et al. (2026);
+Saunshi et al. (2024). However, a fixed unroll loop numbers is nearly always adopted by current
+approaches during training and inference.
+Despite there are methods that could achieve elastics-depth looped Transformers Geiping et al.
+(2026); Jeddi et al. (2026), they do not provide token-level elastic-depth control over the number of
+loops. When these models perform reasoning recursively in the latent space, they apply a uniform
+number of unrolling loops to all tokens, regardless of their individual difficulty Jeddi et al. (2026);
+Geiping et al. (2026); Prairie et al. (2026); Dehghani et al. (2018); Xu & Sato (2024). This mono-
+lithic strategy lacks token-level elasticity, meaning that even trivial tokens are processed with the
+same loops as complex ones. As a result, the model incurs significant and often unnecessary mem-
+ory overhead during inference, which is particularly problematic when scaling to longer sequences
+or resource-constrained settings. Besides, because these models conduct recurrent reasoning in
+the latent space at inference time, they suffer from reduced inference throughput and consequently
+higher response latency. To overcome these questions, we propose T-LoopFormer.
+T-LoopFormer could achieve token-level elastic-depth through a token-choice router, which could
+adaptively determine one token should continue to recursive or exit early Rahmath P et al. (2024);
+Yang et al. (2026). Specifically, a router assigns each token a fixed recursion depth based on its
+initial hidden state, the token then unrolls the shared block for that many loops before exiting.
+This preserves autoregressive causality, as decisions depend only on the token itself. To accelerate
+decoding, T-LoopFormer employs recursion-wise KV caching Shi et al. (2024); Li et al. (2024);
+Cai et al. (2024). Unlike approaches that retain key-value pairs for all tokens across depths, this
+strategy selectively caches KV entries only for tokens that remain active at each recursion loop. As
+tokens progressively exit in deeper recursions, the cache size naturally shrinks. Moreover, attention
+is restricted exclusively to these locally cached entries, which could accelerate the decoding.
+The effectiveness of our T-Loopformer is thoroughly substantiated through extensive experi-
+ments. The dynamic token-choice routing mechanism grants the model the flexibility to modu-
+late the number of recursive steps according to each token’s intrinsic complexity, departing from
+the uniform-depth strategy that applies the same loop count indiscriminately.
+In addition, the
+recursion-wise KV caching mechanism effectively accelerates the autoregressive decoding and re-
+duces the accompanying computational expenses. The key contributions of this paper are summa-
+rized as follows:
+
+
+• We propose T-LoopFormer, which could realize token-level elastic-depth through a
+lightweight dynamic token-choice router. This token-choice router could adaptively de-
+termines whether the token should exit early or continue recursing which could improve
+the sample efficiency.
+• We design a recursion-wise KV caching scheme that selectively retains key-value caches
+only for active recursion loops, which could accelerate autoregressive decoding.
+• Extensive experiments on multiple benchmarks demonstrate that T-LoopFormer could
+achieve the best performance and decoding efficiency compared with baselines of the same
+parameter under a fixed FLOPs, which validates the effectiveness of the token-choice router
+and recursion-wise KV cache.
+2
+RELATED WORK
+Looped Transformers
+Parameter sharing provides an orthogonal route to efficiency and effective
+depth Jeddi et al. (2026). Through the introduction of adaptive computation time, the Universal
+Transformer establishes that repeatedly reusing a single block can achieve representational perfor-
+mance comparable to that of deep stacks without weight sharing Dehghani et al. (2018). During
+pretraining, ALBERT further reveals that extensive cross-layer weight tying achieves considerable
+parameter efficiency, while downstream performance remains uncompromised Lan et al. (2019).
+Building upon this paradigm, Deep Equilibrium Models (DEQ) define an implicitly deep transfor-
+mation with tied weights, solved iteratively via fixed-point methods and implicit differentiation Bai
+et al. (2019). Besides, there are some works that explore looped transformers as programmable com-
+puters Giannou et al. (2023) and mechanisms for algorithmic length generalization Fan et al. (2025);
+Jeddi et al. (2026). What’s more, Time-step-conditioned looping approaches include TMLT (Time-
+Modulated Looped Transformers) and LoopFormer, TMLT examine the representational capacity of
+looped Transformers in language modeling and demonstrate that conditioning on the timestep (i.e.,
+the loop index) yields both improved scaling and lower perplexity Xu & Sato (2024). LoopFormer
+incorporates timestep and step-size conditioning into looped Transformers. Via shortcut-consistency
+training over variable-length trajectories, it enables elastic-depth inference, where performance
+scales gracefully with the chosen compute budget Jeddi et al. (2026). However, these methods treat
+all tokens identically, forcing each of them to undergo the same fixed number of recursion steps
+regardless of their inherent complexity. Such a uniform strategy fails to account for the varying
+difficulty across tokens, inevitably leading to wasteful computation on easy tokens and unnecessary
+latency during inference, as harder tokens rarely benefit from the same depth as simpler ones.
+Latent Reasoning
+looped Transformers possess an inductive bias for reasoning that strengthens
+with increasing effective computational depth and such abilities are framed as latent reasoning Saun-
+shi et al. (2024; 2025). Unlike explicit chain-of-thought (CoT) prompting Goyal et al. (2024); Cheng
+& Van Durme (2024); Pfau et al. (2024); Kaissis et al. (2026); Chen et al. (2026); Zhu et al. (2025);
+Jolicoeur-Martineau (2025), latent reasoning methods like looped transformers circumvent the need
+for verbalized reasoning steps, which significantly reduces the required context length and token
+consumption Hao et al. (2024); Saunshi et al. (2025); Jeddi et al. (2026). Simultaneously, both
+theoretical and empirical researches link reasoning ability with network depth and algorithmic gen-
+eralization Merrill & Sabharwal (2024). Our method leverages the inductive bias inherent in looped
+Transformers and extends it to the token-level, enabling dynamic loop unrolling at the token-level
+latent reasoning. This allows the autoregressive decoding process to operate directly on the hidden
+states of each individual token.
+Dynamic Routing
+Dynamic routing enhances model efficiency by adapting computation to input
+complexity. Capsule Networks introduced routing-by-agreement for dynamic part-whole assign-
+ment without static pooling Sabour et al. (2017). In Transformers, ITT applies adaptive token-level
+routing with iterative hidden-state refinement, allowing critical tokens to undergo deeper computa-
+tion while skipping redundant processing for simple tokens Chen et al. (2025). In MoE, difficulty-
+aware routing activates more experts for complex inputs and fewer for easy ones, overcoming fixed
+top-k selection Huang et al. (2024), while AdaMoE further enables token-adaptive allocation with
+null experts and differentiable end-to-end training Zeng et al. (2024). Inspired by these, we ex-
+
+
+tend dynamic routing to token-level loop unrolling within a looped Transformer, where each token’s
+hidden states govern the number of computational loops.
+KV Cache
+The KV cache has become a major memory and bandwidth bottleneck for LLM infer-
+ence as context lengths grow. Recent compression efforts fall into three categories. Eviction-based
+methods selectively discard less critical KV pairs: CAKE Qin et al. (2025) frames eviction as a
+cake-slicing problem that allocates per-layer cache sizes via spatial-temporal attention dynamics,
+achieving 10× speedup with 3.2% cache; CriticalKV Feng et al. (2025) provides a perturbation-
+constrained selection algorithm that minimizes worst-case output perturbation, halving compression
+loss across benchmarks; ForesightKV Dong et al. (2026) learns to predict eviction via supervised
+training and RL, outperforming prior methods under half the cache budget. Quantization-based
+methods reduce bit-width: PolarQuant Wu et al. (2026) uses polar transformation to handle key
+cache outliers, converting query-key inner products into table lookups for decoding acceleration;
+CommVQ Li et al. (2025) introduces commutative vector quantization with a RoPE-commutative
+codebook, achieving 87.5% cache reduction with 2-bit quantization. Low-rank methods exploit
+subspace structure: Palu Chang et al. (2025a) compresses KV via low-rank projection, achieving
+50% compression with 1.89× speedup; xKV Chang et al. (2025b) jointly factorizes grouped-layer
+KV cache into a shared low-rank subspace, delivering up to 8× compression. Motivated by these, we
+propose a recursion-wise KV caching mechanism for token-level loop unrolling that retains caches
+only for active recursion loops and discards those for early-exited loops.
+3
+T-LOOPFORMER
+We introduce T-LoopFormer (see Figure 1), which is a looped transformer that utilizes a light weight
+dynamic token-choice router to achieve the token-level elastic-depth and use recursion-wise KV
+cache during inference to reduce the memory usage and accelerate the autoregressive decoding. We
+use X = (x1, ..., xK) to denote a sequence of K tokens which are drawn from a vocabulary V .
+Following loopformer Jeddi et al. (2026), the positional embeddings are added in a one-shot manner
+for simplicity we use the simplest cycle design, where a stack of J Transformer layers denoted by
+ΦJ(·).
+3.1
+LONG AND SHORT TRAJECTORY ALIGNMENT
+We align the long and short trajectories produced during autoregressive decoding, ensuring that the
+model can flexibly adjust its recursion depth in the sequence-level. The establishment of a sentence-
+level global inference loops provides a computational upper bound for token-level elastic depth
+recursion and the number of loops per token is determined by a dynamic token-choice router.
+Following the work Jeddi et al. (2026), T-LoopFormer uses a user-defined training loops L, the
+user specifies a step schedule ∆L such that PL
+i=1 ∆i = 1. T-LoopFormer then applies ΦJ(·)
+for L iterations, conditioning each loop i on the cumulative time ci−1 and step size ∆i, where
+0 = c0 < · · · < cL = 1 and ∆i = ci −ci−1. The sequence ∆L = (∆1, . . . , ∆L) is referred to as a
+trajectory, and must satisfy the unit sum constraint. The full trajectory corresponds to the maximum
+L loops, each with ∆i = 1/L. Besides, T-LoopFormer is a decoder-only looped Transformer in
+which a single shared stack is applied iteratively. At iteration l, the model conditions on the pair
+(ci−1, ∆i), where ci−1 ∈[0, 1] is the cumulative normalized time and ∆i ∈[0, 1] is the step size.
+Encoded with sine–cosine frequency embeddings and projected via small MLPs, the two scalars
+yield ec and e∆, and summing them produces ei = ec + e∆. Modulation of the T-LoopFormer
+Block is performed via this signal: an MLP maps ei to scaling (γ1, γ2) for the two RMSNorm
+layers and to gating (α1, α2) applied immediately before the residual connections of MHSA and
+FFN. T-LoopFormer uses shortcut conditioning together with an alignment loss Lalign that drives
+trajectories of different lengths to align with the complete trajectory of length L. To sample the
+shortcut trajectory during training, we start from a T-LoopFormer with L (unrolled L times) and a
+maximum trajectory ∆L. In each batch, we first draw a shortcut length S ∼U{1, . . . , L −1}, and
+subsequently sample the step schedule ∆S uniformly over [0, 1] subject to PS
+i=1 ∆i = 1. The loss
+objective is:
+L = LL + λ1LS + λ2Lalign,
+(1)
+
+
+where LL and LS correspond to the next-token prediction losses for the longest and sampled shortcut
+trajectories, respectively. We set λ1 = λ2 = 0.1 in all experiments.
+Loop 1 
+Loop 2 
+Loop 3 
+Tok 1 
+Gather 
+Tok 2 
+: Gathered
+Tok 3 
+Tok 4 
+Tok 5 
+𝐴1 = {1,2,3,4,5} 
+𝐴2 = {1,2,3,5} 
+𝐴3 = {1,5} 
+𝐻(2) = 𝐺𝑎𝑡ℎ𝑒𝑟(𝐻(1),𝐴2) 
+𝐻(3) = 𝐺𝑎𝑡ℎ𝑒𝑟(𝐻(2),𝐴3) 
+~ 
+~ 
+𝐻(1) = 𝐺𝑎𝑡ℎ𝑒𝑟(𝐻(0),𝐴1) 
+Scatter 
+Loop 1 
+Loop 2 
+Loop 3 
+Tok 1 
+Tok 2 
+Tok 3 
+Tok 4 
+Tok 5 
+: Scattered 
+: Active 
+: Not Active 
+~ 
+𝐻2 = Block 𝐻1
++ 𝐻2 
+(1) 
+(0) 
+𝐻2 = Block 𝐻2
++ 𝐻2 
+~ 
+𝜎1(2) 
+(2) 
+~ 
+(1) 
+𝜎2(2) 
+𝐻2 = 𝐻2 
+(3) 
+(2) 
+Token 2:  
+(a) Gather-scatter during training.
+𝐻(𝑖) ∈𝑅𝑇×𝑑 
+Loop-i 
+Prefill 
+Gather 
+𝐴𝑖= {𝜏:𝑚𝜏≥𝑖} 
+𝜌(𝑖) = 𝑠𝑜𝑟𝑡(𝐴𝑖) 
+Index={0,1,2,3,4} 
+Index={0,2,3} 
+𝜌(𝑖) = [0,2,3] 
+𝐻(𝑖) ∈𝑅𝐴𝑖×𝑑 
+~ 
+Shared Block 𝑗= {1,…, 𝐽} 
+𝑞(𝑖,𝑗), 𝑘(𝑖,𝑗),𝑣(𝑖,𝑗) = 𝑃𝑟𝑜𝑗𝑗(ℎ(𝑖−1)) 
+Scatter 
+𝑜(𝑖,𝑗) = 𝐴𝑡𝑡𝑛(𝑞𝑖,𝑗,𝐾𝑖,𝑗, 𝑉𝑖,𝑗,𝜇(𝑖)) 
+𝐾(𝑖,𝑗) = 𝐾(𝑖,𝑗)     𝑘(𝑖,𝑗), 𝑉(𝑖,𝑗) = 𝑉(𝑖,𝑗)    𝑣(𝑖,𝑗) 
+⊕ 
+⊕ 
+𝑡 
+𝑡 
+<𝑡+ 1 
+<𝑡+ 1 
+<𝑡 
+<𝑡 
+<𝑡 
+<𝑡 
+𝜏 
+𝜏 
+𝜏 
+𝜏 
+𝜏 
+𝜏 
+𝜏 
+𝜏 
+𝐻(𝑖) 
+Loop-i+1 
+Single 
+Token 
+Decode 
+ 𝜏 
+Router 
+𝑚𝜏 
+Loop i=1,2,…,𝑚𝜏 
+𝑄𝐾𝑉 𝑃𝑟𝑜𝑗→𝐴𝑡𝑡𝑛𝜇→𝐾𝑉(𝑝𝑜𝑠 𝑡) 
+ℎ𝑚𝜏 
+𝜏 
+RMS 
+Norm 
+LM 
+Head 
+i > 𝑚𝜏 
+(b) Prefill and decode during inference.
+Figure 2: T-LoopFormer training and inference pipeline. (a): the gather-scatter during training; (b):
+prefill and decode during inference.
+3.2
+DYNAMIC TOKEN-CHOICE ROUTING
+The implementation of token-level elastic depth unroll is based on sequence-level elastic depth ex-
+pansion. We use a two-layer MLP to serve as the lightweight dynamic token-choice router. Loops
+are indexed by i ∈{1, . . . , M}, where M is the sequence-level maximum recursion depth shared
+by all tokens (during training, M equals the sampled shortcut length S, or L for the full trajectory;
+during inference, M is set by the user). Let h(i)
+τ
+∈Rd denote the hidden state of token τ after i
+loops, with the initial embedding h(0)
+τ
+and (h(0)
+τ
+= Eτ + Epos(τ) ∈Rd); loop i maps h(i−1)
+τ
+to h(i)
+τ .
+The router fθ : Rd →RM maps the initial hidden state to a distribution over recursion depths via a
+softmax layer:
+πτ = softmax
+ fθ(h(0)
+τ )
+
+∈RM,
+(2)
+where πτ,ℓis the probability that token τ requires depth ℓ, ℓ∈{1, . . . , M}. For each loop i, the
+router computes the cumulative probability that token τ requires a recursion depth of at least i:
+p(i)
+τ
+=
+M
+X
+ℓ=i
+πτ,ℓ,
+(3)
+and token τ executes loop i (i.e., remains active) only if p(i)
+τ
+> 0.5:
+1
+
+τ ∈Ai
+
+= 1
+
+p(i)
+τ
+> 0.5
+
+,
+(4)
+where Ai ⊆{1, . . . , T} denotes the set of tokens still active at loop i. Since p(i)
+τ
+is non-increasing
+in i, the active sets are automatically nested, A1 ⊇A2 ⊇· · · ⊇AM, and A1 = {1, . . . , T}
+holds by construction as p(1)
+τ
+= 1. A token is thus permanently deactivated once dropped (the
+routing decision is monotone over loops), and each token adaptively determines its own token-level
+recursion depth:
+mτ = max
+
+i ∈{1, . . . , M} : τ ∈Ai
+	
+,
+mτ ∈{1, . . . , M},
+(5)
+where mτ = 1 means the token traverses only a single pass of the shared block, whereas mτ = M
+indicates the token propagates through all M iterations. The trajectory is ∆mτ = (∆m1, ..., ∆mτ )
+and Pmτ
+i=1 ∆i = 1. Equivalently, τ ∈Ai if and only if mτ ≥i: the token’s depth directly bounds
+the loops it participates in, with no index offset. As the routing distribution is computed once from
+the initial hidden state h(0)
+τ , the per-token depth allocation is decided in a single forward evaluation
+of the lightweight router.
+
+
+Gather–Scatter computation for training efficiency.
+Because routing decisions vary per token,
+a naive implementation would still execute the shared block over the full sequence at every loop,
+forfeiting any computational savings. We therefore couple the router with a gather-scatter mecha-
+nism that performs the lossless sequence compression during training. Let H(i−1) ∈RT ×d collect
+the loop-i input hidden states of all T tokens. At each loop i, we first gather the hidden states of
+active tokens into a compacted tensor:
+˜H(i) = Gather
+
+H(i−1), Ai
+
+∈R|Ai|×d,
+(6)
+so that the shared block operates only on ˜H(i), and the computation cost of loop i scales with
+the number of surviving tokens |Ai| rather than the sequence length T. The updated states are
+then scattered back to their original positions (this restores H as a full-length tensor in the original
+sequence order, so that (i) the next loop can gather its own active set Ai+1, which differs from Ai;
+(ii) token τ in each position retains its latest state at a fixed coordinate for loss alignment; and (iii)
+gradients can flow back through the indexed assignment to the corresponding rows in the compact
+tensor):
+H(i)
+τ
+=
+(
+Block
+  ˜H(i)
+σi(τ) + H(i−1)
+τ
+,
+τ ∈Ai,
+H(i−1)
+τ
+,
+τ /∈Ai,
+(7)
+where σi : Ai →{1, . . . , |Ai|} is the gather index map. Tokens that exit the recursion simply retain
+the hidden state from their last executed loop, h(mτ )
+τ
+, which is passed to the final normalization and
+language-modeling head.
+3.3
+RECURSION-WISE KV CACHING
+During inference, T-LoopFormer employs a recursion-wise KV cache mechanism to retain the KV
+cache for tokens in active loops while discarding the KV cache for inactive loops, thereby accelerat-
+ing token generation. For each token, we allocate M independent KV caches, one for each recursion
+loop i ∈{1, . . . , M}. Let j ∈{1, . . . , J} denote the layer index within the shared block, where J
+is the total number of layers. We define the cache state at recursion loop i, layer j, up to sequence
+position t −1 as
+K(i,j)
+<t
+=
+ k(i,j)
+τ
+
+τ<t, mτ ≥i,
+V (i,j)
+<t
+=
+ v(i,j)
+τ
+
+τ<t, mτ ≥i,
+(8)
+Crucially, inference is also executed with the gather−scatter scheme (see Appendix B). The active
+rows are first gathered into a compact tensor ˜H(i) (equation 6), where the gather indices are sorted
+so that the causal order is preserved within the compact sequence. Only ˜H(i) is passed through the
+shared block. Importantly, the original sequence positions ρ(i) = sort(Ai) are captured at gather
+time and propagated through the block to the cache-writing routine: within each attention layer,
+the newly computed keys and values are written into the loop-i cache at their original positions
+ρ(i) rather than at their compact indices. Positional bookkeeping maintains causal alignment via
+original-position cache references. After the block returns the updated compact states, they are
+scattered back to their original positions and get H(i) (equation 7), where scatter overwrites only
+the rows indexed by Ai; the hidden states of exited tokens are left untouched. In the single-token
+decoding case, the scheme degenerates to an early exit: the recursion loop terminates as soon as the
+current token leaves the active set.
+During autoregressive decoding of token τ (arriving at sequence position t, so that K<t holds exactly
+the tokens preceding it), its routing depth mτ is determined by the router. For each recursion loop i,
+the token computes its query, key, and value projections at layer j from its incoming state:
+q(i,j)
+τ
+, k(i,j)
+τ
+, v(i,j)
+τ
+= Proj(j) h(i−1)
+τ
+
+.
+(9)
+The attention mechanism queries only the historical keys and values belonging to the same loop i,
+restricted to the valid entries of that cache:
+o(i,j)
+τ
+= Attn
+ q(i,j)
+τ
+, K(i,j)
+<t , V (i,j)
+<t
+; µ(i)
+,
+(10)
+where the validity indicator µ(i)
+τ
+= 1[ mτ ≥i ] excludes the cache slots of tokens that exited before
+loop i (in batched prefill, a block-causal mask is additionally applied among the currently gathered
+
+
+tokens). Masking is required to avoid softmax assigning non-negligible mass to zero slots of exited
+tokens.
+Whenever token τ executes loop i (i.e., mτ ≥i), its current key and value must be stored, since
+future tokens that also reach loop i will attend to them. We update the loop-specific cache by writing
+the new states at the original sequence position:
+K(i,j)
+<t+1 = K(i,j)
+<t
+⊕t k(i,j)
+τ
+,
+V (i,j)
+<t+1 = V (i,j)
+<t
+⊕t v(i,j)
+τ
+,
+(11)
+where ⊕t denotes writing the new state at cache position t. For single-token decoding, this reduces
+to ordinary sequence concatenation at the tail of the cache; for batched prefill, the writes are indexed
+by the gathered positions ρ(i) of all active tokens. If the token exits the recursion after loop mτ (i.e.,
+for loops i > mτ), it neither computes new projections nor updates any cache. Its final hidden state
+h(mτ )
+τ
+is directly passed to the final normalization and LM head, bypassing the remaining shared
+block iterations.
+Table 1: The perplexity comparison on the FineWeb-Edu-100B and OpenWebText validation sets
+and the accuracy comparison on ten zero-shot reasoning tasks between our model and all base-
+line models under various FLOPs. The best performance is marked in bold, the second-best is
+underlined, and our model’s results are highlighted.
+Params
+Perplexity ↓
+Language Tasks (Accuracy) ↑
+Avg Acc
+FineWeb-Edu OpenWebText COPA
+HS
+LB
+OBQA PIQA Race
+SciQ ARC-C SIQA ARC-E
+FLOPs: 24x
+Base (24 ⊗1)
+24x
+20.17
+19.22
+62
+34.79 41.98
+27.57
+66.29 29.78 70.22
+27.79
+38.83
+38.76
+43.8
+Base-Loop (3 ⊗8)
+3x
+23.23
+22.78
+61
+31.65 35.83
+27.11
+64.45 28.93 63.79
+25.11
+38.94
+36.12
+41.29
+TMLT (3 ⊗8)
+3x
+22.87
+21.33
+66
+33.22 40.06
+27.92
+64.11 30.14 70.11
+25.55
+37.32
+36.58
+43.1
+Naive-Loop-EE (3 ⊗8)
+3x
+25.54
+24.23
+67
+30.78 31.89
+27.03
+63.42 29.56 66.32
+25.88
+36.97
+36.77
+42.91
+Base-Loop-EE-Align (3 ⊗8)
+3x
+24.21
+23.25
+67
+31.46 32.92
+26.9
+63.23 29.43 65.29
+26.77
+37.81
+37.83
+41.86
+TMLT-EE (3 ⊗8)
+3x
+23.47
+21.98
+67
+32.44 36.92
+28.4
+64.14
+28.9
+68.1
+26.68
+37.73
+37.66
+42.80
+LoopFormer(3 ⊗8)
+3x
+21.96
+20.09
+68
+32.93 39.32
+26.7
+64.95 31.19 68.44
+27.56
+38.19
+37.49
+43.48
+T-LoopFormer(3 ⊗8)
+3x
+20.13
+19.14
+68
+33.67 40.18
+27.33
+66.32 31.88 68.76
+28.04
+38.68
+39.17
+44.20
+FLOPs: 12x
+Base (12 ⊗1)
+12x
+21.69
+21.11
+68
+32.82 37.78
+26.28
+64.69 29.88 69.21
+26.31
+38.41
+38.17
+43.16
+Naive-Loop-EE (3 ⊗4)
+3x
+24.79
+25.12
+66
+29.67 31.69
+26.19
+61.95 28.53 64.56
+25.23
+37.12
+36.24
+40.72
+Base-Loop-EE-Align (3 ⊗4)
+3x
+26.01
+25.83
+63
+29.98 26.07
+27.43
+61.63 28.26 58.89
+25.25
+36.35
+36.74
+39.36
+TMLT-EE (3 ⊗4)
+3x
+26.36
+26.77
+62
+30.6
+27.94
+26.79
+62.31 28.85 61.74
+25.72
+36.78
+36.98
+39.97
+LoopFormer(3 ⊗4)
+3x
+24.23
+23.69
+68
+31.55 32.54
+25.68
+63.99 28.51 66.73
+26.28
+37.82
+37.14
+41.82
+T-LoopFormer(3 ⊗4)
+3x
+23.6
+23.14
+69
+32.33 33.26
+26.19
+64.82 28.79 67.11
+26.96
+38.47
+38.85
+42.58
+FLOPs: 6x
+Base (6 ⊗1)
+6x
+24.84
+24.04
+64
+30.58 33.78
+25.78
+62.58 28.31 67.61
+31.16
+36.21
+37.66
+41.77
+Naive-Loop-EE (3 ⊗2)
+3x
+29.03
+28.12
+63
+28.86 27.51
+24.82
+61.78 26.49 62.38
+30.02
+35.53
+36.13
+39.65
+Base-Loop-EE-Align (3 ⊗2)
+3x
+35.07
+34.32
+60
+28.33 18.88
+25.67
+59.88 25.24 54.02
+29.05
+34.79
+36.23
+37.21
+TMLT-EE (3 ⊗2)
+3x
+37.31
+37.22
+59
+28.34 17.45
+25.37
+59.11 26.51 50.41
+28.54
+35.16
+36.53
+36.64
+LoopFormer (3 ⊗2)
+3x
+32.89
+32.05
+63
+28.81 26.68
+26.87
+60.67 26.03 59.02
+29.67
+35.77
+37.02
+39.35
+T-LoopFormer (3 ⊗2)
+3x
+32.03
+31.76
+64
+29.17 27.03
+27.35
+61.13
+26.5
+59.64
+30.44
+36.46
+38.18
+39.99
+4
+EXPERIMENTS
+Following Jeddi et al. (2026), we compare a 24-layer, ∼1B-parameter non-looped Transformer with
+FLOP-matched looped variants. All models use a GPT-style decoder Radford et al. (2019) with
+NanoGPT configurations. Training is performed on FineWeb-Edu-100B Penedo et al. (2024) for
+100B tokens in accordance with Chinchilla scalingHoffmann et al. (2022). See Appendix A for
+details. Following Jeddi et al. (2026), in terms of model parameters, 24× indicates that the model
+contains 24 layers. In terms of FLOPS, 24× denotes the product of the number of model layers J
+and the user-specified inference depth M, FLOPS ∝J ⊗M, ignoring embedding/unembedding
+costs.
+Evaluation Metrics and Benchmarks.
+Following Saunshi et al. (2025); Geiping et al. (2026);
+Jeddi et al. (2026), we report perplexity and downstream zero-shot accuracy. Perplexity is measured
+on FineWeb-EduPenedo et al. (2024) and OpenWebTextGokaslan & Cohen (2019). For latent rea-
+soning, we report zero-shot accuracy on ten established benchmarks spanning a range of reasoning
+difficulty: COPA Roemmele et al. (2011), HellaSwag (HS) Zellers et al. (2019), LAM-BADA (LB)
+Paperno et al. (2016), OpenBookQA (OBQA) Mihaylov et al. (2018), RACE Lai et al. (2017), Social
+IQA (SIQA) Sap et al. (2019), ARC-Easy (ARC-E), ARC-Challenge (ARC-C) Clark et al. (2018),
+and SciQ Welbl et al. (2017).
+
+
+Table 2:
+TPOT of different
+models on FineWeb-Edu-100B
+validation set at 24× FLOPs.
+Model
+Latency (ms/token)
+Base (24 ⊗1)
+0.202
+Base-Loop (3 ⊗8)
+0.497
+TMLT (3 ⊗8)
+0.389
+Naive-Loop-EE (3 ⊗8)
+0.433
+Base-Loop-EE-Align (3 ⊗8)
+0.425
+TMLT-EE (3 ⊗8)
+0.312
+LoopFormer (3 ⊗8)
+0.441
+T-LoopFormer (3 ⊗8)
+0.197
+Table 3: Training memory of
+different models on FineWeb-
+Edu-100B training set at 24x
+FLOPs
+Model
+Memory (MB)
+Base (24 ⊗1)
+634,225
+Base-Loop (3 ⊗8)
+93,442
+TMLT (3 ⊗8)
+96,594
+Naive-Loop-EE (3 ⊗8)
+87,997
+Base-Loop-EE-Align (3 ⊗8)
+91,256
+TMLT-EE (3 ⊗8)
+98,387
+LoopFormer (3 ⊗8)
+97,739
+T-LoopFormer (3 ⊗8)
+74,889
+Table 4:
+Percentage of loops
+per token for our model on
+the FineWeb-Edu-100B valida-
+tion set at 24× FLOPs.
+Loops Percentage (%)
+1
+0.23
+2
+36.85
+3
+23.73
+4
+8.14
+5
+13.87
+6
+2.16
+7
+11.26
+8
+3.77
+Baselines.
+We compare T-LoopFormer against two groups of baselines: fixed-depth Models and
+depth-elastic models. Fixed-depth models include Base: a non-looped Transformer; Base-Loop: a
+standard looped model; TMLT: a looped model with timestep conditioning. Depth-elastic models
+include Base-Loop-EE: naive early exiting applied to the basic looped model; TMLT-EE: early ex-
+iting and long-short trajectory alignment training applied to TMLT to enable depth elasticity; Base-
+Loop-EE-Align: augmented with the long-short trajectory alignment during training. LoopFormer:
+a elastic-depth looped transformers with long-short trajectory alignment.
+w/ both
+w/o token-choice router
+w/o recursion-wise KV
+w/o both
+0
+5
+10
+15
+20
+Perplexity (PPL)
+20.13
+22.25
+20.71
+23.09
+(a) Perplexity (PPL)
+w/ both
+w/o token-choice router
+w/o recursion-wise KV
+w/o both
+0.0
+0.1
+0.2
+0.3
+0.4
+Latency (ms/token)
+0.197
+0.267
+0.393
+0.434
+(b) TPOT
+Figure 3: The influence of token-choice router and recursion-wise KV cache. Tested on FineWeb-
+Edu-100B validation set and at 24x FLOPs, w/: with, w/o: without. (a): perplexity results and (b):
+time per output token results.
+4.1
+MAIN RESULTS
+Table 1 shows that, under different FLOPs, T-LoopFormer achieves the best performance among
+models with the same parameter. Moreover, at 24× FLOPs, our model outperforms the non-looped
+base model with 24× parameter. This demonstrates that the dynamic token-choice routing mech-
+anism designed in our model enables each token to adaptively unroll different number of loops
+based on its hidden state, and that either excessive or insufficient elastic-depth unrolling may lead
+to incorrect token outputs. Under 12x and 6x FLOPs, because the maximum number of loops is
+reduced, some tokens require more loop to unroll, which causes those tokens to be insufficiently
+reasoned. As a result, T-LoopFormer underperforms the non-looped base model on perplexity and
+zero-shot reasoning tasks. However, compared with other looped models, it narrows the perfor-
+mance gap with the non-looped base model. In addition to the comparison of model performance,
+Table 2 shows that our model achieves the lowest decoding latency among all baselines, even
+lower than the non-looped base model, demonstrating that our model could improve single token
+decoding efficiency. Moreover, compared with LoopFormer, our model achieves 2.24× decoding
+speed faster than LoopFormer, which confirms that the dynamic token-choice routing mechanism
+and the recursion-wise KV cache are effective in improving inference speed. Table 3 validates
+that T-LoopFormer could achieve the lowest memory usage during training, indicating that it can
+improve the training efficiency. Table 4 shows the distribution of loop counts per token on the
+
+
+w/o gather-scatter
+w/ gather-scatter
+0
+20000
+40000
+60000
+80000
+Training Memory (MB)
+91279 MB
+74889 MB
+(a) Training memory with/without gather-scatter.
+w/o gather-scatter
+w/ gather-scatter
+0.00
+0.05
+0.10
+0.15
+0.20
+0.25
+Inference Latency (ms/token)
+0.249 ms
+0.197 ms
+(b) TPOT with/without gather-scatter.
+0.1
+0.2
+0.3
+0.4
+0.5
+0.6
+0.7
+0.8
+0.9
+Router Threshold
+20
+21
+22
+23
+24
+Perplexity (PPL) 
+PPL
+Default Threshold (0.5)
+Best PPL (20.13)
+Avg Depth
+2
+3
+4
+5
+6
+7
+Average Depth
+(c) Perplexity and average depth under different
+router thresholds.
+128
+512
+1024
+2048
+Input Sequence Length
+2
+3
+4
+5
+6
+7
+TTFT (ms / token)
+Base (24×1)
+LoopFormer (3×8)
+T-LoopFormer (3×8)
+(d) TTFT with different input sequence lengths.
+Figure 4: Ablation studies on key components of T-LoopFormer.
+(a) and (b): effect of the
+gather–scatter mechanism on training memory and inference latency; (c): sensitivity analysis of
+the router threshold; (d): scaling of TTFT with input sequence length.
+FineWeb-Edu-100B validation set and most tokens require at most 4 loops, and the overall distribu-
+tion exhibits a long-tail pattern. This indicates that different tokens indeed need different numbers
+of loops, validating the effectiveness of token-choice router.
+4.2
+ABLATION STUDY
+Influence of Token-Choice Router and Recursion-wise KV Cache.
+Figure 3 shows the influ-
+ence of token-choice router and the results are tested on FineWeb-Edu-100B validation set at FLOPs
+of 24x. Figure 3a exhibits that the token-choice router contributes more to generating correct tokens
+and figure 3b validates that the recursion-wise contributes more to increasing the inference speed.
+Influence of Gather-Scatter during Training and Inference.
+Figure 4a shows that without
+gather-scatter during training, memory will increase 21.9%, which validates that the gather-scatter
+mechanism could improve the training efficiency and figure 4b shows that without gather-scatter
+during inference, the inference latency will increase 26.4%. These validate that gather-scatter mech-
+anism could improve the autoregressive decoding efficiency.
+Influence of Different Router Threshold.
+Figure 4c shows the influence of different router
+threshold (tested on FineWeb-Edu-100B validation set at 24x FLOPs),0.5 is the best threshold and
+the perplexity (PPL) of the model equipped with the token-choice router on the FineWeb-Edu-100B
+validation set exhibits a U-shaped curve as the threshold varies.
+TTFT with Different Input Sequence Length.
+Figure 4d shows the TTFT (time to first token)
+with different input sequence lengths (128, 512, 1024, and 2048), we randomly sample 1,000 docu-
+ments from FineWeb-Edu-100B validation set, each with a raw length exceeding 2,048 tokens. We
+then truncate each to target lengths 128, 512, 1024, 2048 as the input prompt. while fixing the num-
+ber of generated tokens to 50. The results show that, as input length grows, T-LoopFormer shows a
+
+
+smaller increase in TTFT than the base model and achieves the lowest latency across all sequence
+lengths, demonstrating its efficient scaling with input length.
+5
+CONCLUSION
+We build T-LoopFormer, a looped Transformer with token-level elastic depth for latent reason-
+ing. A dynamic router adaptively assigns each token a variable number of loops, allowing easy
+tokens to exit early and hard ones to receive deeper computation. For efficiency, we incorporate a
+gather–scatter mechanism that restricts each loop to active tokens, reducing training memory and
+inference latency, and a recursion-wise KV cache that discards caches of exited tokens to further
+accelerate generation. Together, these designs yield an efficient and flexible architecture. Future
+work will extend T-LoopFormer to larger-scale pretraining and broader latent-reasoning tasks.
+6
+AI USE STATEMENT
+During the preparation of this manuscript, the authors used DeepSeek solely for language polish-
+ing and for assisting with data preprocessing, including drafting or refactoring preprocessing code
+and checking data-cleaning scripts. The tool was not used to generate scientific ideas, formulate
+methods, conduct experiments, interpret results, or write the core scientific claims. All AI-assisted
+outputs were carefully reviewed, verified, and edited by the authors, who take full responsibility for
+the content, integrity, and reproducibility of this work. The final data preprocessing was carried out
+by deterministic scripts.
+7
+REPRODUCIBILITY STATEMENT
+To support reproducibility, we provide a complete description of the proposed method, experimen-
+tal setup, and evaluation protocol in Section 4 and Appendix A. The source code, hyperparam-
+eters, random seeds, and step-by-step instructions for reproducing the main results are available
+in the anonymous supplementary repository at https://anonymous.4open.science/r/
+T-LoopFormer-53BE. We believe these resources are sufficient for reproducing the results re-
+ported in this paper.
+REFERENCES
+Shaojie Bai, J Zico Kolter, and Vladlen Koltun. Deep equilibrium models. Advances in neural
+information processing systems, 32, 2019.
+Zefan Cai, Yichi Zhang, Bofei Gao, Yuliang Liu, Yucheng Li, Tianyu Liu, Keming Lu, Wayne
+Xiong, Yue Dong, Junjie Hu, et al. Pyramidkv: Dynamic kv cache compression based on pyra-
+midal information funneling. arXiv preprint arXiv:2406.02069, 2024.
+Chi-Chih Chang, Wei-Cheng Lin, Chien-Yu Lin, Chong-Yan Chen, Yu-Fang Hu, Pei-Shuo Wang,
+Ning-Chi Huang, Luis Ceze, Mohamed Abdelfattah, and Kai-Chiang Wu. Palu: Kv-cache com-
+pression with low-rank projection. In International Conference on Learning Representations,
+volume 2025, pp. 50222–50249, 2025a.
+Chi-Chih Chang, Wei-Cheng Lin, Chien-Yu Lin, Hung-Yueh Chiang, Yash Akhauri, Xilai Dai,
+Huiqiang Jiang, Yucheng Li, Luis Ceze, Kai-Chiang Wu, et al. xkv: Cross-layer kv-cache com-
+pression via aligned singular vector extraction. arXiv preprint arXiv:2503.18893, 2025b.
+Guanxu Chen, Dongrui Liu, and Jing Shao. Loop as a bridge: Can looped transformers truly link
+representation space and natural language outputs? arXiv preprint arXiv:2601.10242, 2026.
+Yilong Chen, Junyuan Shang, Zhenyu Zhang, Yanxi Xie, Jiawei Sheng, Tingwen Liu, Shuohuan
+Wang, Yu Sun, Hua Wu, and Haifeng Wang. Inner thinking transformer: Leveraging dynamic
+depth scaling to foster adaptive internal thinking. In Proceedings of the 63rd Annual Meeting of
+the Association for Computational Linguistics (Volume 1: Long Papers), pp. 28241–28259, 2025.
+
+
+Jeffrey Cheng and Benjamin Van Durme. Compressed chain of thought: Efficient reasoning through
+dense representations. arXiv preprint arXiv:2412.13171, 2024.
+Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and
+Oyvind Tafjord. Think you have solved question answering? try arc, the ai2 reasoning challenge.
+arXiv preprint arXiv:1803.05457, 2018.
+Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob Uszkoreit, and Łukasz Kaiser. Universal
+transformers. arXiv preprint arXiv:1807.03819, 2018.
+Zican Dong, Peiyu Liu, Junyi Li, Zhipeng Chen, Han Peng, Shuo Wang, and Wayne Xin Zhao. Fore-
+sightkv: Optimizing kv cache eviction for reasoning models by learning long-term contribution.
+arXiv preprint arXiv:2602.03203, 2026.
+Ying Fan, Yilun Du, Kannan Ramchandran, and Kangwook Lee. Looped transformers for length
+generalization.
+In International Conference on Learning Representations, volume 2025, pp.
+14502–14520, 2025.
+Yuan Feng, Junlin Lv, Haoyu Guo, Yukun Cao, S Kevin Zhou, and Xike Xie. Criticalkv: Optimizing
+kv cache eviction from an output perturbation perspective. arXiv preprint arXiv:2502.03805,
+2025.
+Jonas Geiping, Sean McLeish, Neel Jain, John Kirchenbauer, Siddharth Singh, Brian Bartoldson,
+Bhavya Kailkhura, Abhinav Bhatele, and Tom Goldstein. Scaling up test-time compute with latent
+reasoning: A recurrent depth approach. Advances in Neural Information Processing Systems, 38:
+41340–41391, 2026.
+Angeliki Giannou, Shashank Rajput, Jy-yong Sohn, Kangwook Lee, Jason D Lee, and Dimitris
+Papailiopoulos. Looped transformers as programmable computers. In International Conference
+on Machine Learning, pp. 11398–11442. PMLR, 2023.
+Aaron Gokaslan and Vanya Cohen. Openwebtext corpus. http://Skylion007.github.io/
+OpenWebTextCorpus, 2019.
+Sachin Goyal, Ziwei Ji, Ankit Singh Rawat, Aditya Krishna Menon, Sanjiv Kumar, and Vaishnavh
+Nagarajan. Think before you speak: Training language models with pause tokens. In International
+Conference on Learning Representations, volume 2024, pp. 27896–27923, 2024.
+Shibo Hao, Sainbayar Sukhbaatar, DiJia Su, Xian Li, Zhiting Hu, Jason Weston, and Yuandong
+Tian. Training large language models to reason in a continuous latent space. arXiv preprint
+arXiv:2412.06769, 2024.
+Jordan Hoffmann, Sebastian Borgeaud, Arthur Mensch, Elena Buchatskaya, Trevor Cai, Eliza
+Rutherford, Diego de Las Casas, Lisa Anne Hendricks, Johannes Welbl, Aidan Clark, et al. Train-
+ing compute-optimal large language models. arXiv preprint arXiv:2203.15556, 2022.
+Quzhe Huang, Zhenwei An, Nan Zhuang, Mingxu Tao, Chen Zhang, Yang Jin, Kun Xu, Liwei
+Chen, Songfang Huang, and Yansong Feng. Harder task needs more experts: Dynamic routing in
+moe models. In Proceedings of the 62nd Annual Meeting of the Association for Computational
+Linguistics (Volume 1: Long Papers), pp. 12883–12895, 2024.
+Ahmadreza Jeddi, Marco Ciccone, and Babak Taati. Loopformer: Elastic-depth looped transformers
+for latent reasoning via shortcut modulation. arXiv preprint arXiv:2602.11451, 2026.
+Alexia Jolicoeur-Martineau. Less is more: Recursive reasoning with tiny networks. arXiv preprint
+arXiv:2510.04871, 2025.
+Georgios Kaissis, David Mildenberger, Juan Felipe Gomez, Martin J Menten, and Eleni Triantafil-
+lou. Step-resolved data attribution for looped transformers. arXiv preprint arXiv:2602.10097,
+2026.
+Guokun Lai, Qizhe Xie, Hanxiao Liu, Yiming Yang, and Eduard Hovy. Race: Large-scale reading
+comprehension dataset from examinations. In Proceedings of the 2017 conference on empirical
+methods in natural language processing, pp. 785–794, 2017.
+
+
+Zhenzhong Lan, Mingda Chen, Sebastian Goodman, Kevin Gimpel, Piyush Sharma, and Radu Sori-
+cut. Albert: A lite bert for self-supervised learning of language representations. arXiv preprint
+arXiv:1909.11942, 2019.
+Haoyang Li, Yiming Li, Anxin Tian, Tianhao Tang, Zhanchao Xu, Xuejia Chen, Nicole Hu, Wei
+Dong, Qing Li, and Lei Chen. A survey on large language model acceleration based on kv cache
+management. arXiv preprint arXiv:2412.19442, 2024.
+Junyan Li, Yang Zhang, Muhammad Yusuf Hassan, Talha Chafekar, Tianle Cai, Zhile Ren, Peng-
+sheng Guo, Foroozan Karimzadeh, Chong Wang, and Chuang Gan. Commvq: Commutative
+vector quantization for kv cache compression. arXiv preprint arXiv:2506.18879, 2025.
+William Merrill and Ashish Sabharwal. The expressive power of transformers with chain of thought.
+In International Conference on Learning Representations, volume 2024, pp. 7690–7706, 2024.
+Todor Mihaylov, Peter Clark, Tushar Khot, and Ashish Sabharwal. Can a suit of armor conduct elec-
+tricity? a new dataset for open book question answering. In Proceedings of the 2018 conference
+on empirical methods in natural language processing, pp. 2381–2391, 2018.
+Denis Paperno, Germ´an Kruszewski, Angeliki Lazaridou, Ngoc-Quan Pham, Raffaella Bernardi,
+Sandro Pezzelle, Marco Baroni, Gemma Boleda, and Raquel Fern´andez. The lambada dataset:
+Word prediction requiring a broad discourse context. In Proceedings of the 54th annual meeting
+of the association for computational linguistics (volume 1: Long papers), pp. 1525–1534, 2016.
+Guilherme Penedo, Hynek Kydl´ıˇcek, Anton Lozhkov, Margaret Mitchell, Colin Raffel, Leandro
+Von Werra, Thomas Wolf, et al. The fineweb datasets: Decanting the web for the finest text data
+at scale. Advances in Neural Information Processing Systems, 37:30811–30849, 2024.
+Jacob Pfau, William Merrill, and Samuel R Bowman. Let’s think dot by dot: Hidden computation
+in transformer language models. arXiv preprint arXiv:2404.15758, 2024.
+Hayden Prairie, Zachary Novack, Taylor Berg-Kirkpatrick, and Daniel Y Fu. Parcae: Scaling laws
+for stable looped language models. arXiv preprint arXiv:2604.12946, 2026.
+Ziran Qin, Yuchen Cao, Mingbao Lin, Wen Hu, Shixuan Fan, Ke Cheng, Weiyao Lin, and Jianguo
+Li. Cake: Cascading and adaptive kv cache eviction with layer preferences. In International
+Conference on Learning Representations, volume 2025, pp. 89945–89977, 2025.
+Alec Radford, Jeffrey Wu, Rewon Child, David Luan, Dario Amodei, Ilya Sutskever, et al. Language
+models are unsupervised multitask learners. OpenAI blog, 1(8):9, 2019.
+Haseena Rahmath P, Vishal Srivastava, Kuldeep Chaurasia, Roberto G Pacheco, and Rodrigo S
+Couto. Early-exit deep neural network-a comprehensive survey. ACM Computing Surveys, 57(3):
+1–37, 2024.
+Melissa Roemmele, Cosmin Adrian Bejan, and Andrew S Gordon. Choice of plausible alternatives:
+An evaluation of commonsense causal reasoning. In AAAI spring symposium: logical formaliza-
+tions of commonsense reasoning, pp. 90–95, 2011.
+Sara Sabour, Nicholas Frosst, and Geoffrey E Hinton. Dynamic routing between capsules. Advances
+in neural information processing systems, 30, 2017.
+Maarten Sap, Hannah Rashkin, Derek Chen, Ronan Le Bras, and Yejin Choi. Social iqa: Common-
+sense reasoning about social interactions. In Proceedings of the 2019 conference on empirical
+methods in natural language processing and the 9th international joint conference on natural
+language processing (EMNLP-IJCNLP), pp. 4463–4473, 2019.
+Nikunj Saunshi, Stefani Karp, Shankar Krishnan, Sobhan Miryoosefi, Sashank J Reddi, and Sanjiv
+Kumar. On the inductive bias of stacking towards improving reasoning. Advances in Neural
+Information Processing Systems, 37:71437–71464, 2024.
+Nikunj Saunshi, Nishanth Dikkala, Zhiyuan Li, Sanjiv Kumar, and Sashank J Reddi. Reasoning with
+latent thoughts: On the power of looped transformers. In International Conference on Learning
+Representations, volume 2025, pp. 14855–14881, 2025.
+
+
+Luohe Shi, Hongyi Zhang, Yao Yao, Zuchao Li, and Hai Zhao. Keep the cost down: A review on
+methods to optimize llm’s kv-cache consumption. arXiv preprint arXiv:2407.18003, 2024.
+Johannes Welbl, Nelson F Liu, and Matt Gardner. Crowdsourcing multiple choice science questions.
+In Proceedings of the 3rd Workshop on Noisy User-generated Text, pp. 94–106, 2017.
+Songhao Wu, Ang Lv, Xun Zhang, Guojun Yin, Wei Lin, Rui Yan, et al. Polarquant: Leveraging
+polar transformation for key cache quantization and decoding acceleration. Advances in Neural
+Information Processing Systems, 38:50584–50607, 2026.
+Kevin Xu and Issei Sato. On expressive power of looped transformers: Theoretical analysis and
+enhancement via timestep encoding. arXiv preprint arXiv:2410.01405, 2024.
+Chenxu Yang, Qingyi Si, Yongjie Duan, Zheliang Zhu, Chenyu Zhu, Qiaowei Li, Minghui Chen,
+Zheng Lin, and Weipinng Wang.
+Dynamic early exit in reasoning models.
+In International
+Conference on Learning Representations, volume 2026, pp. 88170–88210, 2026.
+Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. Hellaswag: Can a ma-
+chine really finish your sentence? In Proceedings of the 57th annual meeting of the association
+for computational linguistics, pp. 4791–4800, 2019.
+Zihao Zeng, Yibo Miao, Hongcheng Gao, Hao Zhang, and Zhijie Deng. Adamoe: Token-adaptive
+routing with null experts for mixture-of-experts language models. In Findings of the Association
+for Computational Linguistics: EMNLP 2024, pp. 6223–6235, 2024.
+Rui-Jie Zhu, Zixuan Wang, Kai Hua, Tianyu Zhang, Ziniu Li, Haoran Que, Boyi Wei, Zixin Wen,
+Fan Yin, He Xing, et al. Scaling latent reasoning via looped language models. arXiv preprint
+arXiv:2510.25741, 2025.
+
+
+A
+IMPLEMENTATION DETAILS
+Hardware and framework.
+All models are trained on 8×A100 (80 GB) GPUs using the open-
+source NanoGPT training stack as a reference implementation.
+Data and tokens.
+Unless otherwise specified, we run each experiment for 200,000 optimizer steps
+with a global batch size of 48 sequences and block size 1024 (context length). This corresponds to
+approximately 100B training tokens in total.
+Optimization.
+We use AdamW with weight decay 2 × 10−1 , cosine learning-rate decay (per
+NanoGPT), peak learning rate lr = 6 × 10−4 , minimum learning rate min lr = 6 × 10−5, and
+4,000 warmup steps, which we found important for stability. Similar to observations in Geiping et al.
+(2026) , we occasionally observe training instabilities at depth; warmup and cosine decay mitigate
+these in practice. Unless noted, other optimizer and training defaults follow NanoGPT.
+Model hyperparameters.
+Following Saunshi et al. (2025); Jeddi et al. (2026), we use hidden size
+d = 2048 and nheads = 32 for all configurations. The feed-forward dimension is dff = 5120 with
+a standard two-layer GELU MLP. All normalizations are RMSNorm. We use learned positional
+embeddings added to token embeddings (NanoGPT default).
+T-LoopFormer Conditioning.
+We use two embedding modules, one for normalized time t ∈
+[0, 1] and one for step size ∆t ∈(0, 1]. Each maps a scalar input to a d-dimensional conditioning
+vector via (i) fixed sinusoidal Fourier features (width Df = 256, max period 10000), followed by
+(ii) a 2-layer MLP with hidden size d and SiLU activation:
+ϕ(τ) = MLP
+ 
+cos(τω1), sin(τω1), . . . , cos(τωDf /2), sin(τωDf /2)
+
+∈Rd
+where ωk = exp
+
+−k−1
+Df /2 log 10,000
+
+for k = 1, ..., Df/2. Given batchwise scalars t and ∆t,
+we compute et = ϕ(t) and e∆= ϕ(∆t) and sum them to obtain the per-iteration condition-
+ing signal c = et + e∆∈Rd. Conditioning is applied inside each LoopFormer block via an
+AdaLN-style modulator: a small MLP takes c and outputs 4d parameters, which we split into
+(αmsa, αmlp, γmsa, γmlp). We use RMSNorm (with no learned affinity) before MHSA and FFN,
+and apply multiplicative scaling and residual gating as
+x ←x + αmsa ⊙MHSA
+ RMSNorm(x) ⊙(1 + γmsa)
+
+,
+x ←x + αmlp ⊙FFN
+ RMSNorm(x) ⊙(1 + γmlp)
+
+,
+the modulator—a SiLU followed by a linear layer of output size 4d—is broadcast over the sequence
+length and zero-initialized (weights and bias). This guarantees that the initial behavior equals that
+of the unmodulated backbone and that conditioning is learned stably.
+B
+THE DIFFERENCE BETWEEN GATHER–SCATTER DURING TRAINING AND
+INFERENCE.
+While the gather–scatter scheme is employed in both training and inference, its role and mechanics
+differ between the two phases. These differences arise from the distinct objectives of each phase:
+training must maintain a differentiable computation graph, whereas inference must maintain a con-
+sistent KV cache for decoding.
+Purpose of the Scatter.
+Training: The scatter serves as an integral part of the differentiable com-
+putation graph. After the shared block processes the compact tensor ˜H(i), scattering the results
+back to their original positions in H accomplishes three things simultaneously: (i) the next loop can
+gather its own active set Ai+1, which generally differs from Ai, from a full-length tensor whose
+row indices remain the original sequence positions; (ii) each token’s state resides at a fixed coordi-
+nate indexed by its position, enabling correct alignment with the loss; and (iii) gradients flow back
+precisely along the indexed assignment to the corresponding rows of the compact tensor. In short,
+the scatter in training exists primarily to keep the computation graph consistent and the gradients
+well-defined.
+
+
+Inference: No gradients are involved. The scatter instead serves cache management: it updates H
+with the latest states and, crucially, carries the newly computed keys and values to their designated
+slots in the loop-wise KV cache. Writing at the correct original positions is essential because future
+tokens will attend to these entries, and the causal alignment of the cache depends on each entry
+residing at its true position.
+Address Translation via ρ(i).
+Training: The gather indices Ai themselves serve as the addresses
+for the scatter, and no additional bookkeeping is required: a row at compact index j is written back
+to position Ai[j].
+Inference: Since the KV caches are indexed by original sequence positions rather than compact
+indices, the gather-time mapping ρ(i) = sort(Ai) must be captured and propagated through the
+shared block to the cache-writing routine. The newly computed K/V entries are written into the loop-
+i cache at their original positions ρ(i), not at their compact row indices. This positional bookkeeping
+is an inference-specific burden that training does not incur.
+Reading the Cache: the Validity Mask µ(i).
+Training: No cache reads occur, and no masking
+against stale entries is needed — inactive tokens are simply not present in the gathered tensor.
+Inference: At loop i, attention queries only the loop-i cache, whose slots for tokens with mτ < i
+are empty (zero-valued). Without masking, the softmax would assign non-negligible probability
+mass to these zero slots. The validity indicator µ(i)
+τ
+= 1[ mτ ≥i ] (plus a block-causal mask among
+currently gathered tokens during batched prefill) is therefore mandatory at inference and has no
+training-time counterpart.
+Degeneration during Single-Token Decoding.
+Training: Every forward pass processes the full
+sequence, so gather–scatter always operates on a multi-token tensor and never degenerates.
+Inference: During autoregressive decoding, only one token is processed at a time. Gathering a
+single row is an identity operation, and scattering it back is equivalent to writing in place; the scheme
+therefore degenerates to a pure early exit: the recursion simply terminates once the current token
+leaves the active set. Cache updates reduce to ordinary tail concatenation (⊕t), and the address
+translation ρ(i) collapses to the identity.
+In essence, the training-time scatter exists to preserve the integrity of the computation graph — coor-
+dinates, alignment, and gradients — while the inference-time scatter exists to preserve the integrity
+of the KV cache. The former guarantees that learning is correct; the latter guarantees that generation
+is correct.

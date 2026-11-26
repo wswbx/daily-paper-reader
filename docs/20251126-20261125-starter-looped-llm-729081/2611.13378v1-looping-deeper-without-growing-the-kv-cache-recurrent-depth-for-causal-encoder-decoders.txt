@@ -1,0 +1,709 @@
+Title: Looping Deeper Without Growing the KV Cache: Recurrent Depth for Causal Encoder-Decoders
+
+URL Source: https://arxiv.org/pdf/2611.13378v1
+
+Published Time: Wed, 11 Nov 2026 01:42:28 GMT
+
+Number of Pages: 23
+
+Markdown Content:
+# LOOPING DEEPER WITHOUT GROWING THE KV C ACHE : R ECURRENT 
+
+# DEPTH FOR CAUSAL ENCODER –D ECODERS 
+
+Jiaqi Leng 1 Minshen Zhang 1 Zhaofeng Sun 2 Yu-Yang Qian 3 Peng Zhao 3 Hao Zhang 1
+
+# ABSTRACT 
+
+Looped language models deepen computation without adding parameters, yet caching full-context key–value (KV) states across layers and rounds severely bounds serving batch size. We design a looped causal encoder–decoder (CED) that achieves recurrent depth with zero round-wise KV growth, addressing where and how to loop an asymmetric stack in which only sparse encoder layers generate global KV. We find that recurrence must be placed in the encoder to iteratively refine global KV representations rather than re-reading static decoder projections, which both drives language-modeling gains and preserves long-context scaling. Furthermore, training the encoder loop under stochastic recurrence depth induces a fixed-point equilibrium where every round losslessly shares the last round’s KV cache. Compounding cross-layer and cross-round KV sharing, the resulting Looped CED 
+
+matches an unlooped CED’s minimal memory footprint and recovers 86–93% of a looped Transformer’s gain with 1/6 of its global KV. To test serving at production scale, we loop the 552B-parameter DeepSeek-V4.1-Flash for 8 rounds on one 4×GB200 node: with per-layer and per-round KV the loop cannot fit a single 128K-token request, whereas Looped CED holds 36 .8× less KV per token, fits 38 such requests (as many as the unlooped model), and serves 3.6× higher throughput on 8K-token prompts. 
+
+# 1 INTRODUCTION 
+
+Looped language models scale compute without scaling pa-rameters by repeatedly applying a weight-tied layer block across recurrent rounds (Dehghani et al., 2019; Saunshi et al., 2025; Prairie et al., 2026a; Geiping et al., 2025; Zhu et al., 2025). Yet in production serving, memory capacity and decode throughput are bottlenecked not by parameter count alone, but by the resident KV cache per request (Kwon et al., 2023; Zadouri et al., 2025). To shrink this KV foot-print, recent system-co-designed architectures replace ho-mogeneous full-context layers with asymmetric KV rout-ing (Brandon et al., 2024; Sun et al., 2024; DeepSeek-AI, 2026). Most notably, the causal encoder–decoder (CED) in DeepSeek-V4.1-Flash (DeepSeek-AI, 2026) equips ev-ery layer with bounded sliding-window attention (SWA) while restricting full-context ( global ) KV generation to a few encoder layers; all decoder layers share a single global KV projected once from the final encoder output, allowing prompt prefill to bypass the decoder entirely. Our goal is to combine recurrent looping with a CED to match the modeling quality and long-range scaling of a looped dense Transformer while preserving CED’s serving      
+
+> 1University of California, San Diego 2Tsinghua Univer-sity 3Nanjing University. Correspondence to: Jiaqi Leng
+> <jileng@ucsd.edu >.
+
+efficiency. In a homogeneous dense Transformer, every layer generates and consumes full-context KV during both prefill and decode. In a CED, by contrast, layer depth di-rectly governs both global KV generation and prefill exe-cution (Fig. 1a), while repeating layers across rounds risks multiplying resident KV states (Fig. 1b). Designing a looped CED therefore comes down to two questions: (1) Where in the asymmetric CED stack should recurrence be placed 
+
+to maximize modeling capability, and how does that place-ment affect prefill and decode cost? (2) How can a looped CED be trained and cached so that multi-round recurrence adds zero resident KV overhead over an unlooped CED without sacrificing quality? To answer these questions, we compare looping the CED encoder against looping the decoder (Fig. 1a), and train the recurrent core under stochastic recurrence depth (Bai et al., 2019; Prairie et al., 2026a; Huang et al., 2026b) so that inference caches only the last round’s KV rather than all T rounds (Fig. 1b). We call the encoder loop trained and cached this way Looped CED : at any number of rounds, it keeps the resident KV of an unlooped CED. Furthermore, because standard pretraining corpora and benchmarks are dominated by short sequences, we introduce offset-averaged long-document BPB to directly probe long-range routing through CED’s global KV bottleneck. Training CED and dense models from scratch across three scales (§4), paired with a serving cost analysis at DeepSeek-V4.1-Flash scale arXiv:2611.13378v1 [cs.LG] 9 Nov 2026 Looping Deeper Without Growing the KV Cache                                            
+
+> CED, encoder loop 012634578910 11 CED, decoder loop 012634578910 11 Dense loop 012345678910 11
+> Trounds
+> Trounds
+> Trounds
+> ←prefill skipped by prefill →
+> SWA only SWA + global KV source SWA + reads global KV Full-context KV
+
+(a) Layer layout and loop placement Dense loop CED loop      
+
+> 010 20 30 40
+> Global KV per token (layers)  L+ ( T−1) LR
+> = 40
+> L
+> = 12 nsT+ 1 = 9
+> ns+ 1 = 2
+> 20× less than dense per-round 6× less than dense last-round
+> per-round KV last-round KV
+
+(b) Resident global KV per token 
+
+Figure 1. Where and how to loop a Causal Encoder–Decoder. (a) Our 12-layer models; a loop repeats LR=4 layers for T rounds. Prefill runs only the layers left of the dashed line, so an encoder loop puts all T rounds on the prefill path and a decoder loop does not; a dense loop runs every layer in prefill and decode. (b) Global KV per token in units of one full-context layer ( L=12 , LR=4 , T =8 , ns=1 
+
+encoder KV source). Hatched bars keep KV for every round; solid bars keep only the last round’s KV, which stochastic-depth training makes lossless (§3.2). 
+
+(§6), we establish three main findings: 1. Where to loop. Looping the CED encoder matches looped dense quality and long-context scaling across model scales (§5.1–§5.3). We find that looping the encoder is essential because effective recurrence must iteratively refine the global KV source itself, whereas loops that only re-read static global KV or local sliding windows fail to scale beyond the window. Across all three model sizes and extended training horizons, our encoder-looped CED consistently scales in capability, raising DCLM CORE accuracy by +2.54 points and matching both the validation BPB and long-context scaling of a looped dense model. 2. How to loop. Cross-round and cross-layer KV shar-ing compound losslessly, adding zero KV overhead and cutting global KV by 6–20 × (§5.4). Stochastic-depth training induces a contractive fixed point in the CED encoder that makes cross-round KV sharing loss-less at inference. Looping thus adds no resident KV over an unlooped CED, retaining only 1/6 of the global KV of a fixed-point looped dense model and 1/20 of a per-round cached one (Fig. 1b). 3. Serving analysis. Removing per-round KV turns an out-of-memory loop into a servable one at 552B scale (§6). Looping the 552B-parameter DeepSeek-V4.1-Flash for 8 rounds with per-layer and per-round KV cannot fit a single 128K-token request on a 
+
+4×GB200 node; Looped CED cuts per-token KV by 
+
+36 .8× and fits 38 such requests like the unlooped model, raising 8K/1K throughput by 3.6× and cut-ting multi-turn agent TTFT by up to 29 .7×. The cost of looping is compute, not memory: each round re-runs only the 18-layer recurrent core, and on prompt-heavy workloads the encoder loop pays a prefill premium (§6). 
+
+# 2 PRELIMINARIES 
+
+Looped language models. Following Huginn (Geiping et al., 2025), modern looped Transformers adopt a “sand-wich” topology that partitions the network into a non-recurrent prelude P, a weight-tied recurrent core R, and a non-recurrent coda C. For input tokens x,
+
+e = P(x), hr = R(hr−1, e ), y = C(hT ), (1) where hr ∈ Rd is the per-token state after round r of T
+
+(hidden size d) and y gives the next-token logits. Con-centrating recurrence within a middle core surrounded by dedicated entry and exit blocks consistently outperforms looping the entire layer stack (Saunshi et al., 2025; Huang et al., 2026a). To stabilize recurrent dynamics and preserve token-level grounding across rounds, we adopt the gated in-put injection of Parcae (Prairie et al., 2026a), which blends 
+
+˜e = RMSNorm( e) into the state at each round: 
+
+R(hr−1, e ) = f   ¯A ⊙ hr−1 + ∆ ⊙ (B˜e), (2) where f is one core pass, ⊙ is the element-wise product, and learned ∆ ∈ Rd>0, A ∈ Rd<0, B ∈ Rd×d give the step size, decay ¯A = exp(∆ ⊙ A), and input projection. 
+
+Causal encoder–decoder (CED). Introduced in DeepSeek-V4.1-Flash (DeepSeek-AI, 2026), a CED partitions an L-layer stack into an encoder followed by a decoder. To bound local attention memory, every layer maintains its own sliding-window attention (SWA) cache over the most recent w tokens. Full-context ( global ) KV includes a sparse subset of source layers within the encoder, Looping Deeper Without Growing the KV Cache 
+
+and a single shared decoder KV entry linearly projected once at the encoder–decoder boundary from the normalized final encoder output. Any layer equipped with global attention jointly attends to its own local SWA cache and its designated global KV source—either the most recent encoder source preceding that layer, or the shared boundary projection—within a single unified softmax. Crucially, because all global KV entries are fully determined by the encoder output, prompt prefill only needs to execute the encoder layers, bypassing the decoder entirely. 
+
+# 3 LOOPING A CAUSAL 
+
+# ENCODER –D ECODER 
+
+Unlike a homogeneous dense Transformer—where every layer generates and consumes full-context KV, making loop depth a purely representational choice—layer depth in a CED is directly coupled to both global KV routing and 
+
+prefill execution (§2). Combining recurrence with a CED therefore requires jointly resolving two questions: where in the asymmetric stack to place the recurrent core (§3.1), and 
+
+how to train and cache recurrent states so that multi-round iteration does not inflate resident KV memory (§3.2). 
+
+3.1 Where to Loop: Architectural Placement and Serving Asymmetry 
+
+Because a weight-tied recurrent block cannot straddle the encoder–decoder boundary without breaking the single-projection invariant that enables decoder-free prefill, the CED topology naturally partitions loop placement into two regimes (Figure 1a): 
+
+Encoder loop (Iterative Global KV Refinement). The recurrent core resides entirely within the encoder and en-compasses at least one global KV source layer. Across the 
+
+T rounds, the core iteratively refines both its local sliding-window representations and the encoder’s global KV source. Because the final encoder representation—and by exten-sion the projected decoder global KV—depends on the last round, prompt prefill must run all T encoder rounds. 
+
+Decoder loop (Static-Context Iterative Readout). The recurrent core resides entirely within the decoder, down-stream of the boundary projection. Here, all global KV entries—both in the encoder and at the boundary—are final-ized before the loop begins. Each recurrent round refines its local SWA states while repeatedly querying a static global KV cache. Because the decoder is skipped during prefill, this placement leaves prefill compute unchanged relative to an unlooped CED, apart from the last w prompt tokens, which run the decoder to fill its SWA caches. 
+
+Compute and execution asymmetry. In a CED, represen-tational role and system execution move in lockstep. During autoregressive decoding, every token traverses the full net-work, so looping a block of layers for T rounds adds the exact same number of single-layer passes per token in either placement. During prompt prefill, however, a decoder loop executes only the unlooped encoder, whereas an encoder loop must execute all T rounds of its recurrent core before projecting the boundary KV. In our 12-layer experimental configuration with a 6-layer encoder, a 4-layer recurrent core, and T =8 rounds (Fig. 1a), an unlooped CED requires 6 layer passes per prompt token (plus the boundary projection), halving the 12 passes of an unlooped dense baseline. Looping the decoder preserves this lightweight 6-pass prefill, whereas looping the encoder expands prefill to 34 layer passes per token; during decode, both placements expand execution from 12 to 40 passes. The two placements also differ in KV footprint. Decoder layers produce no global KV, so a decoder loop keeps the unlooped CED’s 8 KB of global KV per token (150M models, bf16) even if every round caches its own KV; an encoder loop rewrites its global KV source in every round, so per-round caching grows the global KV to 36 KB per token. Thus, comparing encoder and decoder loops directly tests whether high-quality recurrence requires actively refining the global KV source at the cost of prefill compute, or whether iterating over a fixed global context during decode suffices. 
+
+3.2 How to Loop: Fixed-Point Training and Last-Round KV Caching 
+
+Even when a loop improves modeling quality, naively caching distinct keys and values across all T rounds mul-tiplies the resident KV footprint of every looped layer by 
+
+T , negating CED’s memory advantage. Eliminating this factor requires bridging a fundamental discrepancy between parallel training and memory-efficient inference. 
+
+Per-round training vs. last-round inference. During training, sequences are processed in parallel across tokens by unrolling the recurrent core: at round r, each layer inside the core attends to the round-r keys and values of preceding tokens, which we term per-round KV . Caching all T trajec-tories during serving would require T copies of the core’s global and SWA caches: for the 150M encoder loop at T =8 ,the global KV per token grows from 8 KB to 36 KB (§3.1; Fig. 1b, hatched bars). To avoid this overhead, at inference we apply last-round KV (or terminal KV sharing (Huang et al., 2026b; Prairie et al., 2026b)): once a token completes all T rounds, we retain only its last-round KV states—both the global KV from the core’s source layer and the local SWA KV of every looped layer—and discard all intermedi-ate rounds. When a subsequent token executes any round 
+
+r, it attends to its own round-r state for the current step alongside the cached last-round KV for all past tokens. Looping Deeper Without Growing the KV Cache 
+
+Fixed-point convergence under stochastic depth. Sub-stituting last-round KV for intermediate-round KV at in-ference avoids distribution shift only if the recurrent core converges toward a contractive fixed point across rounds, so that both the local SWA representations and the global KV source stabilize in late rounds. Unlike a deterministic fixed-depth unroll—which allows the core to learn round-specific feature transformations that diverge across rounds—we sam-ple a stochastic recurrence depth per training sequence from a Poisson distribution with mean 8 (clipped to at least 1,backpropagating gradients through the final 4 rounds) while executing a deterministic 8 rounds at inference (Table 8). Exposing the coda and downstream layers to recurrent states across variable depths pressures the core to settle rapidly into a depth-invariant equilibrium (Huang et al., 2026b; Prairie et al., 2026b). When this equilibrium holds (§5.4), Looped CED retains the exact same resident KV footprint per token as an unlooped CED (8 KB of global KV per token at 150M, against 36 KB with per-round caching). 
+
+# 4 EXPERIMENTAL SETUP 
+
+Architectures and model scales. We instantiate DeepSeek-V4.1-Flash’s asymmetric CED topology across an L=12 -layer stack (Figure 1a), split evenly into an encoder (layers 0–5) and a decoder (layers 6–11). Every layer maintains a local SWA cache over a w=128 -token window. In the encoder, layers 0–1 use SWA only, while layer 2 serves as the sole encoder global KV source, read by layers 3–5. At the boundary, layer 6 projects the shared decoder global KV from the encoder output, read by layers 7–11. All global-reading layers merge local SWA and global KV in a single softmax (§2). Each token thus stores only two global KV entries—one from the encoder and one from the decoder. To isolate CED’s cross-layer KV topology, we use standard multi-head attention and dense FFNs without intra-layer KV compression (e.g., GQA or MLA) or MoE modules. Our dense Transformer baseline uses the exact same dimensions but equips every layer with full-causal KV and no SWA, caching 6 × more global KV per token than CED. Fixing this 12-layer layout, we scale hidden dimensions across d ∈ { 768 , 1024 , 1536 }, yielding approximately 90M, 150M, and 340M non-embedding parameters over a 2048-token context (adding a loop introduces ∼1% parameters for input injection; full architectural specifications are in Appendix E). 
+
+Compared configurations and ablations. At each scale, we compare an unlooped baseline against a 4-layer recur-rent loop ( T =8 rounds) placed at layers 2–5 for both CED (encoder loop ) and the dense model, alongside a CED de-coder loop at layers 7–10. At 90M and 150M, we also train a dense model looped at the middle third (layers 4–7) to match Parcae’s default placement (Prairie et al., 2026a). Finally, two 150M CED ablations isolate our core mech-anisms: (i) a fixed-depth encoder loop trained with a de-terministic 8-round unroll to test whether cross-round KV sharing requires stochastic-depth training (§5.4); and (ii) a 
+
+YOCO-U variant (Sun et al., 2026) that loops layers 2–5 within an SWA-only encoder (making layer 6 the sole global KV source), testing whether the loop itself must recompute global KV (§5.3). 
+
+Training and evaluation. Models are trained from scratch on FineWeb-Edu (Penedo et al., 2024) using Muon (Liu et al., 2025) and AdamW under a unified learning-rate sched-ule (Appendix E). Standard runs allocate ∼40 tokens per non-embedding parameter (3.4B, 6.0B, and 13.6B tokens for 90M, 150M, and 340M). To evaluate extended scaling, we also train the 150M models for 29.6B tokens, match-ing the budget of 370M Parcae (Prairie et al., 2026a), our 150M configuration (Parcae counts embeddings). Within each scale and budget, all runs see identical data orders, matching parameter counts and training tokens rather than FLOPs. We report upstream bits per byte (BPB) on FineWeb-Edu val-idation and downstream zero/few-shot accuracy on DCLM CORE and CORE-Extended (Li et al., 2024). Furthermore, because dependencies beyond CED’s 128-token SWA win-dow rely exclusively on global KV—and standard FineWeb-Edu documents are too short to span our 2048-token con-text (median 617 tokens)—we evaluate position-wise BPB across contiguous 2048-token chunks drawn from three long-document corpora: PG19 (Rae et al., 2020), FinePDFs (≥ 4,096 tokens) (Kydl´ ıˇ cek et al., 2025), and GovReport (≥ 2,048 tokens) (Huang et al., 2021) (protocol details in Appendix H). 
+
+# 5 RESULTS 
+
+We evaluate our models along two complementary axes: overall language modeling quality via validation BPB on FineWeb-Edu across the full 2048-token training context (Table 1, Figure 2; §5.1–§5.2), and true long-range depen-dency utilization via position-wise BPB on contiguous long documents (Figure 3; §5.3), followed by cross-round KV sharing (§5.4) and extended training evaluations (§5.5). 
+
+5.1 Where to Loop: Iterate the Encoder, Not the Decoder 
+
+Evaluating validation BPB across placements (Table 1) re-veals a striking asymmetry: looping the CED encoder yields a substantial quality improvement over the unlooped CED baseline, whereas looping the decoder—despite introduc-ing the exact same parameter overhead, recurrence depth, and per-token decode compute (40 layer passes per token, §3.1)—recovers only 16%, 27%, and 40% of the encoder Looping Deeper Without Growing the KV Cache 90M 150M 340M                                                
+
+> model size
+> 0.80 0.82 0.84 0.86 0.88 0.90 0.92
+> validation BPB
+> (a) BPB
+> 90M 150M 340M
+> model size
+> 0.000 0.005 0.010 0.015 0.020 0.025 0.030
+> BPB gain from looping
+> (b) gain over no loop
+> Dense CED CED, decoder loop loop no loop
+> Figure 2. Validation BPB and recurrent loop gains across model scales. Model size reflects non-embedding parameters, with each scale trained on 40 tokens per block parameter. (a) Upstream validation BPB. (b) BPB reduction of each loop over its unlooped counterpart. Solid: looped (L2–5; decoder loop L7–10); dashed: unlooped.
+> Table 1. Validation BPB of the 150M models. Trained for 6.0B tokens and evaluated at T=8 rounds on FineWeb-Edu over the full 2048-token context (Appendix C); lower is better. “Gain” denotes the BPB reduction relative to the corresponding unlooped baseline. Resident global KV is reported per token in bf16 under last-round KV caching. Model Params (M) KV (KB) BPB Gain Dense, no loop 151.0 48 0.8747 –Dense, loop L2–5 153.1 48 0.8461 0.0287 Dense, loop L4–7 (Parcae) 153.1 48 0.8514 0.0233 CED, no loop 155.2 80.8716 –CED, encoder loop L2–5 157.3 80.8468 0.0248
+> CED, decoder loop L7–10 157.3 80.8648 0.0068
+> Ablations
+> CED, encoder loop, fixed rounds 157.3 80.8487 0.0229 YOCO-U style, no loop 153.1 40.8745 –YOCO-U style, loop L2–5 155.2 40.8506 0.0239
+
+loop’s gain at 90M, 150M, and 340M. Crucially, this gap is not an artifact of limited training tokens: even after 5×
+
+longer training (29.6B tokens), the decoder loop captures only 38% of the encoder loop’s improvement (Table 2). This disparity stems directly from how each placement in-teracts with global KV formation (§3.1). Looping the en-coder iteratively refines the representations that feed both global caches: layer 2 actively updates its encoder global KV across all T rounds, and the shared decoder KV is projected from the fully refined terminal encoder output 
+
+HE . Conversely, a decoder loop operates downstream of the boundary projection; its recurrent rounds can only re-peatedly query a static global KV representation that was frozen before the loop began. Thus, effective recurrence in a CED requires placing the loop where global representations are constructed rather than where they are merely read. 
+
+5.2 Quality Parity with Looped Dense Transformers at 1/6 Global KV 
+
+When matched for parameter count, loop position (layers 2–5), training tokens, and recurrence depth, our looped CED matches the validation BPB of the looped dense Trans-former within 0.001 at all three scales while retaining only one-sixth of the resident global KV (Table 1, Figure 2). In the unlooped regime, CED slightly outperforms the dense baseline across all three scales; adding the encoder loop am-plifies CED capability nearly as strongly as looping benefits the dense stack, capturing 89%, 86%, and 93% of the dense loop gain at 90M, 150M, and 340M (the slight difference in relative gain likely reflects that the dense loop iteratively refines four full-KV layers whereas the CED encoder loop refines a single global-KV source alongside local SWA). We also benchmark against Parcae’s default middle-third loop placement (layers 4–7) (Prairie et al., 2026a). In a dense Transformer, looping layers 4–7 slightly underper-forms looping layers 2–5 at both 90M and 150M; we there-fore use layers 2–5 as our primary dense baseline and in-clude layers 4–7 as a literature reference. Over our extended 29.6B-token training horizon—where the dense reference is looped at layers 4–7—the CED encoder loop finishes ahead by a margin matching this placement offset (Table 2), con-firming that quality parity between looped CED and looped dense models persists across training scales. 
+
+5.3 Long-Context Evaluation: Recurrence Must Refine Global KV 
+
+Because standard validation corpora are dominated by short documents, aggregate BPB masks how models utilize long-range context. Evaluating position-wise BPB on contiguous long documents (§4, Figure 3; values in Table 12) directly tests whether recurrent computation in a CED can propagate information beyond its local 128-token SWA window. 
+
+Looped CED preserves full-context scaling. Because SWA layers cannot attend beyond 128 tokens, any long-range dependency must route through global KV. Strikingly, the quality gap between the CED encoder loop and the dense loop remains invariant to context length across all three long-document benchmarks (Figure 3c; Table 11), just as unlooped CED maintains a constant lead over unlooped dense (Figure 3b). Storing more global KV layers does not by itself improve long-range modeling: the unlooped Looping Deeper Without Growing the KV Cache 128 512 2048     
+
+> context (tokens)
+> 1.00 1.05 1.10 1.15 1.20
+> BPB
+> SWA window (128 tokens)
+> (a) BPB
+> 128 512 2048
+> context (tokens)
+> −0.012
+> −0.008
+> −0.004 0.000
+> BPB  − dense
+> (b) no loop: gap to dense
+> 128 512 2048
+> context (tokens)
+> 0.000 0.010 0.020 0.030
+> BPB  − dense loop
+> (c) loop: gap to dense loop
+> Dense, no loop Dense, loop L2–5 CED, no loop CED, encoder loop L2–5 CED, decoder loop L7–10 YOCO-U style, no loop YOCO-U style, loop L2–5
+
+Figure 3. Position-wise BPB across long documents. Pooled over PG19 test, FinePDFs, and GovReport (Appendix H); 150M models trained on 6.0B tokens. (a) Absolute BPB as a function of available context length; lines fit a + b n −c. (b) Unlooped models minus the unlooped dense model. (c) Looped models minus the L2–5 dense loop. In (b) and (c), lines are least-squares fits in log 2 n. Markers are measurements; solid curves are looped (layers 2–5; the CED decoder loop, layers 7–10), dashed curves are unlooped. The red dashed line marks the 128-token SWA window (per-corpus breakdowns in Figure 9). 
+
+dense baseline caches 6× more global KV than CED yet performs worst at every context position (Figure 3a, dashed). Instead, a single iteratively refined encoder KV source suf-fices—both the dense loop and the CED encoder loop am-plify their quality gains over their unlooped counterparts at nearly identical rates as context length scales (and maintain parity over the 29.6B-token horizon, with CED’s positional lead over the L4–7 dense loop narrowing only marginally at the longest positions). 
+
+Why looping local SWA alone fails at long range (CED vs. YOCO-U). Given that looping the lower half of the network is essential (§5.1), a natural question is whether the looped encoder even needs a global KV source, or whether iterating purely over local SWA layers suffices—the archi-tectural choice made by YOCO-U (Sun et al., 2026). On aggregate validation BPB (Table 1), our YOCO-U-style ablation (which loops layers 2–5 inside an SWA-only en-coder, deferring all global KV generation to layer 6) appears highly competitive, recovering 97% of the CED encoder loop’s average gain. Position-wise evaluation on long documents, however, ex-poses what this short-context average hides (Figure 3c). Within the 128-token SWA window, the YOCO-U loop per-forms slightly better than CED. Beyond the SWA window, however, YOCO-U degrades progressively relative to the dense and CED encoder loops with every doubling of con-text length across every corpus; by the end of the training context (1,024–2,048 tokens), it forfeits 30% of the long-range gain achieved by the CED encoder loop, with the deficit continuing to widen. The CED decoder loop suffers a symmetric failure mode from the opposite side: because its rounds repeatedly query a frozen global KV projection, it falls further behind the dense loop as context grows (Fig-ure 3c), and still does after 5× longer training. Together, these ablations establish a core design principle: for recur-rent computation to scale across long contexts, the looped block must actively recompute a global KV source. A copy test isolates this mechanism: each sample’s first 1,024 to-kens are repeated verbatim, so every copied token must be retrieved through global KV (Figure 10 in Appendix H). At 90M and 150M, unlooped CED recalls worse than unlooped dense (+0.106 and +0.014 BPB on the copied half). The en-coder loop removes this deficit ( −0.160 and −0.084 against unlooped CED; looping the dense model gives −0.036 and 
+
+−0.044) and recalls as well as the dense loop, whereas the decoder loop barely changes recall ( −0.014 and +0.005) and the YOCO-U loop recalls worst of the looped models (+0.105 and +0.108 against the dense loop). At 340M the differences shrink, and all five models lie between 0.357 and 0.388 BPB. 
+
+5.4 Lossless Cross-Round KV Sharing via Fixed-Point Convergence 
+
+To verify whether cross-round KV sharing (§3.2) degrades generation quality, Table 3 evaluates exact token-by-token decoding where every recurrent round queries only the his-torical tokens’ last-round KV cache. Across every model trained with stochastic recurrence depth—whether CED or dense, encoder or decoder loop, 90M to 340M scale, or stan-dard (6.0B) versus extended (29.6B) training—switching from per-round KV to last-round KV alters BPB by less than 0.001 . On all 2829 validation samples, the change for the CED encoder loop is at most 0.0002 BPB at every scale, with 95% intervals within ±0.0002 (Appendix C). Consequently, Looped CED retains only a single copy of its recurrent KV states instead of 8 (Figure 1b). We further confirm that this invariance holds under a realistic long-document serving protocol—where a long prompt is pre-filled in parallel while caching only final-round KV before autoregressively decoding the continuation—yielding zero Looping Deeper Without Growing the KV Cache                                                                                 
+
+> Table 2. Extended training (29.6B tokens) and downstream benchmark accuracy. 150M models trained to match the token budget of 370M Parcae (Prairie et al., 2026a). BPB train denotes val-idation BPB on the training-time evaluation subset (Appendix C). Downstream metrics report zero/few-shot accuracy on DCLM CORE and CORE-Extended (higher is better). Parcae reference rows are cited from Prairie et al. (2026a) (Table 5), which use a different tokenizer and data ordering. Bold: best; underline: second best among our models. Model BPB train BPB CORE CORE-Ext. CED, no loop 0.8386 0.8401 19.09 12.32 CED, encoder loop 0.8106 0.8124 21.63 13.54 CED, decoder loop 0.8278 0.8295 21.56 13.65 Dense, no loop 0.8389 0.8406 18.50 11.57 Dense, loop L4–7 0.8157 0.8178 22.60 14.84
+> Parcae: Transformer ––17.46 11.71 Parcae: looped ( T=8 )––20.00 12.75
+> Table 3. Per-round versus last-round KV caching. Valida-tion BPB under exact fp32 token-by-token decoding at T=8
+> rounds with per-round (Per) or last-round (Last) KV. Scale: non-embedding parameters, training tokens. Last-round KV keeps one terminal copy of the core’s global and SWA KV per token, read by all rounds of later tokens. Model Scale Per Last Last −Per CED, encoder loop 90M, 3.4B 0.8921 0.8919 −0.0002 CED, encoder loop 150M, 6.0B 0.8465 0.8463 −0.0002 CED, encoder loop 340M, 13.6B 0.7965 0.7965 0.0000 CED, encoder loop 150M, 29.6B 0.8124 0.8123 −0.0001 CED, decoder loop 150M, 6.0B 0.8648 0.8648 0.0000 Dense, loop L2–5 150M, 6.0B 0.8457 0.8460 +0.0003 Dense, loop L4–7 150M, 6.0B 0.8510 0.8510 0.0000 YOCO-U style, loop 150M, 6.0B 0.8503 0.8502 −0.0001
+> Fixed recurrence depth
+> CED, encoder loop 150M, 6.0B 0.8484 0.8801 +0.0317
+
+quality loss across all prompt lengths. In stark contrast, training the exact same CED encoder loop with a determin-istic fixed depth ( T =8 ) causes last-round KV sharing to fail catastrophically (and degrades baseline per-round stability; preliminary experiments on shallower 6-layer, 45M CED models exhibit the exact same dichotomy). Appendix D traces this behavior directly to the recurrent core’s dynamical trajectory. Under stochastic-depth training, the CED encoder state contracts geometrically toward a fixed point across late rounds—stabilizing both its local SWA keys/values and its global KV source (§3.2)—such that unrolling up to 4× more rounds at test time leaves BPB virtually unchanged. Conversely, deterministic fixed-depth models (trained with truncated backpropagation through the final 4 of 8 rounds) fail to contract and instead enter a limit cycle of period 4, rendering last-round KV states incompatible with early rounds (Huang et al., 2026b; Prairie et al., 2026b). While Prairie et al. (2026b) find that Parcae models from 770M (about our 340M) can require a brief post-training phase to share KV losslessly, stochastic depth alone suffices across all scales studied here, and our serving analysis in §6 assumes that lossless last-round KV caching is maintained at production scale. 
+
+5.5 Extended Training Horizon and Downstream Generalization 
+
+Finally, Table 2 evaluates whether the upstream BPB advan-tages of looping the CED encoder translate into downstream task accuracy over an extended 29.6B-token training horizon (∼200 tokens per non-embedding parameter). Looping the CED encoder substantially boosts downstream performance over the unlooped CED baseline, improving DCLM CORE by +2.54 points (95% paired bootstrap CI [+1.4, +3.6]) and CORE-Extended by +1.22 points. Notably, while absolute scores across studies reflect differences in tokenizer and data ordering, the magnitude of our encoder loop’s downstream gain matches that reported by Prairie et al. (2026a) for 370M looped dense models at the identical token budget (+2.54 points on CORE and +1.04 on CORE-Extended). Compared against our own looped dense reference—which caches 6×
+
+as much global KV—the CED encoder loop leads on val-idation BPB (0.8124 vs. 0.8178) and remains statistically indistinguishable on CORE under paired item-bootstrap test-ing ( −1.0 points, 95% CI [ −2.0, +0.0]). Moreover, across our standard-budget width sweep against the stronger L2–5 dense loop, the modest downstream gap at 90M and 150M shrinks with model width and becomes statistically indistin-guishable from zero at 340M. Comparing the two CED loop placements on CORE fur-ther underscores the role of scale and context length. At standard token budgets, the decoder loop significantly trails the encoder loop across every model size, with its deficit widening to −3.4 points (95% CI [ −4.5, −2.4]) at 340M. While extending training to 29.6B tokens allows the 150M decoder loop to narrow this gap on CORE (21.56 vs. 21.63), this convergence is confined to short-prompt zero/few-shot items that largely fit within or near the 128-token local SWA window—leaving the decoder loop’s large deficits in valida-tion BPB (0.8295 vs. 0.8124), long-document scaling (§5.3), and long-range in-context recall (Appendix H) unchanged. 
+
+# 6 SERVING COST ANALYSIS 
+
+Sections 3–5 showed that looping the CED encoder pre-serves long-context scaling while stochastic-depth train-ing allows inference to cache only the last round’s KV state. To verify that these dual memory savings trans-Looping Deeper Without Growing the KV Cache 1 8 64 512         
+
+> Concurrent requests
+> 0100 200 300 400
+> Output tok/s per GPU (↑)  392 T=4
+> 185
+> T=8
+> 308
+> 142
+> 127
+> 51
+> ○ KV pool full beyond this load ··· ceiling of that baseline
+> (a) 8K in / 1K out: throughput vs. load
+> 8K/1K
+> T=4 8K/1K
+> T=8 ShareGPT
+> T=8 128K
+> T=4 128K
+> T=8
+> Workload (128K: decode only)
+> 0100 200 300 400 500
+> Peak output tok/s per GPU (↑)
+> 127 308 392 3.1×
+> 51 142 185 3.6×
+> 58 286 5.0×
+> 21 186 347
+> 16.5× 38 vs 1 req OOM
+> 69 199
+> 38 req vs OOM
+> (b) Peak throughput by workload
+> 64 128 256 512
+> Concurrent agent sessions
+> 0100 200 300 400
+> Median TTFT, s (↓)
+> 7 s 95 s KV 100% 345 s 11.6 s
+> 13.6× 29.7×
+> KV pool (tokens): per-round 1.5M, full last-round 7.9M, ≤77%
+> (c) Agent trace, T=8: TTFT
+> CED, last-round KV (ours) CED, per-round KV Per-layer KV, per-round KV (baseline) T=4 T=8
+
+Figure 4. Serving looped DeepSeek-V4.1-Flash on 4 × GB200: last-round KV vs. per-round KV. (a) Throughput vs. concurrency on 8K-input / 1K-output requests; open markers show where per-round KV fills the KV pool. (b) Peak preemption-free throughput; bold ratios are last-round CED over the baseline with per-layer and per-round KV. (c) Median time to first token on a multi-turn agent trace. Setup and further numbers are in Appendix I. 
+
+late directly into low-cost production serving at frontier scale, we benchmark a 40-layer, 552B-parameter CED MoE backbone (DeepSeek-V4.1-Flash (DeepSeek-AI, 2026)) in SGLang (Zheng et al., 2024) on NVIDIA GB200 ( 4 ×
+
+GB200, TP4) and HGX H200 ( 8 × H200, TP8) nodes, with dummy or original DeepSeek-V4.1-Flash weights, to test serving cost rather than quality (setup in Appendix I). Our baseline shares the same MoE, sparse attention, and looped layers, but follows standard Transformers by caching global KV at every layer ( per-layer KV ) and follows prior looped models (Prairie et al., 2026a) by caching a separate copy at every recurrence round ( per-round KV , emulated at identical compute by capping the KV pool; Appendix I). CED’s cross-layer KV sharing shrinks per-token global KV by 11 .6×,and cross-round KV sharing (last-round KV) eliminates the per-round expansion. Together, Looped CED reduces the per-token KV footprint by 36 .8× at T = 8 , expanding the usable KV pool on a single GB200 node to 5.11 M tokens regardless of recurrence depth (Table 4). 
+
+Eliminating the KV capacity wall in single-turn and long-context serving. In a large MoE model, high serving throughput requires batching many concurrent requests to amortize expert weight streaming across tokens. As shown in Figure 4(a,b) and Table 4, the baseline with per-layer and per-round KV quickly exhausts HBM on standard 8K/1K prompts and cannot fit even a single 128K-context request at T = 8 (OOM ). Sharing KV across layers (CED with per-round KV) raises this concurrency ceiling, but per-round KV growth still caps the decode batch size. Adding cross-round KV sharing (Looped CED) makes the KV footprint invariant to recurrence depth, raising peak preemption-free through-put on 8K/1K to 3.1×–3.6× that of the baseline ( 5.0× on ShareGPT), boosting HBM-saturated decode throughput by up to 2.8× over per-round CED (Table 14), and scaling to 38 concurrent 128K requests ( 16 .5× higher throughput than the baseline at T = 4 ). Only a small fraction of this gain comes from compute: at low concurrency where no KV pool is full, the baseline is only ∼ 14% slower (since its prefill runs all layers on every prompt token and every layer keeps its own KV cache and indexer); the rest comes from KV capacity. At matched per-user interactivity tar-gets, the throughput advantage is much larger than this raw compute gap because the faster model reaches a given per-user speed at higher concurrency (Figure 5a,b). A 2 × 2
+
+ablation confirms that cross-layer and cross-round sharing each improve throughput and compound multiplicatively (Table 5, Appendix B). This capacity advantage extends up to 1M-token contexts on 8 × H200, where Looped CED at 
+
+T = 8 matches the request capacity of unlooped CED and decodes 3.5× faster at 524K context than per-round KV (Table 7). 
+
+Preventing prefix-cache eviction collapse in multi-turn agents. A minimal KV footprint is equally critical for multi-turn conversational and agentic workloads, where long prompts consist mostly of shared session history (Qin et al., 2024; Liu et al., 2026). Because a radix prefix-cache hit in SGLang costs only ∼ 1% of computing a new prompt token, multi-turn latency hinges on keeping active session histories resident in HBM without eviction. As shown in Figure 4(c) and Table 4 (bottom), under high concurrency on the Mooncake toolagent trace, per-round KV satu-rates its cache pool ( 100% utilization), triggering contin-uous evictions that force the server to recompute evicted histories from scratch across all rounds. Cross-round KV Looping Deeper Without Growing the KV Cache                                                                    
+
+> Table 4. Production serving summary at T= 8 on 4×GB200 (TP4) with DeepSeek-V4.1-Flash in SGLang. Comparing the baseline with per-layer and per-round KV ,CED with per-round KV , and Looped CED (ours; CED, last-round KV) ; KV pools at the server settings of Figure 4(a). All three loop L2–19 with the same MoE FLOPs per decoded token; the baseline also runs every layer on every prompt token in prefill. Full T= 4 and 8×H200 results are in Appendix I.
+> Workload / Metric ( T=8 , GB200) Per-layer KV, per-round KV CED, per-round KV Looped CED (Ours) Advantage (Ours)
+> Global KV per Token (KB) 60 .08.51.636 .8×smaller (5.2×vs. CED per-round) Usable KV Pool per Node (M tok) 0.13 0.98 5.11 39 ×larger (5.2×vs. CED per-round) 8K In / 1K Out (tok/s/GPU) 50 .9142 .5185 .13.6×higher (1.3×vs. CED per-round) 32K HBM Decode (tok/s/GPU) —289 .3818 .52.8×higher decode throughput
+> 128K Long-Context (tok/s/GPU) OOM (0req) 7reqs max 199 .2(38 reqs) 38 reqs vs. OOM (16 .5×at T=4 )Multi-Turn Agent TTFT ( c=512 )—345 .1s11 .6s29 .7×lower latency
+
+sharing expands the cache pool so it never fills, cutting me-dian time-to-first-token (TTFT) by up to 29 .7× on GB200, where per-round KV stalls for minutes (Figure 7c), while similarly preserving higher prefix-cache hit rates on H200 (Appendix B). 
+
+Compute grows only with the looped layers. With the KV capacity bottleneck removed, compute cost grows lin-early with recurrence depth, but each extra round re-runs only the recurrent core (Appendix I, Table 13). Because the recurrent core spans less than half of the 40-layer stack, looping T = 8 rounds increases physical layer passes per decoded token by 4.15 × over unlooped CED, and measured per-step decode latency rises by 3.95 ×. Since decode ex-ecutes every layer under either loop placement, encoder and decoder loops have identical decode cost (Appendix B). Consequently, on decode-dominated workloads such as long chain-of-thought reasoning ( > 95% decode time), the en-coder loop matches the decoder loop in end-to-end serving cost ( 3.7× that of T = 1 at T = 8 ; Figure 5c) while pre-serving all long-context modeling gains (§5). Across all four workloads in Figure 5(c), Looped CED consistently uses less GPU time per request than both per-layer KV base-lines. In prefill, the encoder loop still skips the decoder on all but the local window, prefilling uncached prompts and cached long-context suffixes 1.4×–2.4× faster than the per-layer KV baseline, which runs every layer over the entire prompt (Table 6). Even on uncached prompt-heavy workloads, stochastic-depth training enables asymmetric prefill–decode recurrence ( Tp < T d; Appendix G, Table 10): halving prefill depth from 8 to 4 rounds retains over 99% of the 8-round validation loss improvement while reducing the GB200 prefill cost multiplier from 5.1× to 2.7× (Table 13). 
+
+# 7 RELATED WORK 
+
+Recurrent-depth models and cross-round KV sharing. 
+
+Building on early weight-tied and equilibrium networks (De-hghani et al., 2019; Lan et al., 2020; Bai et al., 2019), mod-ern prelude–core–coda language models and their routed or adapted variants scale reasoning and sample efficiency via recurrent depth (Saunshi et al., 2025; Geiping et al., 2025; Prairie et al., 2026a; Zhu et al., 2025; Schwethelm et al., 2026a; Csord´ as et al., 2024; Bae et al., 2025a;b). To avoid linear KV growth across rounds, prior work either bounds and compresses cross-round caches (Geiping et al., 2025; Bae et al., 2025b; Wu et al., 2025; Conchello Vendrell et al., 2026; O’Neill & Reid, 2026) or reuses only the last round’s KV—which collapses fixed-depth models (O’Neill & Reid, 2026; Schwethelm et al., 2026b; Huang et al., 2026b) but is lossless when stochastic-depth training induces a contrac-tive fixed point (Prairie et al., 2026a; Huang et al., 2026b; Prairie et al., 2026b). We extend it to asymmetric SWA and global-KV stacks. 
+
+Asymmetric KV topologies and loop placement. Be-yond head sharing, latent compression, and local win-dows (Shazeer, 2019; Ainslie et al., 2023; DeepSeek-AI, 2024; Zadouri et al., 2025; Beltagy et al., 2020; Xiao et al., 2024), cross-layer KV sharing and hierarchical sparse at-tention restrict global KV generation to a few or single layers (Brandon et al., 2024; Sun et al., 2024; Hu et al., 2025; Leng et al., 2026), culminating in CED’s split be-tween sparse encoder global-KV sources and a single pro-jected decoder KV (DeepSeek-AI, 2026). Whereas prior recurrent cross-layer designs loop downstream of a frozen prelude KV or only over local SWA layers under fixed depth (Capps, 2026; Sun et al., 2026), we show that preserv-ing long-context quality requires recomputing a global KV source inside a stochastically trained encoder loop. 
+
+Concurrent work. Several concurrent preprints explore nearby points in this design space (Appendix A). Asym-Loop (Liang et al., 2026) loops a CED-style decoder over fixed per-layer encoder KV, but each decoder layer recom-putes a full-length local KV in every round, so its cache grows with the number of rounds unless that KV is shared. LPT (Monea et al., 2026) and Kirsch (2026) share one round’s KV across rounds—the first round’s alongside a Looping Deeper Without Growing the KV Cache 10 100  
+
+> p90 tok/s per user (→)
+> 0100 200 300 400
+> Output tok/s per GPU (↑)  T=4
+> T=8
+> (a) GB200, 8K/1K
+> 10
+> p90 tok/s per user (→)
+> 020 40 60
+> T=4
+> T=8
+> (b) H200, 8K/1K
+> Reasoning 2K→4K Conversation trace Tool agent trace Long doc 100K→1K
+> 0.0 2.5 5.0 7.5 10.0 12.5 15.0
+> GPU-s per request, × no loop (↓)
+> 3.7 3.7 3.9 3.9 4.7 3.2 6.3 7.8 4.2 3.1 5.6 7.5 4.7 2.8 7.3 13.2
+> (c) Measured cost per request
+> CED, last-round KV (ours) Per-layer KV, per-round KV (baseline) Per-layer KV, last-round KV CED decoder loop, last-round KV
+> T=4 (a, b)
+> T=8 (a, b)
+
+Figure 5. Looped CED at interactive speeds and on real workloads. (a, b) Output throughput against p90 per-user decode speed on 8K-input / 1K-output requests, preemption-free points only, on (a) one 4 × GB200 tray and (b) one 8 × H200 node. (c) Measured GPU-seconds per completed request relative to unlooped CED on four closed-loop workloads at T = 8 (4 × GB200; 32, 64, 64 and 8 concurrent requests). Setup, model weights and further results are in Appendix B. 
+
+short local window, or the final round’s with a consistency loss—and HLA (Chen et al., 2026) adds a compact latent cache to frozen pretrained Ouro models. In contrast, Looped CED loops the CED encoder so that each round refines a global KV source, keeps prefill decoder-free apart from the local window, and shares last-round KV through stochastic-depth training alone, without auxiliary losses or full-length per-round caches. 
+
+KV-centric serving systems. Modern serving engines maximize throughput through paged KV management, pre-fix caching, and prefill–decode disaggregation (Kwon et al., 2023; Zheng et al., 2024; Qin et al., 2024; Zhong et al., 2024; Patel et al., 2024). Because an encoder loop trades prefill compute for a minimal decode KV cache, we evaluate our serving trade-offs (§6) under empirical prefix-cache hit rates and prefill-to-decode ratios from production traces (Wang et al., 2025; Qin et al., 2024; Liu et al., 2026). 
+
+# 8 LIMITATIONS 
+
+While our production serving benchmarks evaluate a fron-tier MoE architecture (DeepSeek-V4.1-Flash, with a 552B-parameter backbone), our controlled pretraining quality ab-lations are conducted on dense models up to 340M parame-ters within a 2048-token context. Pretraining a frontier-scale looped CED MoE end-to-end—potentially incorporating lightweight post-training alignment (Prairie et al., 2026b) to guarantee fixed-point convergence at extreme scale—and evaluating on broader long-context reasoning benchmarks remain important next steps. Our serving results measure cost, not quality: the looped DeepSeek-V4.1-Flash runs with dummy or original weights that were not trained to loop, so lossless last-round KV at this scale is assumed from our smaller models (§5.4). Per-round KV is emulated by capping the KV pool, and every run uses a single GB200 tray or H200 node rather than disaggregated or large expert-parallel deployments. Finally, because the encoder loop runs every round over the prompt, it costs more per request than a decoder loop on prompt-heavy workloads (Appendix B), and this premium grows with larger decode batches. 
+
+# 9 CONCLUSION 
+
+This work introduces Looped CED and establishes how to combine cross-layer KV consolidation (CED) with recurrent-depth computation (Looped Transformers) so that looping deeper does not inflate KV memory. First , resolving where to loop, we show that recurrence must be placed in the CED encoder so that each round actively refines a global KV source, matching looped dense Transformers in vali-dation BPB and long-document scaling while avoiding the long-range degradation of decoder or local-window loops. 
+
+Second , resolving how to loop, we demonstrate that training with stochastic recurrence depth drives the recurrent encoder toward a contractive fixed point, enabling lossless cross-round KV sharing with zero additional KV memory over an unlooped model. Third , in production serving on 4×GB200 and 8 × H200 nodes with DeepSeek-V4.1-Flash, these dual savings shrink resident KV memory by 36 .8× over loops with per-layer and per-round KV ( 5.2× from cross-round sharing alone at T = 8 ), delivering 3.1×–16 .5× higher throughput across standard and 128K long-context work-loads while cutting multi-turn agent TTFT by 13 .6×–29 .7×Looping Deeper Without Growing the KV Cache 
+
+against per-round KV. 
+
+# ACKNOWLEDGEMENTS 
+
+We thank NVIDIA for supporting our development on GB200 NVL72 and for providing access to the rack used for all experiments in this paper. Looping Deeper Without Growing the KV Cache 
+
+# REFERENCES 
+
+Ainslie, J., Lee-Thorp, J., de Jong, M., Zemlyanskiy, Y., Lebr´ on, F., and Sanghai, S. GQA: Training generalized multi-query transformer models from multi-head check-points. In Proceedings of the 2023 Conference on Empir-ical Methods in Natural Language Processing (EMNLP) ,pp. 4895–4901, 2023. doi: 10 .18653/v1/2023 .emnlp-main .298. Azerbayev, Z., Schoelkopf, H., Paster, K., Dos Santos, M., McAleer, S., Jiang, A. Q., Deng, J., Biderman, S., and Welleck, S. Llemma: An open language model for math-ematics. In International Conference on Learning Repre-sentations , 2024. Bae, S., Fisch, A., Harutyunyan, H., Ji, Z., Kim, S., and Schuster, T. Relaxed recursive transformers: Effective parameter sharing with layer-wise LoRA. In Interna-tional Conference on Learning Representations (ICLR) ,pp. 34282–34327, 2025a. Bae, S., Kim, Y., Bayat, R., Kim, S., Ha, J., Schuster, T., Fisch, A., Harutyunyan, H., Ji, Z., Courville, A., and Yun, S.-Y. Mixture-of-recursions: Learning dynamic recursive depths for adaptive token-level computation. In Advances in Neural Information Processing Systems (NeurIPS) , volume 38, pp. 96572–96617, 2025b. doi: 10 .52202/085713-3229. Bai, S., Kolter, J. Z., and Koltun, V. Deep equilibrium models. In Advances in Neural Information Processing Systems (NeurIPS) , 2019. Beltagy, I., Peters, M. E., and Cohan, A. Long-former: The long-document transformer. arXiv preprint arXiv:2004.05150 , 2020. Brandon, W., Mishra, M., Nrusimha, A., Panda, R., and Ragan-Kelley, J. Reducing transformer key-value cache size with cross-layer attention. In Advances in Neural Information Processing Systems (NeurIPS) , volume 37, pp. 86927–86957, 2024. doi: 10 .52202/079017-2758. Capps, C. A. CART: Context-anchored recurrent trans-former – a parameter-efficient architecture with learned stability. arXiv preprint arXiv:2606.01495 , 2026. Chen, Y., Zhang, S., Wang, N., Kang, F., and Jia, R. Hy-brid latent attention for looped language models. arXiv preprint arXiv:2610.07940 , 2026. Conchello Vendrell, V., Padr´ es Masdemont, A., Grillo, N., Ros-Giralt, J., Behboodi, A., and Massoli, F. V. Memory-efficient looped transformer: Decoupling compute from memory in looped language models. arXiv preprint arXiv:2605.07721 , 2026. Csord´ as, R., Irie, K., Schmidhuber, J., Potts, C., and Man-ning, C. D. MoEUT: Mixture-of-experts universal trans-formers. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. DeepSeek-AI. DeepSeek-V2: A strong, economical, and ef-ficient mixture-of-experts language model. arXiv preprint arXiv:2405.04434 , 2024. DeepSeek-AI. DeepSeek-V4.1-Flash: Pushing the limits of KV cache compression. arXiv preprint arXiv:2609.19969 ,2026. Dehghani, M., Gouws, S., Vinyals, O., Uszkoreit, J., and Kaiser, Ł. Universal transformers. In International Con-ference on Learning Representations (ICLR) , 2019. Geiping, J., McLeish, S., Jain, N., Kirchenbauer, J., Singh, S., Bartoldson, B. R., Kailkhura, B., Bhatele, A., and Goldstein, T. Scaling up test-time compute with latent reasoning: A recurrent depth approach. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. Hu, X., Leng, J., Zhao, J., Tu, K., and Wu, W. Hardware-aligned hierarchical sparse attention for efficient long-term memory access. In Advances in Neural Information Processing Systems (NeurIPS) , 2025. Huang, B., Shi, C., Chen, J., Wen, S., Liu, Z., Xing, E., and Ma, X. Towards looped models done right, Part I: Topology, input injection, recurrent-state design. arXiv preprint arXiv:2610.23036 , 2026a. Huang, B., Shi, C., Chen, J., Wen, S., Liu, Z., Xing, E., and Ma, X. Towards looped models done right, Part II: Re-thinking at fixed points. arXiv preprint arXiv:2610.06833 ,2026b. Huang, L., Cao, S., Parulian, N., Ji, H., and Wang, L. Effi-cient attentions for long document summarization. In Pro-ceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies (NAACL-HLT) , pp. 1419– 1436, 2021. doi: 10 .18653/v1/2021 .naacl-main .112. Kirsch, A. LSTM-style looped transformers with shared KV caches. arXiv preprint arXiv:2610.33360 , 2026. Kwon, W., Li, Z., Zhuang, S., Sheng, Y., Zheng, L., Yu, C. H., Gonzalez, J. E., Zhang, H., and Stoica, I. Efficient memory management for large language model serving with PagedAttention. In Proceedings of the 29th Sympo-sium on Operating Systems Principles (SOSP) , 2023. doi: 10 .1145/3600006 .3613165. Kydl´ ıˇ cek, H., Penedo, G., and von Werra, L. FinePDFs. 
+
+https://huggingface .co/datasets/ HuggingFaceFW/finepdfs , 2025. Looping Deeper Without Growing the KV Cache 
+
+Lan, Z., Chen, M., Goodman, S., Gimpel, K., Sharma, P., and Soricut, R. ALBERT: A lite BERT for self-supervised learning of language representations. In International Conference on Learning Representations (ICLR) , 2020. Leng, J., Hu, X., Wang, J., Li, J., Wu, W., and Lu, Y. Under-standing and improving length generalization in hierarchi-cal sparse attention models. In International Conference on Learning Representations (ICLR) , 2026. Li, J., Fang, A., Smyrnis, G., Ivgi, M., Jordan, M., Gadre, S., Bansal, H., Guha, E., Keh, S., Arora, K., Garg, S., Xin, R., Muennighoff, N., Heckel, R., Mercat, J., Chen, M., Gururangan, S., Wortsman, M., Albalak, A., Bitton, Y., Nezhurina, M., Abbas, A., Hsieh, C.-Y., Ghosh, D., Gard-ner, J., Kilian, M., Zhang, H., Shao, R., Pratt, S., Sanyal, S., Ilharco, G., Daras, G., Marathe, K., Gokaslan, A., Zhang, J., Chandu, K., Nguyen, T., Vasiljevic, I., Kakade, S., Song, S., Sanghavi, S., Faghri, F., Oh, S., Zettlemoyer, L., Lo, K., El-Nouby, A., Pouransari, H., Toshev, A., Wang, S., Groeneveld, D., Soldaini, L., Koh, P. W., Jit-sev, J., Kollar, T., Dimakis, A. G., Carmon, Y., Dave, A., Schmidt, L., and Shankar, V. DataComp-LM: In search of the next generation of training sets for language models. In Advances in Neural Information Processing Systems (NeurIPS), Datasets and Benchmarks Track , volume 37, pp. 14200–14282, 2024. doi: 10 .52202/079017-0455. Liang, C., Zhang, T., Du, W., Wu, J., Ma, C., Pu, S., Zhang, Y., Wang, Y., and Lin, Z. Asymmetric looped transform-ers: Fixed global representations for an iterative decoder. 
+
+arXiv preprint arXiv:2610.28489 , 2026. Liu, B., Qiu, H., Goiri, ´ I., Fonseca, R., Bianchini, R., and Choukse, E. Agentic coding in the wild: Characterizing GitHub Copilot traces at production scale. arXiv preprint arXiv:2608.00101 , 2026. Liu, J., Su, J., Yao, X., Jiang, Z., Lai, G., Du, Y., Qin, Y., Xu, W., Lu, E., Yan, J., Chen, Y., Zheng, H., Liu, Y., Liu, S., Yin, B., He, W., Zhu, H., Wang, Y., Wang, J., Dong, M., Zhang, Z., Kang, Y., Zhang, H., Xu, X., Zhang, Y., Wu, Y., Zhou, X., and Yang, Z. Muon is scalable for LLM training. arXiv preprint arXiv:2502.16982 , 2025. Monea, G., Ramji, K., El-Kurdi, Y., Lastras, L. A., Artzi, Y., Godey, N., and Fernandez Astudillo, R. The surprising effectiveness of shared memory in looped transformers. 
+
+arXiv preprint arXiv:2610.02383 , 2026. O’Neill, J. and Reid, F. Looped latent attention: Cross-loop KV compression for looped transformers. arXiv preprint arXiv:2607.15456 , 2026. Patel, P., Choukse, E., Zhang, C., Shah, A., Goiri, ´ I., Maleki, S., and Bianchini, R. Splitwise: Efficient gen-erative LLM inference using phase splitting. In 2024 ACM/IEEE 51st Annual International Symposium on Computer Architecture (ISCA) , pp. 118–132, 2024. doi: 10 .1109/ISCA59077 .2024 .00019. Penedo, G., Kydl´ ıˇ cek, H., Ben allal, L., Lozhkov, A., Mitchell, M., Raffel, C., Von Werra, L., and Wolf, T. The FineWeb datasets: Decanting the web for the finest text data at scale. In Advances in Neural Information Processing Systems (NeurIPS), Datasets and Benchmarks Track , 2024. Prairie, H., Novack, Z., Berg-Kirkpatrick, T., and Fu, D. Y. Parcae: Scaling laws for stable looped language models. 
+
+arXiv preprint arXiv:2604.12946 , 2026a. Prairie, H., Ryan, J. M., Berg-Kirkpatrick, T., and Fu, D. Y. BeNice! closing looping’s inference-memory gap via KV-sharing. arXiv preprint arXiv:2610.31633 , 2026b. Qin, R., Li, Z., He, W., Zhang, M., Wu, Y., Zheng, W., and Xu, X. Mooncake: A KVCache-centric disaggre-gated architecture for LLM serving. arXiv preprint arXiv:2407.00079 , 2024. Rae, J. W., Potapenko, A., Jayakumar, S. M., Hillier, C., and Lillicrap, T. P. Compressive transformers for long-range sequence modelling. In International Conference on Learning Representations (ICLR) , 2020. Saunshi, N., Dikkala, N., Li, Z., Kumar, S., and Reddi, S. J. Reasoning with latent thoughts: On the power of looped transformers. In International Conference on Learning Representations (ICLR) , 2025. Schwethelm, K., R¨ uckert, D., and Kaissis, G. How much is one recurrence worth? Iso-Depth scaling laws for looped language models. In Advances in Neural Information Processing Systems (NeurIPS) , 2026a. Schwethelm, K., R¨ uckert, D., and Kaissis, G. Depth-adaptive inference of looped language models via contin-uous depth batching. arXiv preprint arXiv:2608.09444 ,2026b. Shazeer, N. Fast transformer decoding: One write-head is all you need. arXiv preprint arXiv:1911.02150 , 2019. Sun, Y., Dong, L., Zhu, Y., Huang, S., Wang, W., Ma, S., Zhang, Q., Wang, J., and Wei, F. You only cache once: Decoder-decoder architectures for language models. In Advances in Neural Information Processing Systems (NeurIPS) , 2024. Sun, Y., Dong, L., Ye, T., Huang, S., Wang, J., and Wei, F. Universal YOCO for efficient depth scaling. arXiv preprint arXiv:2604.01220 , 2026. Looping Deeper Without Growing the KV Cache 
+
+Wang, J., Han, J., Wei, X., Shen, S., Zhang, D., Fang, C., Chen, R., Yu, W., and Chen, H. KVCache cache in the wild: Characterizing and optimizing KVCache cache at a large cloud provider. In 2025 USENIX Annual Technical Conference (USENIX ATC 25) , pp. 465–482. USENIX Association, 2025. Wu, B., Chen, M., Luo, X., Yan, S., Yu, Q., Xia, F., Zhang, T., Zhan, H., Zhong, Z., Zhou, X., Qiao, S., and Bin, X. Parallel loop transformer for efficient test-time computa-tion scaling. arXiv preprint arXiv:2510.24824 , 2025. Xian, X. Shared global KV with layer-specific local history. 
+
+arXiv preprint arXiv:2609.28006 , 2026. Xiao, G., Tian, Y., Chen, B., Han, S., and Lewis, M. Effi-cient streaming language models with attention sinks. In 
+
+International Conference on Learning Representations (ICLR) , 2024. Zadouri, T., Strauss, H., and Dao, T. Hardware-efficient attention for fast decoding. arXiv preprint arXiv:2505.21487 , 2025. Zhang, Y., Feng, J., Qin, S., Kung, S.-Y., and Wang, M. Recurrent looped transformer. arXiv preprint arXiv:2610.07591 , 2026. Zheng, L., Yin, L., Xie, Z., Sun, C., Huang, J., Yu, C. H., Cao, S., Kozyrakis, C., Stoica, I., Gonzalez, J. E., Barrett, C., and Sheng, Y. SGLang: Efficient execution of struc-tured language model programs. In Advances in Neural Information Processing Systems (NeurIPS) , volume 37, pp. 62557–62583, 2024. doi: 10 .52202/079017-2000. Zhong, Y., Liu, S., Chen, J., Hu, J., Zhu, Y., Liu, X., Jin, X., and Zhang, H. DistServe: Disaggregating prefill and decoding for goodput-optimized large language model serving. In 18th USENIX Symposium on Operating Sys-tems Design and Implementation (OSDI 24) , pp. 193–210. USENIX Association, 2024. Zhu, R.-J., Wang, Z., Hua, K., Zhang, T., Li, Z., Que, H., Wei, B., Wen, Z., Yin, F., Xing, H., Li, L., Shi, J., Ma, K., Li, S., Kergan, T., Smith, A., Qu, X., Hui, M., Wu, B., Min, Q., Huang, H., Zhou, X., Ye, W., Liu, J., Yang, J., Shi, Y., Lin, C., Zhao, E., Cai, T., Zhang, G., Huang, W., Bengio, Y., and Eshraghian, J. Scaling latent reasoning via looped language models. arXiv preprint arXiv:2510.25741 , 2025. 
+
+# AI U SAGE DISCLOSURE 
+
+In preparing this work, the authors used AI-based tools, including Claude Code, in an assistive capacity. Specifi-cally, AI coding assistants were employed to accelerate the implementation of parts of the training, evaluation, and data-processing scripts under the authors’ direct specification and verification. AI tools were also used to assist in literature re-trieval, citation metadata checking, and language editing and polishing of the manuscript based on the authors’ drafts and outlines. All experimental designs, core implementations, data analyses, and scientific conclusions are the original work of the authors. The authors have carefully reviewed and verified all code and text, and take full responsibility for the integrity and content of this paper. Looping Deeper Without Growing the KV Cache 
+
+# A CONCURRENT WORK 
+
+The works below appeared on arXiv in September and Oc-tober 2026, while this paper was being finished. Section 7 contrasts the closest of them with Looped CED in brief; here we describe each in more detail. We have not compared against them experimentally. The fixed-point analyses of Huang et al. (2026b) and BeNice! (Prairie et al., 2026b), which we build on throughout, appeared in the same period. 
+
+Looped encoder–decoders. AsymLoop (Liang et al., 2026) builds on the CED of DeepSeek-V4.1-Flash and loops the decoder. A causal encoder runs once and projects a global KV for each decoder layer, which stays fixed across rounds; each layer of a weight-tied decoder reads it together with a full-length local KV recomputed from the decoder’s state in every round. From 60M to 1B parameters it im-proves on looping the whole stack, but it is not compared with an encoder loop. AsymLoop does not discuss caching for decoding, but its decoder has a full-length KV of its own, recomputed every round, so its cache grows with the number of rounds unless that KV is shared across rounds. Our decoder, like that of DeepSeek-V4.1-Flash, keeps only sliding-window KV of its own: in our CED, a loop recom-putes global KV every round only if it sits in the encoder and contains a global-KV source. RLT (Zhang et al., 2026) also pairs a parallel causal encoder, whose output is pro-jected into a global KV that the decoder layers read, with a decoder that keeps sliding-window KV, but it recurs across tokens rather than across depth: each token’s decoder input merges the final decoder state of the previous token. It is evaluated on algorithmic tasks, and its decoder processes prompt tokens one after another. Our loops repeat layers within each token and keep prefill parallel across tokens. 
+
+Sharing KV across rounds. LPT (Monea et al., 2026) pretrains looped models in which only the first round writes a full-length cache; later rounds read it together with a short window of their own KV. From 150M to 1B parameters this sharing improves quality over a looped model that caches every round. We share the last round’s KV instead. Both policies cache the looped layers’ KV once instead of once per round (LPT adds a short window per round), and both compose with the reduction across layers that CED provides. In a CED, however, the choice does not change prefill: the decoder’s global KV is projected from the encoder output of the final round, so an encoder loop runs every round on prompt tokens whichever round’s KV the later rounds read. The LSTM-style looped transformer of Kirsch (2026) shares one cache across its whole recurrent core: every core block reads the KV that the last core block writes in the final round, and a consistency loss late in training narrows the gap between parallel training and recursive decoding. In an ablation, a cache producer placed before the loop gives higher loss than this late producer at equal training tokens but lower loss at equal training compute; the author does not conclude that either placement is better in general. 
+
+Compressing the caches of pretrained looped models. 
+
+HLA (Chen et al., 2026) adds a compact cache to pretrained Ouro models while keeping their weights frozen: exact KV for a window of recent tokens, and one latent per older token that every loop reads directly. The cache per token shrinks by an order of magnitude. Like LLA (O’Neill & Reid, 2026), HLA finds that reusing the last loop’s KV in Ouro is unsafe for long generations, consistent with Ouro’s states not reaching a fixed point (Huang et al., 2026b). 
+
+Shared global KV with local history. Xian (2026) stud-ies a non-looped decoder in which a lower stack produces one global KV that every upper layer reads, through one softmax, together with its own sliding-window KV, the same split as in a CED decoder. It proves that prefill can rebuild the complete local caches exactly while each upper layer processes only a suffix of the prompt that shrinks with depth. Our estimate of exact SWA replay in §6 already shrinks the replayed suffix pass by pass in this way; the proof also lets queries and feed-forward layers run on a suffix shorter than the one used for keys and values, which would lower that estimate slightly. 
+
+# B ADDITIONAL SERVING RESULTS 
+
+This appendix collects serving measurements that Section 6 does not show. They come from the same two setups: one 4 × GB200 tray (TP4/EP4) and one 8 × H200 node (TP8/EP8), both running SGLang da64c5cbb with our plugin. Runs marked dummy weights use random weights with standard deviation 0.02, which route tokens to experts almost uniformly. In an A/B test, dummy weights decoded 15–36% slower than the real ones, while the ratios between models moved by 2–4%. All other runs use the original (real) DeepSeek-V4.1-Flash weights, unchanged. In Fig-ure 5, panel (a) uses dummy weights and panels (b) and (c) use the real weights. Every comparison is at equal rounds T ,and the names are those of Section 6. Across layers, a model either shares global KV as CED does or keeps per-layer KV (every layer L2–39 caches its own global KV and runs over every prompt token in prefill). Across rounds, it keeps 
+
+last-round KV or per-round KV . The baseline keeps per-layer and per-round KV; Looped CED keeps neither. The 
+
+decoder loop loops L21–38 of CED instead of the encoder. Per-round KV is always emulated by shrinking the KV pool, so a model and its per-round variant run identical compute. 
+
+The gain holds at interactive speeds. The 3.1×–3.6× of Section 6 compares peak throughput, which Looped CED reaches at c = 512 . Figures 5(a, b) and 7(a) plot throughput Looping Deeper Without Growing the KV Cache 0 127 383 895 1919 
+
+prompt length (tokens) 
+
+> −0.003
+> −0.002
+> −0.001 0.000 0.001 0.002 0.003
+> BPB, last-round  −
+> per-round KV
+
+90M, 3.4B tokens     
+
+> 0127 383 895 1919
+
+prompt length (tokens)  
+
+> fixed-round CED: +0.045 (off scale)
+
+150M, 6.0B tokens     
+
+> 0127 383 895 1919
+
+prompt length (tokens) 
+
+340M, 13.6B tokens     
+
+> 0127 383 895 1919
+
+prompt length (tokens) 
+
+150M, 29.6B tokens    
+
+> Dense, loop CED, encoder loop CED, decoder loop YOCO-U style, loop
+
+Figure 6. Last-round KV when serving a prompt. The prompt is prefilled in one parallel pass, and the next 128 tokens are decoded one at a time; the plot shows their BPB with last-round KV minus with per-round KV, pooled over PG19 test, FinePDFs and GovReport, with 95% paired bootstrap intervals. Each panel compares the looped models of one size and token budget (dense loop: L2–5; L4–7 in the last panel). The fixed-round CED encoder loop (150M) is off the scale. 1 10 100 
+
+> p90 tok/s per user (→)
+> 0100 200 300 400 500
+> Output tok/s per GPU (↑)  T=4
+> T=8
+
+(a) GB200, ShareGPT    
+
+> 64 128 256 512
+> Concurrent agent sessions
+> 20 25 30 35 40 45
+> Prefix-cache hit, %
+
+(b) Agent trace: prefix-cache hit    
+
+> 64 128 256 512
+> Concurrent agent sessions
+> 020 40 60 80 100
+> Requests with TTFT ≤ 10 s, %
+
+(c) Agent trace: TTFT ≤ 10 s  
+
+> CED, last-round KV (ours) Per-layer KV, per-round KV (baseline) CED decoder loop, last-round KV CED, per-round KV CED, no loop T=4 (a)
+> T=8 (a)
+
+Figure 7. Further serving measurements. (a) As Figure 5(a), for ShareGPT on one GB200 tray (dummy weights): output tokens/s per GPU against the p90 per-user decode speed ( 1000 /p90 TPOT), one point per concurrency, preemption-free points only. (b, c) Mooncake tool-agent trace, closed loop, T = 8 , real weights (the runs of Figure 4c): (b) prefix-cache hit rate over the second half of each run; 
+
+(c) share of requests with TTFT ≤ 10 s. 
+
+against the p90 per-user speed instead. Reading the curves by linear interpolation between neighbouring points, at 30 and 50 tokens/s per user Looped CED serves 1.39 ×–1.67 ×
+
+the throughput of the baseline on 8K/1K and 1.42 ×–1.61 ×
+
+on ShareGPT. No KV pool is full at these speeds, so this part of the gain comes from cross-layer sharing, not from capacity: the baseline runs every layer on every prompt token (166 instead of 147 layer passes at T = 8 ) and keeps a KV cache and an indexer in all 38 layers. A single request shows the same: its time to first token (TTFT) on 8K/1K is 0.98 s instead of 1.47 s at T = 4 and 1.68 s instead of 2.65 s at T = 8 , and its time per output token is 10% lower. On H200 with real weights the gap is larger. At equal concur-rency, Looped CED serves 1.48 ×–1.64 × the throughput of the baseline on 8K/1K ( c = 1 –64) and 1.47 ×–1.73 × on ShareGPT ( c = 1 –256); its single-request TTFT is 1.95 s in-stead of 3.23 s ( T = 4 ) and 3.56 s instead of 5.61 s ( T = 8 ). On 8K/1K the H200 baseline preempts at c = 112 (T = 4 )and fills 96% of its pool at c = 64 (T = 8 ), while Looped CED runs c = 256 at 16% KV use. On H200 ShareGPT the baseline’s pool never exceeds 28%, so the 1.72 ×–1.73 ×
+
+there at c = 256 comes from cross-layer sharing alone. 
+
+Both kinds of sharing contribute, and they multiply. Ta-ble 5 measures all four combinations of cross-layer sharing (CED or per-layer KV) and cross-round sharing (last-round or per-round KV). With last-round KV in both, cross-layer sharing alone gives 2.0×–2.4× the peak 8K/1K through-put and 6.7× the 128K decode throughput, because CED fits 38 requests of 128K tokens where per-layer KV fits Looping Deeper Without Growing the KV Cache                                                                       
+
+> Table 5. Cross-layer and cross-round sharing, measured separately (4×GB200, dummy weights). Left: peak preemption-free output tokens/s per GPU on 8K/1K, with the largest preemption-free concurrency in parentheses. Right: decode tokens/s per GPU at the largest batch of 128K-token requests that fits the KV pool, with that batch in parentheses. Without a loop, CED reaches 887.8 and 780.3 and the per-layer-KV model 371.7 and 116.7. The ratios compare rows at equal T.8K in / 1K out, peak 128K decode at the KV limit KV across layers KV across rounds T= 4 T= 8 T= 4 T= 8
+> CED (Looped CED, ours) last round 391.8 ( c512) 185.1 ( c512) 347.4 (38) 199.2 (38) CED per round 308.4 ( c128) 142.5 ( c64) 186.1 (13) 69.4 (7) per layer last round 161.6 ( c32) 92.4 ( c32) 51.7 (3) 29.6 (3) per layer (baseline) per round 127.3 ( c16) 50.9 ( c8) 21.1 (1) does not fit (0) Cross-layer sharing, both last-round KV (CED ÷per layer) 2.43 ×2.00 ×6.72 ×6.73 ×
+> Cross-layer sharing, both per-round KV 2.42 ×2.80 ×8.82 ×—Cross-round sharing in CED (last round ÷per round) 1.27 ×1.30 ×1.87 ×2.87 ×
+> Cross-round sharing with per-layer KV 1.27 ×1.82 ×2.45 ×—Both (Looped CED ÷baseline) 3.08 ×3.64 ×16 .5×199.2 vs. none
+
+3. Cross-round sharing alone gives 1.27 ×–1.30 × in CED and 1.27 ×–1.82 × with per-layer KV on 8K/1K, and 1.87 ×–
+
+2.87 × in CED at 128K. The 8K/1K factors multiply to the headline exactly ( 1.27 × 2.43 = 3 .08 , 1.82 × 2.00 = 3 .64 ). Cross-round sharing thus also helps a model with per-layer KV: the benefit of stochastic-depth training is not specific to CED. At equal batch, a model and its per-round variant decode within 3% of each other (one point differs by 6%), as the emulation intends, so these gains come from the larger batch that fits. For the same reason, cross-round sharing changes nothing in CED at 30 or 50 tokens/s per user (factor 1.00), where its pool is at most a third full. It pays off once the pool fills: at long context, on agent traces and under heavy load. 
+
+Prefill: skipping the decoder survives looping. A CED prompt runs the encoder and a 128-token decoder tail, and an encoder loop keeps that property (Table 6). Even without a loop, running the decoder over the whole prompt costs 
+
+1.32 × at 512 tokens and 1.75 × at 64K tokens on H200, and 1.30 × at 8K tokens on GB200. With eight rounds, the model with per-layer KV takes 1.40 ×–1.65 × (GB200) and 
+
+1.44 ×–2.43 × (H200) as long as the CED encoder loop to prefill the same prompt. Behind a cached 60K–124K-token prefix, Looped CED at T = 4 prefills 1.60 ×–1.83 × as many new tokens per second as the baseline at the same chunk size, and 1.56 × at T = 8 (64K context, 4K chunk). The encoder loop’s own prefill grows more slowly than its round count (Table 13). 
+
+Cost per request on four workloads. Figure 5(c) runs four closed-loop workloads on one GB200 tray with real weights at T = 8 , one run each: synthetic reasoning (2K-token prompts, 4K output tokens, 32 concurrent requests), the Mooncake conversation and tool-agent traces (Qin et al., 2024) (64 concurrent requests, starting at minute 10), and synthetic long documents (100K-token prompts, 1K output tokens, 8 concurrent requests). Looped CED costs 3.7×–
+
+4.7× the GPU time per request of an unlooped CED. That is 
+
+0.64 ×–0.93 × the cost of per-layer KV with last-round KV, and 0.36 ×–0.93 × the cost of the baseline. The largest sav-ing is on long documents, where the baseline’s pool holds one 101K-token request at a time. The cost model, evaluated for the same runs, matches the two CED loops (measured over predicted 0.78–1.04). It underpredicts per-layer KV with last-round KV by 9–44% on the three workloads where that model’s KV pool fills (95–100%), an effect that a model of FLOPs and bytes does not capture. The encoder loop costs the same as the decoder loop on reasoning ( 1.00 ×)and 1.37 ×–1.64 × as much on the three prompt-heavy work-loads, where its rounds run over every prompt token. These runs decode 8–64 requests at a time on one tray. With larger decode batches, as in expert-parallel serving across many GPUs, each output token costs less and prompt tokens take a larger share of a request, so the premium grows; running prompts at fewer rounds ( Tp < T d, Appendix G) lowers it. 
+
+Cross-round sharing leaves prefix caching as it is without a loop. Figure 7(b, c) replays the Mooncake tool-agent trace in closed loop with 64–512 concurrent sessions, real weights and T = 8 (the runs of Figure 4c); each point replays 600–1,536 complete requests from the trace. With last-round KV, both the encoder and the decoder loop hit the prefix cache within 0.8 points as often as the unlooped CED at every concurrency, so looping does not change which session histories stay resident. With per-round KV, the 1.5M-token pool is full from c = 128 , and the hit rate is 4.3, 6.4, 8.1 and 11.6 points lower than with last-round KV at 
+
+c = 64 , 128, 256 and 512. The share of requests with TTFT 
+
+≤ 10 s then falls to 4.8% at c = 256 (58.3% with last-round KV) and 1.4% at c = 512 (46.0%). A synthetic multi-turn agent workload on H200 (80 sessions of 4 turns, 32K–40K-token contexts, 0.2 requests/s) shows the same direction: per-round KV lowers the hit rate of the encoder loop from Looping Deeper Without Growing the KV Cache                                                                                                                                                                          
+
+> Table 6. Prefill cost of running every layer over the prompt. Top: ratio of per-request prefill time for uncached prompts (batch 1, real weights); both models keep last-round KV. Full replay runs the CED decoder over every prompt token instead of the last 128. Bottom: ratio of new prompt tokens prefilled per second behind one cached prefix ( 4×GB200, dummy weights, 4K new tokens per request). Values above 1 mean the CED variant is faster. Prompt length (tokens) Ratio 512 2K 4K 16K 64K H200 CED, no loop: full replay ÷128-token tail 1.32 1.45 1.50 1.60 1.75 H200 Per-layer KV ÷CED, encoder loop T= 8 1.87 1.45 1.44 1.69 2.43 GB200 Per-layer KV ÷CED, encoder loop T= 8 1.65 1.48 1.41 1.40 1.48 Context length / prefill chunk (tokens) 64K / 4K 64K / 8K 64K / 16K 128K / 4K 128K / 8K GB200 Looped CED ÷baseline, T= 4 1.60 1.64 1.70 1.65 1.83
+> Table 7. Requests that fit the KV pool at long context. 4×GB200: one tray with the flags of Figure 4, dummy weights; requests of
+> L+ 256 tokens; the last column is decode tokens/s per GPU at the largest 128K batch that fits. The CED limit of 604 at 8K is computed from the pool (the sweep stopped at 256). 8×H200: one node, real weights, requests that fit at full length. The H200 per-round pool also charges each round’s sliding-window rings; the GB200 one does not.
+> 4×GB200 8×H200 Model KV across rounds 8K 128K tok/s/GPU at 128K 120K 524K 1M CED, no loop —604 38 780.3 195 44 23 CED encoder loop, T= 4 last round 604 38 347.4 ———CED encoder loop, T= 8 last round 604 38 199.2 195 44 23 CED decoder loop, T= 8 last round ———195 44 23 CED encoder loop, T= 4 per round 215 13 186.1 ———CED encoder loop, T= 8 per round 116 769.4 23 52Per-layer KV, no loop —49 3116.7 16 31Per-layer KV, T= 4 last round 49 351.7 ———Per-layer KV, T= 8 last round 49 329.6 16 31Per-layer KV, T= 4 per round 25 121.1 ———Per-layer KV, T= 8 per round 15 0————
+
+72.3% to 63.8% and its completed rate from 0.199 to 0.171 requests/s. Cross-layer sharing matters even more on this workload. In the same runs, per-layer KV with last-round KV holds 2.0M tokens against CED’s 23.4M, so the session histories (about 3.2M tokens) do not stay resident: its hit rate is 3.4% and it completes 0.039 requests/s, 5.1× fewer than Looped CED. 
+
+Encoder and decoder loops decode at the same cost. De-code runs every layer under either loop placement. In a pure-decode sweep with real weights on GB200 that fills the KV pool (8K, 16K and 32K-token contexts, 256 output tokens per request), the encoder loop and the decoder loop at T = 8 reach 1,451 / 1,118 / 818 and 1,460 / 1,112 / 828 output tokens/s per GPU (the 8K values are capped at 768 requests). With last-round KV neither loop adds global KV, so both hold the same pool, and both take 33.1 ms per decode step at 8K context and batch 32. 
+
+Long and very long contexts. With last-round KV, a looped CED fits as many requests as the unlooped CED at every T (Table 7): 38 requests of 128K tokens on one GB200 tray, and 44 of 524K tokens and 23 of 1M tokens on one H200 node, where the unlooped model with per-layer KV fits 3 and 1. At 524K tokens on H200, last-round KV decodes 195 tokens/s per node at a batch of 32. Per-round KV fits only 5 such requests and peaks at 55.7 tokens/s at a batch of 4, 3.5× less. For every model, the long-context decode measurements use KV that is allocated without being computed, so that they measure decode alone; on H200, decoding over such KV was within 3% of decoding after a real prefill. 
+
+# C EVALUATION PROTOCOL 
+
+Validation BPB. We tokenize the FineWeb-Edu valida-tion split into one token stream and cut it into consecutive samples of 2048 tokens, the training context; a sample may span document boundaries. Every model is scored on all Looping Deeper Without Growing the KV Cache 
+
+2829 samples, about 5.8M tokens. BPB is the total negative log-likelihood of the predicted tokens in bits, divided by their total number of UTF-8 bytes, so it does not depend on the tokenizer. Looped models run 8 rounds. During training we evaluated only the first 512 samples (128 for the 29.6B-token runs; BPB train in Table 2); on the first 512 samples, every model’s BPB is within 0.001 of its value on all samples, and no ranking of models changes. 
+
+Last-round KV. Last-round KV cannot be scored in one parallel pass, because a token’s last-round KV exists only after that token has run all its rounds. We therefore decode every sample token by token with teacher forcing, in fp32, as Prairie et al. (2026b) do for shared-KV perplexity. With per-round KV, the parallel pass gives the same result as token-by-token decoding, which we check in our tests. The deployment protocol of §5.4 instead prefills a prompt in one parallel pass and decodes only the answer. With last-round KV the prompt keeps only its tokens’ final-round KV, which every round of the answer reads; Figure 6 shows that this loses nothing at any prompt length. Table 3 decodes the first 512 validation samples. For the CED encoder loop we also decode all 2829 samples of the validation split and bootstrap the paired difference over samples: last-round minus per-round KV is −0.00018 [ −0.00021, −0.00015] at 90M, −0.00015 [ −0.00018, −0.00012] at 150M, 0.00000 [−0.00003, +0.00004] at 340M, and −0.00018 [ −0.00021, 
+
+−0.00014] after 29.6B tokens. 
+
+Downstream intervals. CORE scores are mean centered accuracy over the suite’s tasks. Their 95% intervals come from 1,000 bootstrap resamples of items, stratified by task; differences between two models are paired over items where both have per-item results, and use unpaired resamples oth-erwise. 
+
+# D FIXED -POINT ANALYSIS 
+
+We run each loop for up to 32 rounds and track ρr, the relative change of the core state between rounds, as Prairie et al. (2026b) do. With random rounds, ρr shrinks by a factor of about 0.61 per round, from 13% at round 4 to 1.7% at the 8 rounds we deploy and 0.014% at round 32: the core contracts to a fixed point. Between rounds 7 and 8, layer 2’s global KV changes by only 3%, which is why every round can read the last round’s. From round 8 to 32, BPB stays within 0.0003 of its 8-round value, so running more rounds than trained is safe. The same holds after 29.6B tokens (ρ8 = 1 .8% ), for the decoder loop ( 0.62% ) and for the 45M CED ( 2.7% ). With a fixed number of rounds, ρr never falls below 30% after round 8, and layer 2’s KV changes by 31% per round. The state does not converge but cycles with period 4: BPB matches its 8-round value whenever r is a multiple of 4 and is 0.06–0.08 higher otherwise. The 45M 1 8 16 24 32                
+
+> round r
+> 10 −2
+> 10 −1
+> 10 0
+> 10 1
+> 10 2
+> 10 3
+> ρr (%) (a) change of the core state
+> random rounds fixed rounds
+> 1816 24 32
+> round r
+> 0.00 0.05 0.10 0.15
+> BPB (r)−BPB (8)
+> (b) BPB by round
+> Figure 8. Fixed-point analysis. The 150M CED encoder loop (6.0B tokens), trained with a random or a fixed number of rounds and run for up to 32 rounds on FineWeb-Edu validation data in fp32. (a) Median relative change of the core state between rounds,
+> ρr=∥hr−hr−1∥/∥hr−1∥, over tokens, with the interquartile band. (b) BPB after rrounds minus BPB after the trained mean of 8 rounds (dashed line).
+
+fixed-round CED shows the same cycle. Every fixed-round model we have backpropagates through only the last 4 of its 8 rounds, which likely causes the period-4 cycle; we do not claim it for fixed-depth training in general. These models thus learn an orbit that reaches a good state at the trained depth, not a fixed point, and the last round’s KV is then a poor stand-in for earlier rounds’. 
+
+# E HYPERPARAMETERS 
+
+Every 12-layer run uses the hyperparameters of Table 8; the three sizes differ only in width, heads, steps and training tokens. 
+
+# F TEST -TIME ROUNDS 
+
+Table 9 evaluates the 150M looped models with T = 1 to 16 rounds. Running 12 or 16 rounds instead of the trained mean of 8 lowers BPB by at most 0.0004 and never raises it, so these models can run more rounds than they were trained with (Appendix D). 
+
+# G FEWER ROUNDS FOR PROMPT TOKENS 
+
+The encoder loop’s prefill cost scales with the number of rounds that prompt tokens run. The unified evaluation splits each validation sequence after its first half. It runs the first half with Tp rounds and caches its final-round KV, then scores the second half with Td rounds. Table 10 shows BPB on the second half only, so it is not comparable to the other tables. A prefill at Tp rounds runs the same layers as a T = Tp model. On 4 × GB200, the measured prefill Looping Deeper Without Growing the KV Cache −0.010 0.000 0.010 
+
+> BPB  − dense no loop
+> SWA window (128 tokens)
+
+long documents (pooled) PG19 test FinePDFs (long) GovReport test FineWeb-Edu (val)   
+
+> 128 512 2048
+
+context (tokens)   
+
+> −0.010 0.000 0.010
+> BPB  − dense loop L2–5
+> 128 512 2048
+
+context (tokens)   
+
+> 128 512 2048
+
+context (tokens)   
+
+> 128 512 2048
+
+context (tokens)   
+
+> 128 512 2048
+
+context (tokens)   
+
+> Dense (reference) CED YOCO-U style
+
+Figure 9. Gap to dense on each corpus. BPB minus the dense model with the same loop setting, by tokens of context, for each corpus (150M models, 6.0B tokens). Markers are measurements; lines are least-squares fits in log 2 of the context beyond the SWA window (red dashed line). Top: no loop. Bottom: loop over layers 2–5. FineWeb-Edu counts each token’s context within its own document and is not averaged over offsets. 
+
+Table 8. Hyperparameters. Shared by every 12-layer run, read from the run configurations. Layers 12 Model size (non-embedding) 90M / 150M / 340M Hidden size d 768 / 1024 / 1536 Heads (query = KV) 6 / 8 / 12, dimension 128 FFN 4d, ReLU 2
+
+Value embeddings layers 1, 3, 5, 7, 9, 11 SWA window 128 RoPE θ 50,000 Vocabulary 151,936 (Qwen3) Sequence length 2048 Batch 256 sequences Optimizer Muon (matrices), AdamW (others) Learning rate 0.0025, warmup 5%, linear decay over the last 20% Weight decay 0.1 (AdamW), 0.3 (Muon) Steps 6,480 / 11,444 / 25,916 Tokens 3.4B / 6.0B / 13.6B; 29.6B for 150M Rounds max(1 , Poisson(8)) per sequence; 8 at evaluation Backpropagated rounds last 4 Loop-state initialization like (truncated normal); decay gate √0.2
+
+of T = 4 and T = 2 models is 2.72 × and 1.54 × that of unlooped CED, against 5.12 × at T = 8 (Table 13). 
+
+Table 9. Test-time rounds. BPB when evaluating with T rounds; the models were trained with 8 rounds on average. Parallel forward pass with per-round KV on the first 512 validation samples, as in Table 3. Model T =1 2 4 8 12 16 CED, encoder loop 0.9695 0.8893 0.8537 0.8465 0.8462 0.8462 CED, enc. loop, 29.6B 0.9552 0.8622 0.8206 0.8124 0.8122 0.8122 CED, decoder loop 0.9156 0.8795 0.8668 0.8648 0.8648 0.8648 Dense, loop L2–5 0.9647 0.8877 0.8527 0.8457 0.8455 0.8455 Dense, loop L4–7 0.9508 0.8874 0.8574 0.8511 0.8507 0.8507 
+
+Table 10. Fewer rounds for prompt tokens. CED encoder loop after 29.6B tokens: BPB on the second half of each sequence, with the first half (the prompt) run at Tp rounds and the second half at 
+
+Td rounds. 
+
+Tp Td=2 4 8 16 1 0.8633 0.8251 0.8179 0.8178 2 0.8546 0.8150 0.8077 0.8075 4 0.8517 0.8121 0.8047 0.8046 8 0.8517 0.8118 0.8044 0.8042 16 0.8517 0.8118 0.8044 0.8042 
+
+# H LONG -CONTEXT EVALUATION 
+
+Long documents. PG19 test and FinePDFs contribute 512 samples and GovReport 396, each 2048 contiguous tokens of one document starting at least 1,024 tokens in; Looping Deeper Without Growing the KV Cache 1088 1536 2048 
+
+position in sample 
+
+> 0.40 0.45 0.50 0.55 0.60
+> BPB, repeated half
+
+90M, 3.4B tokens   
+
+> 1088 1536 2048
+
+position in sample 
+
+> 0.35 0.40 0.45 0.50 0.55
+
+150M, 6.0B tokens   
+
+> 1088 1536 2048
+
+position in sample 
+
+> 0.34 0.36 0.38 0.40
+
+340M, 13.6B tokens   
+
+> 1088 1536 2048
+
+position in sample 
+
+> 0.34 0.36 0.38 0.40
+
+150M, 29.6B tokens      
+
+> Dense CED, encoder loop CED, decoder loop YOCO-U style, loop loop no loop
+
+Figure 10. In-context recall. BPB on the second half of samples whose tokens 1,024–2,047 repeat tokens 0–1,023 verbatim (PG19 test and arXiv, 1024 samples), per 64-token bin; the first copied bin is left out. Each panel compares the models of one size and token budget. Solid: looped (L2–5; decoder loop L7–10; dense L4–7 in the last panel); dashed: unlooped. 
+
+Table 11. How fast BPB gaps grow with context. The least-squares slope of BPB(a) −BPB(b) over the four context buckets be-yond the SWA window (128–255, . . . , 1024–2047 tokens) against 
+
+log 2 of the context, in 10 −3 BPB per doubling. Positive means that a falls further behind b as the context grows. Long docs pools PG19 test, FinePDFs and GovReport, with a 95% paired bootstrap interval; FW is the FineWeb-Edu validation set. Hidden size 1024, 6.0B tokens. a − b Long docs PG19 PDFs Gov. FW 
+
+Gap to dense, loop L2–5 
+
+CED enc. loop +0.1 [−0.2, +0.3] −0.1 −0.8 +1.0 +0.5 YOCO-U loop +3.7 [+3.4, +4.0] +3.4 +4.2 +3.6 +2.2 
+
+Gap to dense, no loop 
+
+CED −0.1 [−0.3, +0.2] −0.6 −0.7 +1.1 +0.4 YOCO-U +2.4 [+2.1, +2.6] +2.6 +2.5 +1.9 +1.2 
+
+Loop gain: no loop − loop 
+
+Dense L2–5 +1.3 [+1.0, +1.6] +1.0 +1.7 +1.2 +1.0 CED encoder +1.2 [+0.9, +1.5] +0.4 +1.7 +1.3 +0.9 CED decoder −0.6 [−0.9, −0.3] −0.4 −1.4 +0.0 −0.2 YOCO-U −0.1 [−0.4, +0.2] +0.2 +0.0 −0.5 −0.0 
+
+every model scores the same samples. To keep the difficulty of particular passages out of the position-wise curves, every sample is also scored after moving it 256, 512, 768 and 1,024 tokens earlier in its document and by one random offset of up to 1,024 tokens, and each context bin aver-ages the six copies, so the text at a given position comes from six places in the document. One forward pass scores each sample, with 8 rounds and per-round KV for looped models. “Long docs” pools the three corpora. Differences between models carry 95% intervals from a paired boot-strap over samples (1000 resamples, stratified by corpus). For FineWeb-Edu we take each token’s position in its own document as its context. 
+
+BPB by context length. Table 12 gives the BPB be-hind Figure 3 for every model, pooled over the three long-document corpora, by the number of tokens of context. Fig-ure 9 repeats Figure 3b–c for each corpus, and Table 11 gives how fast each gap grows with context. 
+
+In-context recall. To test recall directly, we take the first 1,024 tokens of each PG19 test sample and of 512 arXiv documents from the Proof-Pile-2 test split (Azerbayev et al., 2024), and repeat them verbatim at positions 1,024–2,047. Each copied token lies 1,024 tokens after its source, far beyond the SWA window, so only global KV can retrieve it. Figure 10 shows BPB on the repeated half. Unlooped CED recalls worse than unlooped dense (+0.106 and +0.014); the encoder loop removes this deficit ( −0.160 and −0.084 against unlooped CED), whereas the decoder loop barely changes recall ( −0.014 and +0.005). The YOCO-U style loop, whose only global KV comes from layer 6, recalls worst of the looped models (+0.105 and +0.108 against the dense loop). The differences shrink with scale: at 340M, all five models lie between 0.357 and 0.388 BPB. The CED encoder loop recalls better than the dense loop at 90M and 150M ( −0.017 and −0.026 BPB), trails it by +0.006 [+0.005, +0.007] at 340M, and recalls better than the L4–7 dense loop of Table 2 after 29.6B tokens ( −0.012). Across the three sizes and both token budgets, it thus recalls within 0.03 BPB of the dense loop while caching one-sixth of its global KV. 
+
+# I PRODUCTION SERVING SETUP AND 
+
+# DETAILED RESULTS 
+
+DeepSeek-V4.1-Flash architecture and SGLang plu-gin. DeepSeek-V4.1-Flash (DeepSeek-AI, 2026) is a 40-Looping Deeper Without Growing the KV Cache 
+
+Table 12. Long-document BPB by context bucket. PG19 test, FinePDFs and GovReport (512, 512 and 396 samples of 2048 tokens, each averaged over six offsets in its document); 150M models. One forward pass per sample with per-round KV and 8 rounds for looped models. Rows above the line trained on 6.0B tokens. Model 1–127 128–255 256–511 512–1023 1024–2047 mean Dense, no loop 1.2757 1.1054 1.0695 1.0420 1.0263 1.0562 Dense, loop L2–5 1.2433 1.0666 1.0287 1.0005 0.9834 1.0148 Dense, loop L4–7 1.2474 1.0741 1.0367 1.0090 0.9925 1.0232 CED, no loop 1.2718 1.0995 1.0631 1.0360 1.0200 1.0501 CED, encoder loop 1.2441 1.0671 1.0293 1.0012 0.9841 1.0155 CED, decoder loop 1.2639 1.0906 1.0547 1.0282 1.0130 1.0426 CED, enc. loop, fixed rounds 1.2507 1.0711 1.0334 1.0054 0.9885 1.0199 YOCO-U style, no loop 1.2644 1.0960 1.0627 1.0381 1.0237 1.0518 YOCO-U style, loop L2–5 1.2391 1.0668 1.0334 1.0089 0.9948 1.0229 
+
+29.6B training tokens 
+
+CED, no loop 1.2319 1.0579 1.0219 0.9955 0.9797 1.0096 CED, encoder loop 1.2140 1.0248 0.9848 0.9563 0.9398 0.9721 CED, decoder loop 1.2256 1.0476 1.0102 0.9825 0.9662 0.9971 Dense, loop L4–7 1.2229 1.0364 0.9954 0.9655 0.9480 0.9810 
+
+Table 13. Unit prefill and decode cost multipliers relative to unlooped CED ( T = 1 ) across 4 × GB200 (TP4) and 8 × H200 (TP8). 
+
+The analytic columns are a roofline model of FLOPs and bytes at GB200 peak rates, with expert parallelism over 4 GPUs and all of L20 
+
+run on every prompt token, as in SGLang. Prefill a is the per-token slope of tpre (L) = b + aL + cL 2, fitted over uncached prompts of 512–65,536 tokens at batch 1; for CED T = 1 it is 18 .8 μs per prompt token per GB200 tray and 60 .8 μs per H200 node. Decode is the per-step time averaged over 8K and 32K contexts at batches 16–256; for CED T = 1 the step at 8K context and batch 32 takes 8.6 ms. GB200 120K uses distinct 120K-token contexts (per-layer KV, T = 8 : batches 1 and 8 only). Unit costs do not depend on the round policy, so each row holds for last-round and per-round KV alike. 
+
+Analytic Roofline Model Measured 4 × GB200 (TP4) Measured 8 × H200 (TP8) Model Variant Prefill a Decode 8–32 K KV Pool Prefill a Decode 8–32 K Decode 120 K Prefill a
+
+CED, no loop (reference) 1.00 × 1.00 × 1.00 × 1.00 × 1.00 × 1.00 × 1.00 ×
+
+Stock SGLang (no plugin) 1.00 × 1.00 × 1.00 × 1.00 × 1.02 × — 0.98 ×
+
+Looped CED, T = 2 1.87 × 1.45 × 1.00 × 1.54 × 1.39 × — 1.61 ×
+
+Looped CED, T = 4 3.60 × 2.34 × 1.00 × 2.72 × 2.13 × — 2.87 ×
+
+Looped CED, T = 8 7.06 × 4.12 × 1.00 × 5.12 × 3.95 × 3.83 × 5.42 ×
+
+CED decoder loop, T = 8 1.00 ×‡ 4.13 × 1.00 × 2.76 ×‡ 3.99 × 3.89 × 1.80 ×‡
+
+Per-layer KV, no loop 1.91 × 1.12 × 0.086 × — — — 1.73 ×
+
+Per-layer KV, T = 8 8.21 × 4.23 × 0.086 × 6.97 × 4.24 × 4.56 × 6.88 ×              
+
+> ‡Analytically, the decoder loop runs its extra rounds only on the 128-token tail ( a×1.00 ,b×7.64 ). Measured, its prefill slope is 2.76 ×(GB200) and 1.80 ×(H200), and on GB200 its per-request prefill time is 2.6–2.9×that of CED T= 1 at every prompt length from 512 tokens (a single chunk) to 64K. The architecture does not require this extra cost; it comes from our implementation of the decoder-loop prefill.
+
+Table 14. Pure decode throughput saturation (last-round vs. per-round KV) for the CED encoder loop on 4 × GB200 (real weights; each request has its own context, whose KV is allocated without being computed, and generates 256 tokens). Each cell is the ratio of the two policies’ highest decode throughput; in parentheses, the batch at which each was measured. Last-round KV at 8K is capped at 768 requests (pool 80% full), so the 8K ratios are lower bounds. 
+
+Rounds ( T ) Per-round KV factor Pool (last-round / per-round) ISL = 8K ISL = 16K ISL = 32K 
+
+T = 2 1.60 × 8.11 M / 5.07 M ≥ 1.12 × (768 vs. 570 ) 1.17 × (487 vs. 288 ) 1.34 × (245 vs. 144 )
+
+T = 4 2.80 × 8.11 M / 2.90 M ≥ 1.42 × (768 vs. 342 ) 1.58 × (487 vs. 174 ) 1.80 × (245 vs. 87 )
+
+T = 8 5.20 × 8.11 M / 1.56 M ≥ 2.05 × (768 vs. 184 ) 2.35 × (487 vs. 93 ) 2.83 × (245 vs. 47 )
+
+layer Causal Encoder–Decoder MoE model (hidden dimen-sion 5,120 , 384 routed experts per MoE layer with top-6 routing, FP8 attention/dense projections, and MXFP4 expert weights) partitioned into a 21-layer encoder (L0– 20) and a 19-layer decoder (L21–39). Every layer main-tains a 128-token sliding-window attention (SWA) ring Looping Deeper Without Growing the KV Cache 
+
+buffer ( 768 reserved slots per active request in SGLang, totaling 17 .94 MB/request). Long-range context is served by only four global KV-source layers ( L2, L 8, L 14 , L 20 )with compression ratios (2 , 2, 2, 1) : the three sources in-side the looped range L2–19 store 3 × 1/2 = 1 .5 com-pressed entries per token, and L20 , whose KV the whole decoder reads, stores one ( 2.5 compressed entries/token total). In SGLang ( da64c5cbb ), each compressed en-try stores 584 B of MLA latent KV ( fp8 e4m3 nope + BF16 RoPE + scale) plus 68 B of FP4 lightning-indexer keys ( 652 B/entry), giving 2.5 × 652 = 1 ,630 B/token for CED vs. 29 .0 × 652 = 18 ,908 B/token for the per-layer-KV baseline, in which all 38 layers L2–39 own distinct global KV caches ( 11 .60 × larger; the analytical FP4-latent cost model uses 288 + 68 = 356 B/entry, or 890 B vs. 
+
+10 ,324 B/token, with identical ratios). Under per-round KV, looping L2–19 for T rounds multiplies global KV by 
+
+1 + 1.52.5 (T − 1) = 1 + 0 .6( T − 1) for CED ( 5.20 × at T = 8 ,or 8,476 B/tok) and by 1 + 929 (T − 1) with per-layer KV (3.17 × at T = 8 , or 59 ,984 B/tok). Our weight-tied plugin (sglang ced loop ) wraps SGLang’s layer execution loop into a virtual schedule of 
+
+(l, r ) passes while keeping a single copy of physical weights. For loops whose first layer reuses an earlier source’s sparse top-k indices (the decoder loop L21–38 reusing L20 ), the plugin snapshots the top-k buffer on round 1 and restores it on rounds 2 . . . T ; for L14 ’s Engram table, the embedding lookup and key-value projection execute once on round 1 while the hidden-state gate runs every round. At T = 1 ,the plugin’s unit prefill and decode costs are within 2% of stock SGLang on both 8 × H200 (TP8/EP8) and 4 × GB200 (TP4/EP4) (Table 13), with zero layer-count or NLL discrep-ancies. Table 13 reports the complete unit prefill and decode cost multipliers, and Table 14 details the HBM-saturated pure decode sweep across context lengths and rounds. 
+
+Setup of Figure 4. All runs use one 4 × GB200 tray (TP4/EP4) and one SGLang server. Within each panel, all models share the server settings, apart from the pool cap that emulates per-round KV. The settings differ be-tween experiments, and so does the KV pool of Looped CED: 5.11 M tokens in panels (a) and (b) and in Table 4, 
+
+7.9 M in panel (c), and 8.11 M in Table 14. Panels (a) and (b) use the DeepSeek-V4.1-Flash architecture with dummy weights, which change the ratios between models by 2–4% (Appendix B); panel (c) uses the real checkpoint weights. Per-round KV is emulated with identical compute: the KV pool is capped by the per-round byte factor ( 5.2× for CED at T = 8 , 3.17 × with per-layer KV; Appendix I). The base-line with per-layer KV gives every layer L2–39 its own global KV and runs every layer on every prompt token in prefill (full replay). A point is preemption-free when no request is retracted; panel (a) draws only such points, and the dotted line carries each baseline’s last preemption-free throughput to c = 512 . (a) 8K/1K requests are random token ids with ignore eos and max(20 , 5c) prompts per point (one or two repeats). The baseline (per-layer and per-round KV) fills its pool at c = 16 (T = 4 ) and c = 8 
+
+(T = 8 ), CED with per-round KV at c = 128 and c = 64 ;last-round KV stays preemption-free up to c = 512 . At 
+
+c = 512 , last-round KV gives 1.27 × (T = 4 ) and 1.30 ×
+
+(T = 8 ) the peak throughput of per-round KV, and 3.1×
+
+and 3.6× that of the baseline. (b) The 128K groups are pure decode: each request has its own 131K-token context and generates 256 tokens, at the largest batch the KV pool holds ( 38 requests with last-round KV; 13 and 7 with per-round KV at T = 4 and 8; 1 for the baseline at T = 4 
+
+and none at T = 8 ). There, last-round KV gives 1.9×
+
+(T = 4 ) and 2.9× (T = 8 ) the throughput of per-round KV. The ShareGPT group compares Looped CED with the baseline only. (c) Mooncake toolagent trace (Qin et al., 2024), closed loop with c concurrent sessions, encoder loop at T = 8 . With per-round KV the prefix cache holds 1.5 Mtokens and is full from c = 128 , so evicted session histories are recomputed through all eight rounds; last-round KV holds 7.9 M tokens and peaks at 77% use at c = 512 . Me-dian TTFT drops 13 .6× at c = 256 and 29 .7× at c = 512 ,while output throughput is within 13% between the two policies.

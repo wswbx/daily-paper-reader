@@ -1,0 +1,1978 @@
+UpLoop: Training Looped Transformers via Upcycling at No Extra Pretraining
+Compute
+Cheng Liang * 1 Tengfei Zhang * 2 Ya Zhang 1 Yanfeng Wang 1 Zhouhan Lin 1 †
+Abstract
+Looped language models can strengthen reason-
+ing through repeated computation with shared
+weights, increasing execution depth without
+adding independent parameters. However, each
+additional pass increases training floating-point
+operations (FLOPs), making these gains more ex-
+pensive to obtain. To address this cost, we propose
+UpLoop, a pretraining schedule that uses upcy-
+cling to train looped Transformers while exactly
+matching a standard dense baseline in final pa-
+rameter count, total training tokens, and training
+FLOPs. Specifically, UpLoop begins with a shal-
+low Transformer, progressively grows its depth
+by copying learned layers, and uses the compu-
+tation saved early to support repeated execution
+of a shared middle block later in training. Experi-
+ments across model scales show improvements in
+language modeling and downstream performance,
+with the average score across 22 downstream tasks
+increasing from 22.99 to 27.52 at 1.3B parame-
+ters. These gains also extend to mathematical
+reasoning after supervised fine-tuning.
+1. Introduction
+Large language models (LLMs) have demonstrated strong
+capabilities in mathematical reasoning (Muennighoff et al.,
+2025; Xin et al., 2025) and agentic coding (Wang et al.,
+2025; Yang et al., 2024a; 2025). These capabilities have
+advanced substantially with increases in model size and
+training data (Hoffmann et al., 2022). Alongside scaling
+parameters and data, looped language models introduce an
+additional axis for scaling through iterative computation
+(Geiping et al., 2025; Zhu et al., 2025; Alabdulmohsin &
+Zhai, 2025; Bae et al., 2025a; Liang et al., 2026). Specifi-
+cally, they repeatedly apply a shared Transformer block to
+increase execution depth at a fixed number of independent
+1Shanghai Jiaotong University
+2University of Science and
+Technology of China. Correspondence to: Zhouhan Lin.
+*Equal contribution
+Preprint. October 30, 2026.
+370M
+760M
+1.3B
+Model scale (unique non-embedding parameters)
+48
+50
+52
+54
+56
+Downstream accuracy (%)
++1.35
++1.80
++1.60
+Vanilla
+UpLoop
+Figure 1. Zero-shot accuracy of UpLoop and Vanilla across three
+model scales from 370M to 1.3B parameters. Both methods are
+trained at 100 tokens per parameter with equal training tokens and
+FLOPs at each scale. See Appendix C for evaluation details.
+parameters, allowing more rounds of computation that can
+strengthen reasoning (Saunshi et al., 2025).
+However, the benefits of repeated computation come with
+increased training FLOPs. Each additional pass through the
+shared block requires extra computation, making a looped
+language model more expensive to train than its dense coun-
+terpart on the same number of tokens. This raises a practical
+question: Can we train a looped language model that out-
+performs a standard dense model with the same model
+parameters, training tokens, and training FLOPs?
+To accommodate the additional computation required by
+looping within the dense baseline’s training budget, we
+introduce a pretraining schedule that reallocates computa-
+tion across training stages. A fixed total compute budget
+constrains the accumulated training cost, while allowing dif-
+ferent stages to use different execution depths. We allocate
+less computation to early tokens and progressively increase
+depth, carrying learned parameters forward across stages
+(Shen et al., 2022; Du et al., 2024; Yao et al., 2024; Saunshi
+et al., 2024). The computation saved early then supports
+repeated execution in the final stage, allowing us to train a
+looped model within the dense baseline’s original token and
+1
+arXiv:2610.41720v1  [cs.LG]  30 Oct 2026
+
+
+UpLoop: Training Looped Transformers via Upcycling
+103
+104
+Optimizer step
+2.8
+3
+3.5
+4
+4.5
+Validation NLL
+(a)
+1020
+1021
+Training FLOPs
+48
+50
+52
+54
+56
+Downstream accuracy (%)
+(b)
+1020
+1021
+Training FLOPs
+2.4
+2.5
+2.6
+2.7
+2.8
+Held-out NLL
+(c)
+370M
+760M
+1.3B
+Unique parameters
+48
+50
+52
+54
+56
+Downstream accuracy (%)
+(d)
+Vanilla
+UpLoop
+Figure 2. Training dynamics and performance of UpLoop and Vanilla with equal training tokens and FLOPs at each scale. (a) Validation
+NLL during 370M pre-training. (b, c) Downstream accuracy and held-out NLL versus training FLOPs. (d) Downstream accuracy versus
+unique non-embedding parameters. See Appendix C for evaluation details.
+training FLOP budgets.
+We instantiate this strategy as UpLoop, a pretraining sched-
+ule that combines progressive depth growth with shared-
+weight looping. Specifically, UpLoop first trains a shallow
+Transformer and progressively copies its learned layers to
+increase depth. Once the model reaches its target depth,
+it repeatedly executes a middle block with shared weights,
+gaining additional execution depth without adding model
+parameters.
+Across three model scales, UpLoop improves held-out lan-
+guage modeling and average downstream performance over
+the dense baseline under equal training token and FLOP bud-
+gets. Specifically, the average score across 22 downstream
+tasks increases from 22.99 to 27.52 at 1.3B parameters.
+These gains also extend to downstream mathematical rea-
+soning after supervised fine-tuning. Further analyses show
+more aligned gradients across shared calls, functional dif-
+ferentiation among copied layers, and improved contextual
+retrieval.
+2. Related Work
+Looped and recursive language models.
+Reusing a block
+along the depth axis goes back to Universal Transformers
+(Dehghani et al., 2019) and has recently been revived as a
+way to buy iterative computation at a fixed parameter count
+(Yang et al., 2024b; Saunshi et al., 2025; Geiping et al.,
+2025; Zhu et al., 2025), sometimes with the shared block
+relaxed by per-pass adapters or experts (Csord´as et al., 2024;
+Bae et al., 2025a;b), with the reported gains concentrated in
+reasoning (Saunshi et al., 2025; Kapl et al., 2026). Because
+a looped model executes more layers than the dense model
+it is compared against, those comparisons hold parameters,
+and sometimes tokens, fixed and pay for the extra execution
+depth with extra compute at both training and inference time.
+Concurrent scaling-law work makes the dependence explicit:
+at matched parameters and data, looping lowers loss (Prairie
+et al., 2026), but at matched computational depth more
+recurrence is worse once model size and data are jointly
+optimised (Schwethelm et al., 2026), and compute-matched
+gains have so far been reported for sparse looped mixtures
+of experts (Wang et al., 2026). Our budget is stricter than
+any of these: both the tokens and the training FLOPs are the
+dense baseline’s, to the batch.
+Depth growth and upcycling.
+A parallel line reuses a
+trained model to initialise a larger one by stacking or du-
+plicating layers (Chen et al., 2015; Gong et al., 2019; Shen
+et al., 2022; Wang et al., 2023; Yao et al., 2024; Kim et al.,
+2024; Du et al., 2024), or by turning a dense checkpoint
+into a sparse one (Komatsuzaki et al., 2023). The origi-
+nal motivation is saving training FLOPs—Du et al. (2024)
+find depthwise stacking the most efficient operator, and the
+grown models of Kapl et al. (2025) reach the baseline’s final
+depth with roughly 77% of its training compute—and Saun-
+shi et al. (2024) then showed that duplicating in the middle
+of the stack carries an inductive bias toward reasoning, a
+view Kapl et al. (2026) extend into one picture of growing
+and looping as implicit versus explicit repetition. Closest to
+the control we need, Chen et al. (2026) grow a looped core
+with its weights either tied or untied at matched FLOPs and
+report that both improve the compute-optimal scaling expo-
+nent, untied ahead of tied by a constant factor; the choice
+of which block to duplicate also matters (Karp et al., 2024).
+Grown and upcycled models keep the duplicated weights
+independent and are dense at inference. Growth can stop at
+the baseline’s final depth, saving compute at fixed tokens,
+or use the saved compute to train on more tokens at fixed
+FLOPs. UpLoop spends the dense baseline’s budget exactly
+2
+
+
+UpLoop: Training Looped Transformers via Upcycling
+4
+8
+16
+20
+A
+Vanilla
+UpLoop
+training tokens
+(a) Same budget, reallocated
+0
+1
+2
+3
+0
+1
+2
+3
+4
+5
+6
+7
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+0
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+×2
+Dense-4
+Dense-8
+Dense-16
+Loop
+stack
+middle copy
+loop
+(b) Growth and loop operators
+Figure 3. Overview of UpLoop. (a) Ribbon thickness denotes the execution depth over training tokens. UpLoop runs shallower than
+Vanilla early in training and loops a middle block late, so the compute saved early (A) equals the extra compute spent on looping. (b)
+Each stage is initialised by copying layers of the previous stage; grey bands keep layers and blue bands copy them.
+and still ends up looped, which turns the comparison against
+that baseline into an equal-budget one.
+3. Preliminary
+We first formulate the problem of training looped language
+models under fixed token and training FLOP budgets (Sec-
+tion 3.1). We then review depth growth and looped Trans-
+formers (Section 3.2).
+3.1. Task Formulation
+A standard Transformer applies L layers sequentially:
+h(i) = Fθi
+
+h(i−1)
+,
+i = 1, . . . , L,
+(1)
+where Fθi denotes the i-th Transformer layer. A looped
+Transformer instead repeatedly applies a shared block Bϕ:
+z(k) = Bϕ
+
+z(k−1)
+,
+k = 1, . . . , r,
+(2)
+where z(0) is the block input and the parameters ϕ are shared
+across all r calls. Our goal is to train a looped language
+model with the same total training tokens D0 and training
+FLOPs C0 as a standard dense model.
+3.2. Depth Growth and Looped Transformers
+Depth growth expands a shallow Transformer by copying
+existing layers during training. To grow from d to d′ > d
+layers, each destination layer is initialized as:
+θ′
+i ←copy
+ θπ(i)
+
+,
+i = 1, . . . , d′,
+(3)
+where π(i) specifies the source layer. The copied layers are
+optimized independently after initialization. Using fewer
+layers early in training saves FLOPs relative to training the
+full-depth model throughout.
+Looping provides a way to scale computation in language
+models by repeatedly applying shared weights. This addi-
+tional computation can improve model performance while
+keeping the number of independent parameters fixed. How-
+ever, it also increases training FLOPs per token, making
+looping more expensive at the same token budget. This
+trade-off motivates using the computation saved during early
+shallow training to support later looping.
+4. Methodology
+We present UpLoop, a four-stage pretraining schedule that
+combines progressive depth growth with middle-block loop-
+ing, as shown in Figure 3. Specifically, UpLoop progres-
+sively expands a shallow Transformer through layer copying
+and trains the model at each depth before enabling shared-
+weight looping in the final stage. Through progressive depth
+growth and the allocation of training tokens across stages,
+UpLoop accommodates the additional computation required
+by looping while exactly matching the dense baseline in
+final parameter count, total training tokens, and analytical
+training FLOPs.
+UpLoop follows a four-stage training schedule with execu-
+tion depths:
+L
+4 →L
+2 →L →L + (r −1)m,
+(4)
+where L is the dense baseline’s depth, m is the shared mid-
+dle block’s depth, and r is its repetition count in the final
+stage. We first describe progressive depth growth (Sec-
+tion 4.1) and middle-block looping (Section 4.2), then de-
+scribe the training schedule (Section 4.3).
+3
+
+
+UpLoop: Training Looped Transformers via Upcycling
+4.1. Progressive Depth Growth
+To reuse learned parameters during depth growth, UpLoop
+initializes each deeper model by copying layers from the
+preceding stage. Specifically, the first growth transition
+stacks the L/4 Transformer layers twice to initialize an
+L/2-layer model. Each copy inherits both the layer weights
+and their corresponding Adam states, and the duplicated
+layers are subsequently optimized independently.
+To grow from L/2 to L layers, UpLoop preserves the head
+and tail and expands the middle block. Specifically, we
+partition the preceding model into three parameter blocks
+(ΘH, ΘB, ΘT), with depths (L/8, L/4, L/8), and initialize
+the next stage as:
+ΘL ←
+ ΘH, Θ[1]
+B , Θ[2]
+B , Θ[3]
+B , ΘT
+
+,
+(5)
+where each Θ[j]
+B is a separate copy of ΘB. As in the first
+transition, both layer weights and Adam states are copied,
+and all layers are subsequently optimized independently.
+4.2. Middle-Block Looping
+To increase execution depth without adding parameters,
+UpLoop enables middle-block looping after the full-depth
+dense stage. Specifically, we select m consecutive middle
+layers as a shared block Bϕ, with the remaining layers form-
+ing a head FH and a tail FT. The forward pass becomes:
+hout = FT
+ B◦r
+ϕ (FH(hin))
+
+,
+(6)
+where B◦r
+ϕ denotes r successive calls with shared weights,
+while the head and tail are each executed once. This tran-
+sition preserves all parameters and optimizer states while
+increasing execution depth to L + (r −1)m.
+4.3. Compute-Matched Training Schedule
+We compute UpLoop’s total training cost by summing the
+contributions of its four stages. Specifically, for stage j with
+Dj training tokens and execution depth dj, the total token
+count D and training FLOPs C are:
+D =
+4
+X
+j=1
+Dj,
+C =
+4
+X
+j=1
+Djf(dj),
+(7)
+where f(d) denotes the analytical training FLOPs per token
+at execution depth d. UpLoop’s stage allocation yields D =
+D0 and C = C0, preserving the dense baseline’s total token
+and training FLOP budgets while enabling greater execution
+depth in the final stage. The complete stage schedules and
+FLOP accounting are provided in Appendix A.
+UpLoop uses a common schedule across model scales.
+Specifically, the transitions to the second, third, and final
+stages occur after approximately 9.7%, 23.0%, and 44.3%
+of the total training tokens, respectively. Training proceeds
+on a continuous data stream, and the learning-rate sched-
+ule follows cumulative training tokens without restarting at
+stage boundaries.
+5. Experiments
+In this section, we begin by presenting the experimental
+setup (Section 5.1), followed by a comparison between
+UpLoop and the dense baseline under equal training tokens
+and FLOPs (Section 5.2.1).
+5.1. Experimental Setup
+Models and Datasets. We evaluate UpLoop through lan-
+guage modeling and downstream tasks across three model
+scales. (i) Pre-training. We pre-train decoder-only Trans-
+formers based on the OLMo 2 Ladder architecture (Team
+OLMo, 2025) on FineWeb-Edu (Penedo et al., 2024), with
+370M, 760M and 1.3B non-embedding parameters. All
+models are trained at 100 tokens per parameter, five times
+the Chinchilla token budget. At each scale, UpLoop and
+Vanilla use the same training tokens and total training
+FLOPs. Detailed model configurations and training bud-
+gets are provided in Appendix A. (ii) Downstream eval-
+uation.
+We evaluate the pretrained checkpoints using
+two benchmark suites. First, we evaluate all three model
+scales on eight zero-shot tasks: PIQA (Bisk et al., 2019),
+SIQA (Sap et al., 2019), HellaSwag (Zellers et al., 2019),
+WinoGrande (Sakaguchi et al., 2021), ARC-c (Clark et al.,
+2018), ARC-e (Clark et al., 2018), OBQA (Mihaylov et al.,
+2018) and BoolQ (Clark et al., 2019), using the standard
+prompts in lm-evaluation-harness (Sutawika et al., 2025).
+Second, we evaluate the 370M, 760M and 1.3B models on
+22 downstream tasks covering closed-book and open-book
+question answering, language understanding, math word
+problems and reasoning primitives, following Kapl et al.
+(2026). The mathematics and reasoning primitive tasks use
+five-shot evaluation. Detailed evaluation protocols and ag-
+gregation rules are provided in Appendix C. (iii) Language
+modeling. We evaluate language modeling performance us-
+ing negative log-likelihood (NLL) on a fixed held-out set of
+2,048 FineWeb-Edu (Penedo et al., 2024) sequences, each
+containing 4,096 tokens, shared across all models.
+Baselines. We compare UpLoop with the following base-
+lines: (i) VANILLA, a standard dense Transformer following
+OLMo 2; (ii) Loop from scratch, a model trained with
+the looped architecture throughout training, starting from
+random initialization; (iii) Loop with dense initialization,
+which first trains a full-depth dense model and then con-
+tinues training with looping; (iv) Dense-20, which uses in-
+dependent layers to match UpLoop’s final execution depth,
+with either matched training tokens or matched training
+FLOPs; and (v) LIDAS, which progressively grows a dense
+4
+
+
+UpLoop: Training Looped Transformers via Upcycling
+Table 1. Zero-shot accuracy (%) of UpLoop and Vanilla from 370M to 1.3B parameters with equal training tokens and FLOPs at each
+scale. See Appendix C for evaluation details.
+Scale
+Model
+OBQA WinoG. ARC-c ARC-e HellaSwag SIQA PIQA BoolQ Average
+370M Vanilla
+20.80†
+52.01†
+28.84
+62.75
+35.02
+38.69
+67.90
+57.37
+48.43
+UpLoop
+23.80†
+53.28†
+29.01
+63.22
+36.02
+40.17
+68.66
+61.62
+49.78
+760M Vanilla
+26.80†
+55.01
+32.17
+68.06
+39.67
+39.66
+70.78
+58.35
+51.96
+UpLoop
+26.20†
+55.17
+32.85
+69.57
+41.58
+42.07
+70.89
+62.51
+53.52
+1.3B
+Vanilla
+28.40†
+56.51
+37.54
+73.36
+43.21
+40.84
+73.12
+59.76
+54.91
+UpLoop
+30.40†
+57.85
+37.20
+73.23
+44.84
+42.37
+73.72
+66.06
+56.47
+model without looping and uses the saved compute to train
+on additional tokens. Detailed budget configurations are
+provided in Appendix E.
+5.2. LLM Pre-training
+5.2.1. RESULTS ACROSS MODEL SCALES
+Language Modeling. Figure 2 and Appendix Table A2
+compare UpLoop with Vanilla across three model scales,
+from 370M to 1.3B, under equal training token and FLOP
+budgets. UpLoop achieves lower NLL at all three scales. At
+370M, it reduces NLL from 2.78 to 2.74, while at 1.3B, NLL
+decreases from 2.43 to 2.40. These results demonstrate that
+UpLoop consistently improves language modeling across
+all model sizes under equal training budgets.
+Zero-shot Commonsense Reasoning. Table 1 reports zero-
+shot performance on eight benchmarks under equal training
+token and FLOP budgets. At 370M, 760M and 1.3B, Up-
+Loop improves average accuracy from 48.43% to 49.78%,
+from 51.96% to 53.52%, and from 54.91% to 56.47%, re-
+spectively. It outperforms Vanilla on all six eligible tasks at
+370M, all seven at 760M, and five of seven at 1.3B. These
+results show that the pretraining gains consistently translate
+into improved zero-shot performance across all evaluated
+model scales.
+Reasoning and Knowledge Evaluation.
+Table 2 compares UpLoop with Vanilla on 22 downstream
+tasks covering question answering, language understanding,
+mathematics and reasoning under equal training token and
+FLOP budgets. At 370M, 760M and 1.3B, UpLoop im-
+proves the average score from 18.95 to 20.90, from 21.38 to
+24.82, and from 22.99 to 27.52, respectively. It outperforms
+Vanilla on 13 of 13, 16 of 21, and 18 of 22 eligible tasks at
+the three scales. These results demonstrate that UpLoop im-
+proves overall downstream performance across all evaluated
+model scales.
+The largest gains in Table 2 occur on reasoning primitives,
+particularly variable assignment. At 1.3B, UpLoop im-
+proves accuracy from 58.10% to 91.10% on VarAssign-
+math and from 66.60% to 91.20% on VarAssign-code.
+Open-book question answering also benefits, with CoQA
+F1 increasing from 38.85 to 44.38 at the same scale. These
+results highlight UpLoop’s advantage in strengthening rea-
+soning and context-based question answering under equal
+training token and FLOP budgets.
+UpLoop also improves performance on math word prob-
+lems. At 1.3B, it outperforms Vanilla on all six eligible
+benchmarks, increasing average accuracy from 5.35% to
+7.55%. For example, accuracy improves from 6.18% to
+9.94% on ASDiv and from 4.43% to 7.20% on MAWPS
+SingleEq. These results show that UpLoop’s benefits extend
+to mathematical reasoning under equal training budgets.
+5.2.2. COMPARISON WITH ALTERNATIVE TRAINING
+STRATEGIES
+To assess the contributions of staged growth and looping,
+we compare UpLoop with looping, dense and depth-growth
+baselines at 370M. All methods use the same model width
+and optimization recipe; Table 3 summarizes their parameter
+counts, training token budgets, training FLOPs and NLL.
+Looping Baselines. Table 3 compares UpLoop with Loop
+from scratch and Loop with dense initialization at the same
+parameter count and training token budget. All three models
+share the same final looped architecture. The two baselines
+require 1.20× and 1.11× the training FLOPs of UpLoop,
+respectively, and both achieve an NLL of 2.76, compared
+with 2.74 for UpLoop. These results show that UpLoop’s
+staged schedule improves language modeling with fewer
+training FLOPs.
+Dense and Growth Baselines. We compare UpLoop with
+two Dense-20 settings, both using 20 independent layers
+to match its final execution depth. Dense-20 (Iso-FLOPs)
+matches UpLoop’s training FLOP budget, uses 0.83× the
+training tokens, and achieves an NLL of 2.76, compared
+with 2.74 for UpLoop. Dense-20 (Iso-Tokens) matches the
+training token budget and achieves an NLL of 2.74, requir-
+ing 1.20× the training FLOPs. Both Dense-20 settings use
+438M non-embedding parameters, compared with 371M for
+UpLoop. These results highlight UpLoop’s advantage in
+achieving lower NLL with fewer parameters under a fixed
+5
+
+
+UpLoop: Training Looped Transformers via Upcycling
+Table 2. Downstream performance of UpLoop and Vanilla on knowledge, language, mathematics and reasoning tasks with equal training
+tokens and FLOPs at each scale. See Appendix C for evaluation details.
+370M
+760M
+1.3B
+Task
+Vanilla
+UpLoop
+Vanilla
+UpLoop
+Vanilla
+UpLoop
+Closed-book question answering
+TriviaQA
+13.36
+13.72
+20.75
+20.99
+22.24
+20.79
+TyDiQA-NoContext
+8.66
+8.81
+13.36
+12.39
+12.71
+12.84
+NaturalQuestions
+5.10
+5.53
+7.93
+8.69
+9.43
+9.04
+WebQuestions
+10.85
+11.17
+14.67
+16.76
+17.13
+15.00
+Open-book question answering
+TyDiQA-GoldP
+15.17
+16.46
+18.22
+22.48
+22.44
+22.28
+SQuADv2
+6.35†
+7.01†
+9.49
+10.70
+11.09
+11.52
+DROP
+7.09
+7.60
+8.70
+10.74
+10.12
+12.18
+QuAC
+23.04
+24.88
+27.46
+29.32
+30.59
+32.72
+CoQA
+27.51
+29.12
+34.20
+38.93
+38.85
+44.38
+Language understanding
+LAMBADA
+34.02
+34.58
+40.44
+42.89
+45.57
+49.49
+HellaSwag
+42.60
+44.93
+50.34
+53.46
+56.40
+59.00
+Math word problems
+SVAMP
+1.61†
+2.01†
+3.52
+3.92
+5.03
+5.93
+ASDiv
+1.97
+2.52
+5.73
+5.13
+6.18
+9.94
+MAWPS AddSub
+1.39†
+1.39†
+3.88
+2.77
+3.60
+5.82
+MAWPS MultiArith
+2.96†
+4.52†
+4.52
+4.70
+4.70
+5.57
+MAWPS SingleOp
+1.14†
+2.66†
+4.37
+7.79
+8.17
+10.84
+MAWPS SingleEq
+0.83†
+0.83†
+2.49†
+3.88†
+4.43
+7.20
+Reasoning primitives
+Copying (random words)
+11.60†
+12.90†
+15.50
+13.90
+18.60
+21.60
+Copying (real words)
+11.30†
+17.00†
+15.50
+17.40
+23.80
+27.50
+VarAssign-basic
+20.30†
+23.90†
+31.50
+28.00
+30.00
+39.60
+VarAssign-math
+28.10
+34.40
+59.90
+82.80
+58.10
+91.10
+VarAssign-code
+28.90
+38.00
+59.10
+87.50
+66.60
+91.20
+Average
+18.95
+20.90
+21.38
+24.82
+22.99
+27.52
+Valid tasks
+13/22
+21/22
+22/22
+Table 3. Comparison with alternative training strategies at 370M.
+Training tokens and FLOPs are normalized to UpLoop.
+Model
+Params. Tokens FLOPs NLL ↓
+Vanilla
+371M
+1.00×
+1.00×
+2.78
+Loop from scratch
+371M
+1.00×
+1.20×
+2.76
+Loop with dense
+initialization
+371M
+1.00×
+1.11×
+2.76
+Dense-20
+(Iso-FLOPs)
+438M
+0.83×
+1.00×
+2.76
+Dense-20
+(Iso-Tokens)
+438M
+1.00×
+1.20×
+2.74
+LIDAS (Iso-FLOPs)
+(Kapl et al., 2025)
+371M
+1.20×
+1.00×
+2.75
+UpLoop
+371M
+1.00×
+1.00×
+2.74
+training FLOP budget.
+We further compare UpLoop with LIDAS (Iso-FLOPs),
+which progressively grows a dense model without looping.
+With training FLOPs and parameter count matched, LIDAS
+uses 1.20× the training tokens and achieves an NLL of 2.75,
+compared with 2.74 for UpLoop. This result shows that
+UpLoop achieves lower NLL with fewer training tokens
+than the growth-only baseline.
+5.3. Supervised Fine-tuning on GSM8K
+We evaluate whether UpLoop’s pretraining gains carry over
+to supervised fine-tuning on GSM8K. We fine-tune the 1.3B
+Vanilla and UpLoop models for three epochs using the same
+training data and optimization hyperparameters, retaining
+UpLoop’s shared-weight architecture during full-parameter
+fine-tuning. As shown in Table 4, UpLoop improves exact-
+match accuracy from 8.72% to 12.05% under zero-shot
+evaluation and from 5.46% to 8.11% under five-shot eval-
+uation. These results demonstrate that UpLoop’s benefits
+extend to task-specific fine-tuning. Detailed training and
+evaluation settings are provided in Appendix D.
+6
+
+
+UpLoop: Training Looped Transformers via Upcycling
+Table 4. GSM8K exact-match accuracy after supervised fine-
+tuning at 1.3B parameters. Experimental details are provided
+in Appendix D.
+Model
+Params.
+Zero-shot (%) ↑
+Five-shot (%) ↑
+Vanilla
+1.3B
+8.72
+5.46
+UpLoop
+1.3B
+12.05
+8.11
+5.4. Further Analysis
+To understand these performance gains, we further analyze
+the final pretrained models. We first compare UpLoop with
+the looping baselines in gradient alignment across calls
+and the propagation of state perturbations, then examine
+functional inheritance and differentiation after depth growth,
+and finally analyze contextual retrieval performance and the
+contribution of second-pass reading to answer formation.
+Experimental details are provided in Appendix G.
+More aligned gradients across calls. To assess the compat-
+ibility of optimization demands across calls, we isolate the
+gradient contributions of the two calls to each shared layer
+at the final checkpoint and compute their cosine similarity.
+Figure 4 shows that UpLoop achieves a mean gradient co-
+sine of 0.586, compared with 0.510 for Loop with dense
+initialization and 0.374 for Loop from scratch, indicating
+more aligned update directions for shared parameters across
+calls.
+UpLoop
+Loop with dense
+initialization
+Loop from
+scratch
+0.0
+0.2
+0.4
+0.6
+0.8
+Gradient cosine
+0.586
+0.510
+0.374
+Figure 4. Gradient alignment across calls. In the final 370M
+models, bars show mean cosine similarity between prediction-loss
+gradients from two calls to each shared layer, averaged over four
+shared layers and 12 windows.
+More robust propagation of state deviations. We inject
+a small state perturbation after the first call to the shared
+block and measure the distance between the perturbed and
+unperturbed trajectories. As shown in Table 5, after the
+normal two calls to the shared block, UpLoop reduces this
+distance to 0.867 times the initial perturbation distance,
+compared with 0.933 for Loop with dense initialization and
+0.923 for Loop from scratch. When execution is extended
+to eight calls, all three models amplify the tested deviations,
+with UpLoop showing the least amplification.
+Table 5. Perturbation propagation. In the 370M models, we
+inject a single perturbation after the first call to the shared block
+and report trajectory distance divided by the initial perturbation
+distance. Results average 512 windows after the normal two calls
+and an extended eight calls to the shared block.
+Model
+Normal
+2 calls ↓
+Extended
+8 calls ↓
+UpLoop
+0.867
+1.906
+Loop with dense initialization
+0.933
+2.965
+Loop from scratch
+0.923
+2.644
+Functional inheritance and differentiation after depth
+growth. UpLoop increases depth by copying existing layers,
+allowing the added layers to continue training from previ-
+ously learned parameters. In 370M UpLoop, distinct layers
+copied from the same source at the final growth transition
+have a mean weight cosine similarity of 0.383 at the end
+of training, down from 1 at initialization and substantially
+above 0.024 for the remaining layer pairs. Thus, the layers
+produced by depth growth develop distinct parameter con-
+figurations while retaining relationships inherited from their
+common source.
+To examine how ancestry relates to layer function, we trace
+each layer through the full growth history to its initial source
+and compare substitutions within and across ancestry groups.
+A replacement layer processes the target layer’s input, and
+its attention or feed-forward (MLP) update replaces the orig-
+inal after tokenwise norm matching. Figure 5 shows that
+substitutions between layers sharing an initial ancestor incur
+mean ∆NLLs of 0.0288 and 0.0545 for attention and MLP,
+respectively, compared with 0.0985 and 0.0979 for layers
+with different ancestors. The lower yet nonzero substitu-
+tion costs among layers with shared ancestry indicate that
+these layers retain a common computational basis while
+developing distinct computations.
+Contextual retrieval and second-pass reading. We fur-
+ther analyze VarAssign-math and VarAssign-code, which
+show substantial gains in Table 2, referring to them as Math
+and Code, respectively. Both tasks present five variable
+assignments and ask for the value of a queried variable.
+Figure 6 reports their equally weighted mean accuracy by
+target assignment position. For targets among the first four
+assignments, UpLoop achieves 83.6% and 88.6% at 760M
+and 1.3B, respectively, compared with 52.5% and 54.7%
+for Vanilla; the corresponding gains for the final assignment
+are 6.9 and 11.0 percentage points. UpLoop thus narrows
+the accuracy gap between earlier and final assignments.
+To examine the role of repeated execution, we block atten-
+tion from the query portion to the target value in all four
+7
+
+
+UpLoop: Training Looped Transformers via Upcycling
+Attention
+MLP
+0.00
+0.04
+0.08
+0.12
+NLL increase
+0.0288
+0.0545
+0.0985
+0.0979
+Same ancestor
+Different ancestor
+Figure 5. Layer substitution. In 370M UpLoop, bars show
+mean ∆NLL relative to native execution for substitutions between
+distinct layers with shared or different initial ancestry. Attention or
+MLP updates in the first call to the shared block are replaced using
+the same input and tokenwise norm matching. Results average 64
+windows.
+First 4
+Last
+First 4
+Last
+0
+25
+50
+75
+100
+Average accuracy (%)
+52.5
+83.7
+54.7
+89.0
+83.6
+90.6
+88.6
+100.0
+760M
+1.3B
+Vanilla
+UpLoop
+Figure 6. VarAssign accuracy by target position. First 4 and
+Last denote targets among the first four assignments and in the last
+of five assignments, respectively. Results equally average Math
+and Code, with 1,000 examples per task.
+layers of the shared block during its second call, using an
+unrelated value as the control. Table 6 shows that average
+accuracy decreases by 8.6 and 14.5 percentage points rela-
+tive to this control at 760M and 1.3B, respectively. These
+results show that the second call to the shared core sup-
+ports answer formation through target-information reading;
+Appendix F.3.2 compares the two core calls.
+6. Conclusion
+We presented UpLoop, a pretraining schedule that trains
+looped Transformers within a standard dense model’s pa-
+rameter, token, and training FLOP budgets. Specifically,
+UpLoop combined progressive depth growth with shared-
+weight looping, using computation saved during early shal-
+Table 6. UpLoop accuracy (%) under second-pass reading
+blocks. Native denotes unmodified execution; Target and Control
+block query access to the target and an unrelated value, respectively,
+in all four layers of the shared block during its second call. Results
+equally average Math and Code, with 128 examples per task. Drop
+is Control minus Target, in percentage points.
+Scale
+Native
+Control
+Target
+Drop (pp)
+760M
+84.8
+86.3
+77.7
+8.6
+1.3B
+89.1
+89.5
+75.0
+14.5
+low training to support repeated execution later. Experi-
+ments across three model scales showed improvements in
+language modeling and average downstream performance,
+with benefits extending to mathematical reasoning after
+supervised fine-tuning. Further analyses revealed more
+aligned gradients across shared calls, functional differentia-
+tion among copied layers, and improved contextual retrieval.
+These findings supported reallocating computation across
+training stages as an effective approach to training looped
+language models without additional pretraining compute.
+References
+Alabdulmohsin, I. and Zhai, X. Recursive inference scaling:
+A winning path to scalable inference in language and
+multimodal systems. Advances in Neural Information
+Processing Systems, 38:109020–109049, 2025.
+Bae, S., Fisch, A., Harutyunyan, H., Ji, Z., Kim, S., and
+Schuster, T. Relaxed recursive transformers: Effective pa-
+rameter sharing with layer-wise LoRA. In The Thirteenth
+International Conference on Learning Representations,
+2025a. URL https://openreview.net/forum?
+id=WwpYSOkkCt.
+Bae, S., Kim, Y., Bayat, R., Kim, S., Ha, J., Schuster, T.,
+Fisch, A., Harutyunyan, H., Ji, Z., Courville, A., and
+Yun, S.-Y. Mixture-of-recursions: Learning dynamic
+recursive depths for adaptive token-level computation.
+In The Thirty-ninth Annual Conference on Neural In-
+formation Processing Systems, 2025b. URL https:
+//openreview.net/forum?id=QuqsEIVWIG.
+Bisk, Y., Zellers, R., Bras, R. L., Gao, J., and Choi, Y.
+Piqa: Reasoning about physical commonsense in natural
+language, 2019. URL https://arxiv.org/abs/
+1911.11641.
+Chen, T., Goodfellow, I., and Shlens, J. Net2net: Accel-
+erating learning via knowledge transfer. arXiv preprint
+arXiv:1511.05641, 2015.
+Chen, Z., Vegesna, A., Dahal, S., and Wilson, A. G. How
+model growth, recursion, and boundary operators influ-
+8
+
+
+UpLoop: Training Looped Transformers via Upcycling
+ence scaling exponents, 2026. URL https://arxiv.
+org/abs/2609.19107.
+Clark, C., Lee, K., Chang, M.-W., Kwiatkowski, T., Collins,
+M., and Toutanova, K. Boolq: Exploring the surprising
+difficulty of natural yes/no questions, 2019. URL https:
+//arxiv.org/abs/1905.10044.
+Clark, P., Cowhey, I., Etzioni, O., Khot, T., Sabharwal, A.,
+Schoenick, C., and Tafjord, O. Think you have solved
+question answering? try arc, the ai2 reasoning challenge.
+arXiv preprint arXiv:1803.05457, 2018.
+Csord´as, R., Irie, K., Schmidhuber, J., Potts, C., and Man-
+ning, C. D. MOEUT: Mixture-of-experts universal trans-
+formers. Advances in Neural Information Processing
+Systems, 37:28589–28614, 2024.
+Dehghani, M., Gouws, S., Vinyals, O., Uszkoreit, J., and
+Kaiser, Ł. Universal transformers. In International Con-
+ference on Learning Representations, 2019.
+Du, W., Luo, T., Qiu, Z., Huang, Z., Shen, Y., Cheng, R.,
+Guo, Y., and Fu, J. Stacking your transformers: A closer
+look at model growth for efficient llm pre-training. In
+Globerson, A., Mackey, L., Belgrave, D., Fan, A., Paquet,
+U., Tomczak, J., and Zhang, C. (eds.), Advances in Neural
+Information Processing Systems, volume 37, pp. 10491–
+10540. Curran Associates, Inc., 2024.
+Geiping, J., McLeish, S. M., Jain, N., Kirchenbauer, J.,
+Singh, S., Bartoldson, B. R., Kailkhura, B., Bhatele, A.,
+and Goldstein, T. Scaling up test-time compute with latent
+reasoning: A recurrent depth approach. In The Thirty-
+ninth Annual Conference on Neural Information Pro-
+cessing Systems, 2025. URL https://openreview.
+net/forum?id=S3GhJooWIC.
+Gong, L., He, D., Li, Z., Qin, T., Wang, L., and Liu, T.
+Efficient training of BERT by progressively stacking. In
+International conference on machine learning, pp. 2337–
+2346. PMLR, 2019.
+He, D., Tu, S., Wang, K., Yin, L., and Liu, S. One LR
+doesn’t fit all: Heavy-tail guided layerwise learning rates
+for LLMs.
+In International Conference on Machine
+Learning, 2026. arXiv:2605.22297.
+Hoffmann, J., Borgeaud, S., Mensch, A., Buchatskaya, E.,
+Cai, T., Rutherford, E., Casas, D. d. L., Hendricks, L. A.,
+Welbl, J., Clark, A., et al. Training compute-optimal
+large language models. arXiv preprint arXiv:2203.15556,
+2022.
+Kapl, F., Angelis, E., H¨oppe, T., Maile, K., von Oswald,
+J., Scherrer, N., and Bauer, S. Do depth-grown models
+overcome the curse of depth? an in-depth analysis. arXiv
+preprint arXiv:2512.08819, 2025.
+Kapl, F., Angelis, E., Maile, K., von Oswald, J., and Bauer,
+S. From growing to looping: A unified view of iterative
+computation in LLMs. arXiv preprint arXiv:2602.16490,
+2026.
+Karp, S., Saunshi, N., Miryoosefi, S., Reddi, S. J., and
+Kumar, S. Landscape-aware growing: The power of a
+little LAG. arXiv preprint arXiv:2406.02469, 2024.
+Kim, S., Kim, D., Park, C., Lee, W., Song, W., Kim, Y.,
+Kim, H., Kim, Y., Lee, H., Kim, J., Ahn, C., Yang, S.,
+Lee, S., Park, H., Gim, G., Cha, M., Lee, H., and Kim,
+S. SOLAR 10.7B: Scaling large language models with
+simple yet effective depth up-scaling. In Yang, Y., Da-
+vani, A., Sil, A., and Kumar, A. (eds.), Proceedings of
+the 2024 Conference of the North American Chapter of
+the Association for Computational Linguistics: Human
+Language Technologies (Volume 6: Industry Track), pp.
+23–35, Mexico City, Mexico, June 2024. Association
+for Computational Linguistics. doi: 10.18653/v1/2024.
+naacl-industry.3.
+URL https://aclanthology.
+org/2024.naacl-industry.3/.
+Komatsuzaki, A., Puigcerver, J., Lee-Thorp, J., Ruiz, C. R.,
+Mustafa, B., Ainslie, J., Tay, Y., Dehghani, M., and
+Houlsby, N.
+Sparse upcycling: Training mixture-of-
+experts from dense checkpoints. In International Confer-
+ence on Learning Representations, 2023.
+Liang, C., Zhang, T., DU, W., Wu, J., Ma, C., Pu, S., Zhang,
+Y., Wang, Y., and Lin, Z.
+Asymmetric looped trans-
+formers: Fixed global representations for an iterative
+decoder, 2026.
+URL https://arxiv.org/abs/
+2610.28489.
+Mihaylov, T., Clark, P., Khot, T., and Sabharwal, A. Can
+a suit of armor conduct electricity?
+a new dataset
+for open book question answering.
+arXiv preprint
+arXiv:1809.02789, 2018.
+Muennighoff, N., Yang, Z., Shi, W., Li, X. L., Fei-Fei,
+L., Hajishirzi, H., Zettlemoyer, L., Liang, P., Cand`es,
+E., and Hashimoto, T. B. s1: Simple test-time scaling.
+In Proceedings of the 2025 Conference on Empirical
+Methods in Natural Language Processing, pp. 20275–
+20321, 2025.
+Penedo, G., Kydl´ıˇcek, H., Ben Allal, L., Lozhkov, A.,
+Mitchell, M., Raffel, C., Von Werra, L., and Wolf, T.
+The FineWeb datasets: Decanting the web for the finest
+text data at scale. In Advances in Neural Information Pro-
+cessing Systems, Datasets and Benchmarks Track, 2024.
+Prairie, H., Novack, Z., Berg-Kirkpatrick, T., and Fu, D. Y.
+Parcae: Scaling laws for stable looped language models.
+arXiv preprint arXiv:2604.12946, 2026.
+9
+
+
+UpLoop: Training Looped Transformers via Upcycling
+Sakaguchi, K., Bras, R. L., Bhagavatula, C., and Choi, Y.
+Winogrande: an adversarial winograd schema challenge
+at scale. Communications of the ACM, 64(9):99–106,
+2021.
+Sap, M., Rashkin, H., Chen, D., LeBras, R., and Choi, Y.
+Socialiqa: Commonsense reasoning about social interac-
+tions. arXiv preprint arXiv:1904.09728, 2019.
+Saunshi, N., Karp, S., Krishnan, S., Miryoosefi, S., Reddi,
+S. J., and Kumar, S. On the inductive bias of stacking
+towards improving reasoning. Advances in Neural Infor-
+mation Processing Systems, 37:71437–71464, 2024.
+Saunshi, N., Dikkala, N., Li, Z., Kumar, S., and Reddi, S. J.
+Reasoning with latent thoughts: On the power of looped
+transformers. In The Thirteenth International Conference
+on Learning Representations, 2025. URL https://
+openreview.net/forum?id=din0lGfZFd.
+Schwethelm, K., Rueckert, D., and Kaissis, G. How much is
+one recurrence worth? iso-depth scaling laws for looped
+language models.
+arXiv preprint arXiv:2604.21106,
+2026.
+Shen, S., Walsh, P., Keutzer, K., Dodge, J., Peters, M., and
+Beltagy, I. Staged training for transformer language mod-
+els. In Proceedings of the 39th International Conference
+on Machine Learning, volume 162, pp. 19893–19908.
+PMLR, 2022.
+Sutawika, L., Schoelkopf, H., Gao, L., Abbasi, B.,
+Biderman, S., Tow, J., ben fattori, Lovering, C.,
+farzanehnakhaee70, Phang, J., Thite, A., Fazz, Aflah,
+Niklas, Wang, T., sdtblck, nopperl, gakada, tttyuntian,
+researcher2, Etxaniz, J., Chris, Lee, H. A., Sinev, L., Kas-
+ner, Z., Stokes, K., Khalid, KonradSzafer, Hsu, J., and
+Kanekar, A. Eleutherai/lm-evaluation-harness: v0.4.9.1,
+August 2025. URL https://doi.org/10.5281/
+zenodo.16737642.
+Team OLMo.
+2 OLMo 2 furious.
+arXiv preprint
+arXiv:2501.00656, 2025.
+Wang, P., Panda, R., Hennigen, L. T., Greengard, P., Kar-
+linsky, L., Feris, R., Cox, D. D., Wang, Z., and Kim, Y.
+Learning to grow pretrained models for efficient trans-
+former training. In The Eleventh International Confer-
+ence on Learning Representations, 2023. URL https:
+//openreview.net/forum?id=cDYRS5iZ16f.
+Wang, S., Zhang, G., Luo, K., Wu, Y., Liu, S., Liu, J.,
+Huang, W., Yan, S., and Li, J. SMELT: Scaling laws
+for compute-matched MoE looped transformers. arXiv
+preprint arXiv:2609.01343, 2026.
+Wang, X., Li, B., Song, Y., Xu, F. F., Tang, X., Zhuge, M.,
+Pan, J., Song, Y., Li, B., Singh, J., et al. OpenHands:
+An open platform for AI software developers as gener-
+alist agents. In International Conference on Learning
+Representations, volume 2025, pp. 65882–65919, 2025.
+Xin, H., Ren, Z., Song, J., Shao, Z., Zhao, W., Wang, H.,
+Liu, B., Zhang, L., Lu, X., Du, Q., et al. DeepSeek-
+Prover-V1.5: Harnessing proof assistant feedback for
+reinforcement learning and Monte-Carlo tree search. In
+International Conference on Learning Representations,
+volume 2025, pp. 72274–72303, 2025.
+Yang, J., Jimenez, C., Wettig, A., Lieret, K., Yao, S.,
+Narasimhan, K., and Press, O.
+SWE-agent: Agent-
+computer interfaces enable automated software engineer-
+ing. Advances in Neural Information Processing Systems,
+37:50528–50652, 2024a.
+Yang, J., Lieret, K., Jimenez, C., Wettig, A., Khandpur, K.,
+Zhang, Y., Hui, B., Press, O., Schmidt, L., and Yang, D.
+SWE-smith: Scaling data for software engineering agents.
+Advances in Neural Information Processing Systems, 38,
+2025.
+Yang, L., Lee, K., Nowak, R. D., and Papailiopoulos,
+D.
+Looped transformers are better at learning learn-
+ing algorithms.
+In The Twelfth International Confer-
+ence on Learning Representations, 2024b. URL https:
+//openreview.net/forum?id=HHbRxoDTxE.
+Yao, Y., Zhang, Z., Li, J., and Wang, Y. Masked structural
+growth for 2x faster language model pre-training. In The
+Twelfth International Conference on Learning Represen-
+tations, 2024. URL https://openreview.net/
+forum?id=rL7xsg1aRn.
+Zellers, R., Holtzman, A., Bisk, Y., Farhadi, A., and Choi,
+Y. Hellaswag: Can a machine really finish your sentence?
+arXiv preprint arXiv:1905.07830, 2019.
+Zhu, R.-J., Wang, Z., Hua, K., Zhang, T., Li, Z., Que, H.,
+Wei, B., Wen, Z., Yin, F., Xing, H., et al. Scaling latent
+reasoning via looped language models. arXiv preprint
+arXiv:2510.25741, 2025.
+10
+
+
+UpLoop: Training Looped Transformers via Upcycling
+A. Scales, Budgets and Costs
+Table A1. (Pre-training setup). Shapes, budgets and hardware at the three scales. N counts every parameter except the input embedding
+and includes the untied LM head; the feed-forward width is 4h, the sequence length is 4096 at every scale, and a batch of B sequences is
+4096B supervised tokens. D0 is the token budget at 100 tokens per parameter rounded up to a whole global batch, and the peak learning
+rate is the OLMo 2 Ladder value for that width, used unchanged by every method in this paper. Warmup is given in updates and spans as
+many tokens as the model has parameters. MBS/GA is the micro-batch size and the number of gradient-accumulation steps, listed for
+the dense baseline and for UpLoop; the global batch, and therefore the optimizer step, is identical for both. †Only the 1.3B pair shards
+optimizer state (ZeRO-1).
+Scale
+N
+h
+L
+Batch (seq.)
+Updates
+D0
+Peak LR
+Warmup
+Dies
+MBS/GA (V, UpLoop)
+370M
+371,262,464
+1024
+16
+192
+47,209
+37.13 B
+7.8 × 10−4
+472
+64
+3/1, 1/3
+760M
+758,224,896
+1536
+16
+320
+57,848
+75.82 B
+6.1 × 10−4
+578
+64
+1/5, 1/5
+1.3B
+1,279,395,840
+2048
+16
+384
+81,342
+127.94 B
+5.2 × 10−4
+813
+64
+2/3, 2/3†
+Training budget accounting. At a fixed model width and
+sequence length, analytical training FLOPs per token are
+affine in execution depth, f(d) = κd + β, where κ is the
+per-layer cost and β is the depth-independent cost. Since
+P4
+j=1 Dj = D0, the difference from the dense baseline is:
+C −C0 = κ
+
+
+4
+X
+j=1
+Djdj −LD0
+
+.
+(8)
+Substituting the four execution depths from Equation 4,
+matching training FLOPs therefore requires:
+3L
+4 D1 + L
+2 D2 = (r −1)mD4.
+(9)
+The shallow-stage savings on the left exactly offset the loop-
+ing overhead on the right. Our experiments use L = 16,
+m = 4, and r = 2, giving 12D1 + 8D2 = 4D4. The four
+stage lengths in optimizer updates are (4560, 6305, 10054,
+26290) at 370M, (5588, 7726, 12318, 32216) at 760M, and
+(7857, 10863, 17325, 45297) at 1.3B. With the global batch
+fixed within each scale, all three integer schedules satisfy
+both budget equalities exactly.
+Hyperparameters.
+All pretraining experiments use
+AdamW with β = (0.9, 0.95), ϵ = 10−8 and weight de-
+cay 0.1 on every parameter except the input embedding,
+gradient clipping at 1.0, and an auxiliary z-loss of 10−5.
+The learning rate warms up linearly over as many tokens
+as the model has non-embedding parameters and then de-
+cays by a cosine to 10% of its peak; the schedule runs on
+a token clock that is identical for both arms, so a stage
+switch changes the architecture and never the learning rate.
+Peak learning rates are the Ladder values for each width
+(Table A1) and are not retuned for UpLoop, which is deliber-
+ate: the claim is about reallocating a budget, so the baseline
+keeps the configuration it was tuned for and UpLoop inherits
+it unchanged. Compute is BF16 with FP32 master weights
+and Adam states, and activation recomputation is off. We
+periodically evaluate held-out NLL during pretraining to
+monitor training dynamics. Downstream evaluations use the
+final checkpoint of each run. Every run uses seed 42 unless
+stated otherwise.
+Table A2. Held-out NLL at the end of training, at exactly equal
+tokens and equal training FLOPs; lower is better and bold marks
+the better arm at each scale. Values are the native training-time final
+validation scores; the FP32 conversion scores plotted in Figure 2(c)
+differ by less than 0.0002.
+Scale
+Vanilla
+UpLoop
+∆
+370M
+2.7770
+2.7430
+−0.0340
+760M
+2.5770
+2.5381
+−0.0389
+1.3B
+2.4332
+2.3982
+−0.0349
+Table A3. Inference FLOPs per token. UpLoop keeps L indepen-
+dent layers but executes L + 4.
+Scale
+Vanilla
+UpLoop
+Ratio
+370M
+1.01 × 109
+1.21 × 109
+1.199×
+760M
+1.92 × 109
+2.32 × 109
+1.210×
+1.3B
+3.10 × 109
+3.77 × 109
+1.217×
+11
+
+
+UpLoop: Training Looped Transformers via Upcycling
+Table A4. Category means at 370M over eligible tasks only. ∆is
+UpLoop −Vanilla. Average equally weights all 13 eligible tasks.
+Bold marks the better score in each row.
+Category (n valid)
+Vanilla UpLoop
+∆
+Closed-book Q&A (4)
+9.49
+9.81 +0.32
+Open-book Q&A (4)
+18.20
+19.51 +1.32
+LAMBADA (1)
+34.02
+34.58 +0.56
+HellaSwag (1)
+42.60
+44.93 +2.33
+Math word (1)
+1.97
+2.52 +0.55
+Reas. primitives (2)
+28.50
+36.20 +7.70
+Average (13)
+18.95
+20.90 +1.95
+B. Per-category and Per-task Downstream
+Results at 370M
+We report category-level and per-task results for the 370M
+models in Table 2, using the same eligible task set as the
+main text. Of the 22 tasks, 13 enter Average, yielding scores
+of 18.95 for Vanilla and 20.90 for UpLoop, an improve-
+ment of 1.95 points. Tables A4 and A5 report the category
+means and individual task scores, respectively. Tasks below
+the random-answer threshold are reported individually and
+excluded from category and overall averages.
+C. Downstream Evaluation Details
+Downstream accuracy in Figures 1 and 2 is the unweighted
+mean over six zero-shot benchmarks: ARC-c, ARC-e, Hel-
+laSwag, PIQA, SIQA and BoolQ. All six models exceed the
+random-answer threshold on these tasks, determined from
+1,000 simulations per task. The same six tasks are used at
+every scale. All results use final checkpoints and complete
+evaluation splits. Values above each pair in Figure 1 report
+UpLoop minus Vanilla in percentage points.
+Held-out NLL in Figure 2(c) is evaluated in FP32 on the
+same 2,048 held-out sequences using final checkpoints. In
+Figure 2(a), open markers indicate the last evaluation before
+each stage transition, and dotted segments show the corre-
+sponding NLL jumps. Black dashed segments in Figure 2
+connect models at the same scale.
+Evaluation implementation.
+Commonsense tasks use lm-
+evaluation-harness 0.4.9.1. Checkpoints are converted to
+the HuggingFace Olmo 2 format, with looping unrolled
+in its native execution order, and evaluated in FP32. The
+conversion reproduces the training-time held-out NLL to
+within 2 × 10−4. For the 22-task suite, blank lines are
+collapsed to single newlines to match the pretraining data
+format.
+Random-answer construction.
+Random-answer thresh-
+olds are determined from 1,000 simulations per task. An-
+swers are sampled uniformly from candidates for multiple-
+Table A5. Per-task downstream results at 370M with equal training
+tokens and FLOPs, aligned with Table 2. ∆is UpLoop −Vanilla.
+A dagger marks tasks excluded from all averages; bold marks the
+better score only for eligible tasks.
+Benchmark
+Vanilla
+UpLoop
+∆
+Closed-book question answering
+TriviaQA
+13.36
+13.72
++0.36
+TyDiQA-NoContext
+8.66
+8.81
++0.15
+NaturalQuestions
+5.10
+5.53
++0.43
+WebQuestions
+10.85
+11.17
++0.32
+Open-book question answering
+TyDiQA-GoldP
+15.17
+16.46
++1.29
+SQuADv2†
+6.35
+7.01
++0.66
+DROP
+7.09
+7.60
++0.51
+QuAC
+23.04
+24.88
++1.84
+CoQA
+27.51
+29.12
++1.61
+Language understanding
+LAMBADA
+34.02
+34.58
++0.56
+HellaSwag
+42.60
+44.93
++2.33
+Math word problems
+SVAMP†
+1.61
+2.01
++0.40
+ASDiv
+1.97
+2.52
++0.55
+MAWPS AddSub†
+1.39
+1.39
++0.00
+MAWPS MultiArith†
+2.96
+4.52
++1.57
+MAWPS SingleOp†
+1.14
+2.66
++1.52
+MAWPS SingleEq†
+0.83
+0.83
++0.00
+Reasoning primitives
+Copying (random words)†
+11.60
+12.90
++1.30
+Copying (real words)†
+11.30
+17.00
++5.70
+VarAssign-basic†
+20.30
+23.90
++3.60
+VarAssign-math
+28.10
+34.40
++6.30
+VarAssign-code
+28.90
+38.00
++9.10
+Average (13 valid of 22)
+18.95
+20.90
++1.95
+choice tasks, from passage spans for open-book QA, from
+randomly selected reference answers for closed-book QA
+and mathematics, and from context words for LAMBADA.
+All random answers use the corresponding task scorer.
+Main result tables.
+Table 1 reports zero-shot accuracy
+on the seven commonsense benchmarks used by He et al.
+(2026), together with BoolQ. Table 2 reports token F1 for
+question answering, length-normalized accuracy for Hel-
+laSwag, and accuracy for the remaining tasks, all on a 0–100
+scale. Question answering and LAMBADA are zero-shot;
+mathematics and reasoning primitives use five examples.
+VarAssign tasks use depth 0. At each scale, Average in-
+cludes all tasks for which both models exceed the random-
+answer threshold, based on 1,000 single-answer simulations.
+A dagger marks pairs excluded from Average; bold marks
+the best score within each scale, only for eligible pairs. The
+valid task counts are 6, 7 and 7 in Table 1, and 13, 21 and
+22 in Table 2. These averages differ from the fixed six-task
+average in Figures 1 and 2; averages over different task sets
+12
+
+
+UpLoop: Training Looped Transformers via Upcycling
+should not be used to compare scales.
+D. GSM8K Fine-tuning Details
+We fine-tune both 1.3B models on the official 7,473-example
+GSM8K training split for three epochs using AdamW, a peak
+learning rate of 2 × 10−5, six warmup steps followed by co-
+sine decay, and a global batch size of 128. Fine-tuning uses
+a maximum sequence length of 1,024 tokens, with no train-
+ing examples truncated. AdamW uses β = (0.9, 0.999),
+ϵ = 10−8, and zero weight decay. We supervise only the so-
+lution tokens and retain UpLoop’s shared-weight execution
+structure. Evaluation uses all 1,319 test examples, zero-shot
+greedy decoding without a calculator, a 512-token gener-
+ation limit, and exact matching of the numerical answer
+following ####. The fine-tuning compute is not matched.
+Both models exceed the random-answer bound of 1.74%,
+and UpLoop improves over Vanilla by 3.34 percentage
+points. The comparison uses one training seed (42).
+Five-shot evaluation uses five fixed chain-of-thought exam-
+ples sampled from the training split with seed 1234, keeping
+the checkpoints, decoding settings, and scoring rule un-
+changed. Both models score lower with five-shot prompting,
+while UpLoop retains a 2.65-point advantage.
+13
+
+
+UpLoop: Training Looped Transformers via Upcycling
+E. Additional Training-budget Comparisons
+Table A6. Training-budget configurations at 370M. Detailed configurations for the completed comparisons in Table 3. Every row shares
+VANILLA’s width, tokenizer, ordered data stream, global batch, peak learning rate, and seed (42); cosine decay spans each run’s own
+token budget. Loop with dense initialization first trains Dense-16 for 20,919 updates, followed by 26,290 updates with looping; the start
+and duration of the looping stage match UpLoop. N counts non-embedding parameters, and D0 and C0 are the dense baseline’s token
+and analytical training-FLOP budgets. LIDAS extends the data stream to match C0 within 0.00066% through whole-update rounding.
+Pays with
+Model
+Layers (unique/exec.)
+N
+D/D0
+C/C0
+NLL ↓
+—
+VANILLA, dense
+16 / 16
+371M
+1.000
+1.000
+2.7770
+training FLOPs
+Loop from scratch, Loop(6-4×2-6)
+16 / 20
+371M
+1.000
+1.199
+2.7587
+Dense-20 (Iso-Tokens)
+20 / 20
+438M
+1.000
+1.199
+2.7390
+Loop with dense initialization
+16 / 20
+371M
+1.000
+1.111
+2.7587
+tokens
+Dense-20 (Iso-FLOPs)
+20 / 20
+438M
+0.834
+1.000
+2.7608
+extra tokens
+LIDAS (Iso-FLOPs) (Kapl et al., 2025)
+16 / 16
+371M
+1.204
+1.000
+2.7514
+early depth
+UpLoop (ours): grow, then loop the block
+16 / 20
+371M
+1.000
+1.000
+2.7430
+F. Additional Mechanistic Analysis
+We further analyze the final pretrained models through cross-
+call output substitution, attention-component interventions,
+and task-specific information reading. The first two analyses
+compare the 370M UpLoop, Loop with dense initialization,
+and Loop from scratch models, which share the same final
+looped architecture. The contextual retrieval analysis uses
+760M and 1.3B UpLoop and Vanilla models. Experimental
+details are provided in Appendix G.
+F.1. Cross-call Output Compatibility
+Shared parameters process different hidden states across
+calls, motivating us to examine whether updates from the
+first call remain usable in the second. In each intervention,
+we replace the attention or MLP update at one second-call
+core layer with the update from its first call, match the native
+second-call norm tokenwise, and recompute the remaining
+network. Table A7 reports the mean ∆NLL across separate
+substitutions at the four core positions.
+UpLoop incurs substitution costs of 0.00919 for attention
+and 0.01929 for MLP, both lower than those of the two
+looping baselines. These results indicate greater functional
+compatibility between sublayer updates produced across
+calls in UpLoop.
+Table A7.
+Mean ∆NLL under cross-call update substitution.
+Second-call updates are replaced with first-call updates from the
+same shared layer after tokenwise matching to native second-call
+norms. Costs are averaged over four separate single-position substi-
+tutions within each window, then over 512 windows. Each window
+contains 512 tokens, with the final 128 scored.
+Model
+Attention
+MLP
+UpLoop
+0.00919
+0.01929
+Loop with dense initialization
+0.01427
+0.03426
+Loop from scratch
+0.02840
+0.05341
+F.2. Compatibility and Difference Propagation along the
+Value Path
+F.2.1. ATTENTION WEIGHTS AND VALUES
+To localize the components underlying attention-output com-
+patibility, we separately reuse first-call attention weights and
+value vectors, and additionally norm-match the reused val-
+ues. Figure 7 shows that norm-matched value reuse incurs
+a cost of 0.00352 in UpLoop, compared with 0.00809 for
+Loop with dense initialization and 0.01546 for Loop from
+scratch. Reusing attention weights alone yields a less dis-
+tinct difference between UpLoop and the former baseline.
+Values thus provide a clearer component-level instance of
+cross-call compatibility, with their lower substitution cost
+persisting after amplitude control.
+F.2.2. PROPAGATION OF SUBSTITUTION-INDUCED
+DIFFERENCES
+We next trace how differences introduced by old-value sub-
+stitution propagate through the forward path. Keeping native
+Q/K at the intervention site, we measure successive RMS
+ratios through attention averaging, output projection, output
+normalization, and the remaining network. Figure 8 shows
+an output-normalization gain of 0.261 for UpLoop, com-
+pared with 0.306 and 0.332 for the two baselines. From the
+normalized attention update to the final state, the respective
+gains are 1.708, 2.322, and 2.445.
+These measurements locate lower difference transmission at
+output normalization and subsequent propagation: along the
+changes induced by actual old-value substitution, UpLoop
+attenuates more at normalization and amplifies less through
+the remaining network. Output projection exhibits a differ-
+ent ordering across models, revealing distinct responses to
+substitution-induced differences across stages.
+14
+
+
+UpLoop: Training Looped Transformers via Upcycling
+A
+V
+V norm
+matched
+AV norm
+matched
+0.00
+0.01
+0.02
+NLL increase
+UpLoop
+Loop with dense initialization
+Loop from scratch
+Figure 7. Cross-call substitution of attention weights and values.
+A and V reuse first-call attention weights and values, respectively.
+V norm matched rescales reused values to current norms per token
+and head; AV norm matched combines reused attention weights
+with norm-matched values. Each condition averages separate inter-
+ventions at the four core positions over 64 windows.
+Attention
+averaging
+Output
+projection
+Output
+norm
+Remaining
+network
+0
+1
+2
+Output / input difference RMS
+UpLoop
+Loop with dense initialization
+Loop from scratch
+Figure 8. Stagewise transmission of differences induced by old-
+value substitution. Each point is the ratio of output-difference
+RMS to input-difference RMS for the corresponding stage. The
+remaining-network term measures transmission from changes in
+normalized attention updates to changes in final hidden states.
+Ratios are averaged across the four core positions within each
+window, then across 64 windows.
+F.3. Additional Evidence for Contextual Retrieval
+F.3.1. ANSWERS UNDER CHANGED VARIABLE
+BINDINGS
+Accurate contextual retrieval also requires answers to follow
+changes in variable bindings. We swap the values assigned
+to the target variable and another variable while keeping
+the query, variable set, and value set fixed, and measure the
+fraction of pairs answered correctly both before and after
+the swap. Table A8 shows that UpLoop achieves average
+paired accuracies of 77.7% and 83.2% at 760M and 1.3B,
+compared with 42.6% and 45.7% for Vanilla, indicating that
+its answers more reliably follow the current variable–value
+bindings.
+Table A8. Paired accuracy (%): the fraction of pairs answered
+correctly both before and after the swap. Each task has 128 pairs.
+Values are exchanged between the queried variable and the next
+assignment, wrapping from last to first, with the query, other
+assignments, demonstrations, and candidate set fixed. Average
+equally weights all eligible tasks, Math and Code.
+Scale
+Task
+Vanilla
+UpLoop
+760M
+Math
+39.8
+74.2
+Code
+45.3
+81.2
+Average
+42.6
+77.7
+1.3B
+Math
+34.4
+81.2
+Code
+57.0
+85.2
+Average
+45.7
+83.2
+F.3.2. TARGET READING ACROSS CORE CALLS
+Table A9 compares target-value reading between the two
+calls to the shared core in 1.3B UpLoop, blocking access
+in all four core layers within each call. The analysis uses
+the same 128 original examples per task as the swap ex-
+periment. Relative to blocking an unrelated value, target
+blocking yields an average accuracy loss of 0.0 percent-
+age points in the first call and 14.5 points in the second,
+with second-call losses of 14.1 and 14.8 points on Math
+and Code, respectively. These results show that the second
+call to the shared core supports answer formation through
+target-information reading.
+Table A9. Target reading across the two core calls in 1.3B UpLoop.
+Each condition blocks and renormalizes attention from the query
+suffix to the target-value token or an unrelated value token in all
+four core layers of the corresponding call. Values report control-
+block minus target-block accuracy in percentage points. Each task
+contains 128 examples. Average equally weights all eligible tasks,
+Math and Code.
+Task
+Core 1 (pp)
+Core 2 (pp)
+Math
+0.0
+14.1
+Code
+0.0
+14.8
+Average
+0.0
+14.5
+15
+
+
+UpLoop: Training Looped Transformers via Upcycling
+G. Further Analysis: Experimental Details
+Gradient statistics.
+For Figure 4, we unroll shared calls
+into independent copies with identical weights at the final
+checkpoint and backpropagate the prediction loss to obtain
+call-specific gradient contributions. Cosine similarity uses
+gradients over all parameters within each layer, averaged
+first over the four shared layers and then over 12 validation
+windows of 256 tokens each.
+State perturbations.
+For Table 5, we inject a single
+random-direction perturbation per token after the first core
+pass, with magnitude equal to 1% of its pre-core state norm.
+Trajectory distance is the mean tokenwise L2 distance be-
+tween the perturbed and unperturbed states, normalized by
+the distance immediately after perturbation. Results average
+512 windows.
+Layer substitution.
+For Figure 5, targets are the four first-
+pass core layers. Replacement layers are grouped by initial
+ancestry traced through the full growth history, excluding
+the target itself. Each replacement layer processes the tar-
+get layer’s input, and its attention or MLP update replaces
+the original after tokenwise norm matching. Each of the
+64 windows contains 256 tokens, with the final 64 scored.
+Substitution costs are averaged within each ancestry group
+per window, then across windows.
+VarAssign position groups.
+Position analysis in Figure 6
+uses all 1,000 examples per task from the main evaluation,
+grouping targets in the first four assignments and the final
+assignment. Each group uses the same random-answer cri-
+terion as the main text, with eligible tasks weighted equally.
+Math and Code are eligible in every group and both enter
+the average. Reading blocks and binding swaps use 128
+examples per task.
+Reading blocks.
+For Table 6, attention from all tokens at
+and after the query start to the target-value token is blocked
+in all four core layers during the second call and renormal-
+ized over the remaining positions. The control blocks an
+unrelated value token in the same example. Each task uses
+the same 128 original examples as the variable-binding swap
+experiment in Appendix F.3.1.
+16

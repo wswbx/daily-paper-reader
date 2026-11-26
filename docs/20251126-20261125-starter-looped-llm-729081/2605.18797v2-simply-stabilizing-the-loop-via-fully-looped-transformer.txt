@@ -1,0 +1,1345 @@
+Simply Stabilizing the Loop via
+Fully Looped Transformer
+Rao Fu1∗, Zixuan Yang2, Jiankun Zhang2, Jing Ma1, Hechang Chen2, Yu Li2, and Yi Chang2
+1Hong Kong Baptist University, 2Jilin University
+Abstract
+Scaling model performance typically requires increasing model size. Looped Trans-
+former offers a compelling alternative by iteratively reusing the same Transformer
+blocks, trading additional computation for improved performance without increas-
+ing parameter count or context length. Because the number of loop iterations
+can be adjusted at inference, it also provides a natural mechanism for balancing
+performance and test-time compute. However, Looped Transformer still suffers
+from training instability when the number of loop iterations increases. Our anal-
+ysis reveals that this instability stems from two sources: gradient oscillation and
+residual explosion. To address these two problems, we propose the Fully Looped
+Transformer, which introduces two parameter-free modifications: (1) Fully Looped
+Architecture, which distributes inter-loop signals across all layers to mitigate resid-
+ual explosion; (2) Attention Injection, which reuses the existing attention block
+to suppress gradient oscillation. These modifications stabilize training dynamics,
+enabling the Fully Looped Transformer to be trained stably up to 12 loop itera-
+tions, whereas other baseline looped models collapse in this regime. In milder
+settings where Looped Transformer does not collapse, Fully Looped Transformer
+still improves average downstream-task performance by up to 13.2%. Overall,
+our experiments demonstrate that Fully Looped Transformer improves training
+stability, enhances downstream performance, and provides preliminary adaptability
+under different test-time compute budgets by varying loop iterations at inference.
+1
+Introduction
+Large language models (LLMs) demonstrate excellent generalization capabilities across numerous
+downstream tasks through pretraining on massive text corpora from the internet. However, this
+scaling paradigm is increasingly constrained by the limited supply of high-quality public text data.
+According to the Chinchilla scaling law [Hoffmann et al., 2022], model parameters and training
+data should scale proportionally. Simply increasing model size without a corresponding increase in
+data leads to suboptimal training results. Meanwhile, Villalobos et al. [2024] show that the stock of
+public human-generated text data available for LLM pretraining grows at only 10% per year, while
+the dataset sizes used in practice have been growing at approximately 2.4× per year. This growing
+mismatch between data availability and computational capacity calls for new paradigms that can
+convert excess compute into performance gains without relying on ever-larger datasets.
+Several research directions have been explored to address this challenge. One line of work focuses on
+improving data quality through rephrasing entire corpora [Niklaus et al., 2026], but this approach still
+fundamentally depends on the availability of high-quality data. Another promising direction is test-
+time scaling, where reinforcement learning is used to elicit extended chain-of-thought reasoning [Wei
+et al., 2023] at inference time [team et al., 2024, Guo et al., 2025]. Despite its strong empirical
+performance, this paradigm often increases the context length and inference cost substantially.
+∗Correspondence to csraofu@comp.hkbu.edu.hk
+Preprint.
+arXiv:2605.18797v2  [cs.LG]  25 May 2026
+
+
+Figure 1: The comparison of Looped Transformer (LT) and Fully Looped Transformer (FLT). FLT
+uses Fully Looped Architecture, where all layers participate in the loop, and employs Attention
+Injection to reintroduce the residual flow generated in the previous iteration into the model by reusing
+the Self-Attention block as a Cross-Attention block. We use the causal mask in all attention blocks.
+A complementary way to convert additional computation into performance is to provide the model
+with a looping mechanism. Looped Transformer [Giannou et al., 2023] follows this direction by
+iteratively reusing the same Transformer backbone blocks. Instead of increasing the model parameter
+count or expanding the context window, it unrolls the same shared blocks for multiple loop iterations.
+By virtue of the looping mechanism, Looped Transformer is parameter-efficient [Saunshi et al., 2025],
+naturally compatible with test-time compute adjustment [Koishekenov et al., 2025] and excels at
+reasoning tasks [Saunshi et al., 2025].
+However, despite these advantages, Looped Transformer remains difficult to train when the number
+of loop iterations becomes large [Geiping et al., 2025, Zhu et al., 2025]. We also observe the same
+issue in our experiments: simply increasing the loop iterations of Looped Transformer can lead to
+training collapse. This motivates us to examine the training dynamics of Looped Transformer. Our
+diagnosis identifies two instability patterns. First, gradients can oscillate strongly during the early
+stage of training. Second, the residual-state norm can grow rapidly as loop iterations increase. We
+refer to these two phenomena as gradient oscillation and residual explosion, respectively.
+Based on this diagnosis, we propose the Fully Looped Transformer, a simple parameter-free im-
+provement of Looped Transformer. It consists of two modifications: (1) Fully Looped Architecture,
+which distributes the recurrent signal to all layers and mitigates residual explosion, and (2) Attention
+Injection, which reuses the existing attention block to inject recurrent information in a controlled
+manner and suppress gradient oscillation. Together, these two modifications stabilize training without
+introducing additional learnable parameters.
+Our main contributions are three-fold: (1) We diagnose the training instability of Looped Trans-
+former and identify two associated phenomena: gradient oscillation and residual explosion. (2)
+We propose the Fully Looped Transformer, a simple yet effective improvement that can be trained
+stably without adding any parameters. (3) Through loop-scaling and ablation experiments, we show
+that Fully Looped Transformer trains stably in regimes where baseline looped models collapse,
+improves downstream-task average performance by up to 13.2%, and provides preliminary evidence
+of adaptability to different inference-time compute budgets. Our code is available at GitHub.
+2
+
+
+2
+Related Work
+2.1
+Weight-Sharing Models
+Many recurrent or looped language models can be conceptualized as weight-sharing architectures,
+leveraging a foundational technique to enhance parameter efficiency in deep neural networks. Uni-
+versal Transformer [Dehghani et al., 2019] first extends this idea to the Transformer architecture by
+repeatedly applying the same backbone network across layers, enabling models to perform iterative
+refinement and endowing Transformers with the ability to simulate general computational processes.
+Looped Transformer [Giannou et al., 2023] simplifies this idea by using a more general decoder-only
+Transformer architecture. A large body of existing work [Saunshi et al., 2025, Geiping et al., 2025,
+Koishekenov et al., 2025] has demonstrated the significant advantages of Looped Transformer in
+test-time scaling and reasoning tasks. Concurrently, Parcae [Prairie et al., 2026] tried to address
+looped model instability via a dynamical systems framework to constrain the spectral norm of the
+residual state. In contrast, our work introduces a general architectural modification that requires no
+additional learnable parameters or computational overhead, allowing it to be integrated into existing
+Transformer architectures [Vaswani et al., 2023] with minimal changes.
+2.2
+Training Difficulties in Recurrent Models
+Training difficulties in deep recurrent models are long-standing, with the most critical being the
+gradient explosion and vanishing gradient problems. Bengio et al. [1994] systematically pointed
+out that when training recurrent networks using backpropagation through time (BPTT), the gradient
+signal decays or explodes exponentially with each time step, making it difficult for the model to
+learn long-range dependencies. Pascanu et al. [2013] further analyzed the sources of this problem
+theoretically and proposed mitigation strategies such as gradient clipping. LSTM [Hochreiter and
+Schmidhuber, 1997] and GRU [Cho et al., 2014] introduced gating mechanisms to address this
+issue, effectively alleviating the problem by selectively filtering and controlling the information flow.
+However, in the context of Looped Transformer, these challenges persist. Because the model uses a
+shared-weight looped structure, it is essentially equivalent to an extremely deep recurrent network,
+making gradient stability a core challenge in training once again.
+3
+Diagnosing the Instability of Looped Transformer
+Previous studies show that increasing the number of loop iterations can substantially make LT harder
+to train [Geiping et al., 2025, Zhu et al., 2025], but they do not explain the cause of such instability. To
+investigate this failure mode, we examine the early training dynamics of LT before full convergence.
+In our diagnostic runs, the relevant instability already appears during the early stage of optimization,
+so we use the first 2000 optimizer steps as a diagnostic window2. In Figure 2, we compare LT models
+with 6, 9, and 12 loop iterations using the same 6-layer Transformer backbone, and include a 12-loop
+Fully Looped Transformer (FLT) as a stable control. All models use the same pretraining setup. We
+monitor three quantities: training loss, residual-state norm, and gradient L2 norm of the first FFN
+block. Additional experiment results and training details are provided in Appendix A.1.1 and A.2.
+We define training collapse as a failure mode where the model can no longer produce a usable
+checkpoint for evaluation. In practice, this includes entering a persistent high-loss plateau, showing
+severe loss fluctuations, or producing validation performance that is unusable. Under this definition,
+the 12-loop LT collapses in the early diagnostic run: after an initial decrease, its training loss stops
+improving and remains at a high plateau, while its residual-state norm continues to increase. Beyond
+this collapsed case, the loss curves also reveal a milder but consistent optimization difficulty for LT.
+As the number of loop iterations increases from 6 to 9, LT does not immediately collapse, but a clear
+loss gap emerges: the 9-loop LT maintains a higher training loss than the 6-loop LT throughout most
+of the diagnostic window. This indicates that increasing the loop count already makes optimization
+harder even before an outright high-loss plateau appears. In contrast, the 12-loop FLT remains stable
+throughout the same 2000 steps window, with smoother loss reduction, smaller residual-state norms,
+and more stable gradient dynamics. Based on these observations, we propose two hypotheses:
+2This window is used only to identify the onset and persistence of training instability; final performance comparisons are
+conducted with fully trained models in Section 5.
+3
+
+
+Figure 2: Training dynamics of LT and FLT during the first 2000 optimizer steps. Left: residual-state
+norm. Middle: training loss, smoothed with a factor of 0.9 for readability. Right: gradient L2 norm
+of the first FFN block.
+Gradient oscillation may contribute to early optimization difficulty. Looped Transformer repeat-
+edly applies the same Transformer backbone across loop iterations, making its training dynamics
+similar to those of recurrent models optimized through BPTT algorithm [Werbos, 2002]. Although the
+number of loop iterations is much smaller than the number of time steps in conventional long-sequence
+RNNs, gradients can still accumulate through the shared looped blocks. We therefore hypothesize
+that this loop-wise gradient accumulation is one possible source of early gradient oscillation, which
+makes optimization more sensitive and increases the likelihood of entering unstable training regimes.
+Residual explosion may become a bottleneck in highly looped settings. Looping a fixed-depth
+backbone increases the effective recurrent depth of the computation graph, meaning that unrolling the
+looped model during training makes it equivalent to a much deeper model on the computation graph.
+Under this view, even a mild amplification of residual states at each loop iteration can accumulate
+across repeated applications of the same shared layers. We therefore hypothesize that highly looped
+LT can develop residual amplification in the recurrent dimension, resulting in residual explosion.
+Since this phenomenon persists beyond the initial transient, we treat it as a separate instability pattern
+that may not fully explain early collapse by itself, but can become a major optimization bottleneck
+when the loop count is large.
+Overall, the early diagnostic results reveal two instability patterns in LT training: gradient oscillation
+during the early optimization phase and residual explosion at high loop counts. These observations
+motivate the design choices introduced in the next section, where we aim to stabilize looped training
+without adding learnable parameters.
+4
+Fully Looped Transformer
+In Section 3, we identified two patterns associated with Looped Transformer’s (LT) training instability:
+gradient oscillation and residual explosion. We design Fully Looped Transformer (FLT) to mitigate
+these two problems. FLT introduces two improvements: (1) Fully Looped Architecture (FLA) and
+(2) Attention Injection (AI). Figure 1 shows a comparison of the overall architectures between FLT
+and LT, as well as the specific implementations of FLA and AI in FLT.
+4.1
+Fully Looped Architecture
+Although all of our models already incorporate RMSNorm [Zhang and Sennrich, 2019] in each layer
+to regulate the output residual states, residual explosion still occurs. This suggests that normalization
+alone is insufficient, and that the issue must be addressed from a deeper structural perspective.
+In Section 3, we suggest that residual explosion may be due to a large effective recurrent depth of the
+model, which poses similar optimization challenges as extremely deep neural networks. Extremely
+deep neural networks require shortcut connections like residual connections [He et al., 2016] to
+alleviate their optimization difficulties. Veit et al. [2016] indicate that residual connections can help
+optimize deep models because they are equivalent to reducing the depth of the model during the
+optimization process. Inspired by these studies, we aim to design a residual connections that works in
+the recurrent dimension to mitigate the optimization difficulties related to effective recurrent depth.
+4
+
+
+We propose Fully Looped Architecture (FLA) as a recurrent connectivity pattern. In vanilla Looped
+Transformer, the output of the previous loop iteration is passed only to the first layer of the next
+iteration. As a result, layers at larger depth can access the recurrent state only through a long chain
+of intermediate transformations. FLA changes this by making the previous loop output available to
+every layer in the current iteration. Formally, let h(t−1)
+L
+denote the output hidden state of the previous
+loop iteration. For each layer l in the current iteration t, FLA defines the layer update as:
+h(t)
+l
+= f (l)
+θ
+
+h(t)
+l−1, h(t−1)
+L
+
+,
+l = 1, . . . , L,
+(1)
+Here, f (l)
+θ
+denotes the l-th Transformer layer equipped with a fusion operation that incorporates
+h(t−1)
+L
+. FLA itself only specifies the recurrent connectivity; it does not prescribe how the previous
+loop state should be fused into each layer. In our ablations, we consider a direct residual-addition
+implementation, denoted FLTres. In the complete Fully Looped Transformer, we implement this
+fusion using Attention Injection, which is described in the next subsection.
+4.2
+Attention Injection
+In Section 3, we observed abnormal gradient dynamics during the early stage of pretraining. These
+dynamics are consistent with the difficulty of RNNs trained with the BPTT algorithm. Gradient
+clipping [Pascanu et al., 2013] is a common practical mitigation, but it operates as an optimization-
+level intervention and introduces an additional threshold hyperparameter. Here, we instead explore
+an architectural mechanism that controls the recurrent signal.
+LSTM [Hochreiter and Schmidhuber, 1997] and GRU [Cho et al., 2014] mitigate the gradient explo-
+sion problem through gating mechanisms. A key role of these gates is to modulate the information
+in residual flow within a bounded range, which helps control the magnitude of propagated signals
+and gradients. Inspired by this principle, we propose Attention Injection (AI), which reuses the
+Self-Attention module as a Cross-Attention module to inject the previous loop iteration’s hidden state
+into the current loop step. Instead of adding h(t−1)
+L
+directly into the residual flow, AI uses it as the
+query of an attention operation. The current layer representation provides the keys and values. In this
+way, the previous loop state determines which information to retrieve, but the injected activation is
+constructed from the current value vectors rather than copied directly from the previous residual state.
+By routing h(t−1)
+L
+as the query Q, AI can be viewed as using Softmax operations to control and select
+information from the residual flow. When h(t−1)
+L
+is used as the query, it influences the injected signal
+indirectly through attention blocks rather than being directly added to the residual flow. Because
+the attention weights are normalized by the softmax operation, the injected signal is a normalized
+mixture of the value vectors. Therefore, the magnitude of the injected recurrent signal is mediated by
+the current value stream rather than being directly determined by h(t−1)
+L
+. This provides a controlled
+mixing mechanism for recurrent information and reduces the risk of directly amplifying the residual
+flow. Formally, the standard attention operation is:
+Attention(Q, K, V ) = Softmax
+QK⊤
+√dk
+
+V,
+(2)
+Concretely, during the first loop iteration (t = 1), the model performs standard Self-Attention. In
+subsequent loop iterations (t > 1), the model switches to Cross-Attention: the hidden state from the
+previous loop iteration h(t−1)
+L
+is used as the query (Q), while the output of the preceding module z(t)
+l
+serves as both the key (K) and value (V ). Formally, the attention block for t > 1 is modified as:
+a(t)
+l
+= Attention
+
+Q = WQh(t−1)
+L
+, K = WKz(t)
+l , V = WV z(t)
+l
+
+,
+(3)
+where a(t)
+l
+denotes the output of the attention block at layer l in loop iteration t. In this design, the
+previous residual state is not directly added into the residual flow. Instead, it acts as a query that
+selects and reuses information from the current layer representation.
+Inspired by Input Injection [Anil et al., 2022], in the first layer of the model, AI directly uses the input
+embedding x as the z(t)
+l . Input Injection adds the input embedding x to the residual flow at each loop
+5
+
+
+iteration as a method of emphasizing the input signal. Input Injection has been used as an empirical
+stabilization technique in prior looped models [Zhu et al., 2025]. In our architecture, we hypothesize
+that first-layer Attention Injection serves a role analogous to Input Injection by reinforcing the input
+signal through the attention mechanism.
+AI reuses the Self-Attention projection matrices WQ, WK, WV as Cross-Attention projection matri-
+ces. No additional Cross-Attention parameters, gates, or normalization layers are introduced. We
+deliberately inject the recurrent signal through Q rather than K or V . This design keeps the key-value
+streams in the same form as standard attention, preserving compatibility with existing KV-cache
+reuse mechanisms during loop iteration.
+4.3
+Implementation Details
+In this work, We use the pretrained tokenizer of Qwen3 [Yang et al., 2025] throughout training. We
+used the µP [Yang et al., 2022] method to adjust the learning rate of models with different depths and
+optimized the models using the Muon [Jordan et al., 2024b] and AdamW [Loshchilov and Hutter,
+2019] optimizers. A fixed batch size was used for all models, and the total number of training tokens
+was scaled according to the Chinchilla scaling law [Hoffmann et al., 2022] to control the total number
+of training steps. When comparing two models with an equal number of parameters, we use exactly
+the same hyperparameters. Following Geiping et al. [2025], we use the standard next-token prediction
+loss, supervising only the last step. Our Transformer backbone network references the implementation
+of Karpathy [2025]. For more implementation details, please refer to the Appendix A.2 and A.3.
+5
+Experiments
+5.1
+Experimental Setup
+Dataset. We used FineWeb-Edu [Lozhkov et al., 2024] as our pretraining dataset and validation
+dataset. FineWeb-Edu is a widely used high-quality pretraining dataset containing 200B of high-value
+tokens. The dataset itself has already been deduplicated and refined. Following the Chinchilla scaling
+law [Hoffmann et al., 2022], we scaled the number of training tokens used proportionally to the total
+number of model parameters, using 20 tokens per parameter.
+Evaluation. In Table 1 and Figure 5, we present the perplexity (PPL) on Wikitext2 [Merity et al.,
+2016], bits per byte (BPB) on the validation dataset, Core Metric and accuracy on the commonsense
+reasoning benchmarks for models with different parameter counts and loop iterations. PPL and BPB
+are two metrics that are commonly used to measure language modeling performance. Core Metric,
+proposed by DCLM [Li et al., 2024], integrates 21 different evaluation metrics that can be used to
+evaluate the performance of language models during the pretraining stage. More details and specific
+benchmark citations provided in Appendix A.4.
+Baseline. In the Loop Scaling Experiments, we compare the Fully Looped Transformer (FLT) against
+three baselines: (1) the original Looped Transformer (LT); (2) the Looped Transformer with Input
+Injection (LTi); and (3) the Looped Transformer with Attention Injection applied only at the first
+layer (LTai). All baselines are trained at two scales: the small size (127M parameters, 6 layers) and
+the base size (318M parameters, 12 layers). When the parameter counts and loop iterations are the
+same, all models use the same amount of computation during pretraining.
+Ablation. In the ablation experiment, We check the stability of different methods using the same
+settings as Section 3. In addition to the baselines mentioned above, we also compared the Fully
+Looped Transformer variant (FLTres), which implements the Fully Looped Architecture by directly
+adding the hidden state to the residual flow instead of using Attention Injection. This variant exhibited
+training collapse under various looping settings, therefore, we do not directly compare it with
+other architectures in the loop scaling experiment, but instead to compare the characteristics of
+different architectures in the ablation experiment. By default, we implement Attention Injection
+with Full Attention (FA) [Vaswani et al., 2023]. We also experimented to see if Attention Injection
+could be applied to different attention mechanism variants, including Sliding Window Attention
+(SWA) [Beltagy et al., 2020], Multi-head Latent Attention (MLA) [DeepSeek-AI et al., 2024] and
+Grouped-Query Attention (GQA) [Ainslie et al., 2023]. Please refer to Appendix A.2 and A.3 for
+more experiment and training setup details.
+6
+
+
+Model
+Size
+Loop
+Wiki2ppl ↓
+Valbpb ↓
+Core↑
+LMB↑
+PIQA↑
+Hella↑
+OPQA↑
+ARC-E↑
+ARC-C↑
+Avg.↑
+LT
+Small
+3
+67.80
+1.054
+8.13
+18.70
+59.46
+27.66
+27.00
+38.97
+23.63
+32.57
+6
+73.04
+1.067
+7.20
+16.33
+57.56
+26.79
+28.20
+36.65
+23.29
+31.47
+9
+78.79
+1.115
+4.67
+12.32
+56.90
+26.00
+26.80
+36.48
+22.86
+30.22
+Base
+3
+43.12
+0.905
+16.13
+30.07
+64.25
+35.43
+34.60
+51.64
+27.13
+40.52
+6
+51.38
+0.947
+11.43
+26.37
+61.31
+31.36
+32.80
+43.22
+24.31
+36.56
+9
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+LTi
+Small
+3
+62.76
+1.043
+6.99
+20.04
+59.63
+27.80
+27.20
+39.56
+22.44
+32.77
+6
+62.53
+1.042
+7.33
+20.39
+59.24
+27.71
+29.39
+39.94
+23.46
+33.35
+9
+62.31
+1.044
+8.38
+20.58
+58.65
+27.76
+28.00
+38.84
+24.23
+33.01
+Base
+3
+40.46
+0.900
+15.36
+31.12
+64.68
+35.79
+33.20
+56.06
+28.41
+41.54
+6
+39.58
+0.900
+15.30
+29.92
+64.63
+36.33
+31.40
+52.65
+26.27
+40.20
+9
+43.43
+0.901
+14.72
+30.56
+64.85
+36.24
+32.80
+53.78
+27.81
+41.00
+LTai
+Small
+3
+66.11
+1.046
+7.17
+19.75
+58.86
+27.50
+28.20
+39.60
+23.54
+32.90
+6
+-
+-
+-
+-
+-
+-
+-
+-
+-
+-
+9
+73.59
+1.047
+6.47
+19.65
+59.84
+27.56
+28.20
+39.68
+24.65
+33.26
+Base
+3
+41.63
+0.901
+14.10
+29.53
+62.94
+35.81
+32.40
+51.97
+27.64
+40.04
+6
+41.49
+0.899
+14.97
+30.35
+62.89
+36.33
+34.00
+52.81
+26.62
+40.05
+9
+42.43
+0.901
+13.74
+28.39
+64.41
+35.94
+32.00
+50.96
+28.07
+39.96
+FLT
+Small
+3
+62.76
+1.044
+5.72
+18.39
+59.14
+27.48
+25.80
+39.56
+22.44
+32.13
+6
+60.07
+1.039
+6.34
+19.25
+58.97
+27.91
+27.80
+37.45
+23.03
+32.40
+9
+63.29
+1.040
+6.94
+19.03
+59.14
+28.20
+25.60
+38.88
+23.89
+32.45
+Base
+3
+40.47
+0.898
+15.37
+30.64
+63.81
+35.72
+31.80
+51.09
+26.36
+39.90
+6
+39.51
+0.892
+15.60
+31.15
+64.85
+37.03
+35.20
+52.81
+27.24
+41.38
+9
+38.44
+0.892
+16.16
+32.75
+65.07
+37.05
+33.20
+53.87
+28.41
+41.72
+Table 1: Comparison of different loop language model variants across Small and Base sizes on
+language modeling metrics and downstream tasks. Avg. is the unweighted average of LAMBADA
+OpenAI (LMB), PIQA, HellaSwag (Hella.), Openbook QA (OPQA), ARC-Easy (ARC-E) and ARC-
+Challenge (ARC-C). Core Metrics, Wiki2 PPL, and validation BPB are not included. "-" indicates
+that model collapsed; therefore it was not evaluated. Bold text indicates the best value for each metric.
+5.2
+Loop Scaling Experiments
+As shown in Table 1, the original LT degrades as the number of loop iterations increases. At the small
+size, its downstream-task average drops from 32.57 to 30.22, while Wiki2 PPL, validation BPB, and
+the Core Metric also worsen. LTi and FLT are more stable, with LTi obtaining the best small-size
+average of 33.35 at 6 loops; LTai fails to converge in this setting. FLT trains stably across all loop
+settings and improves from 32.13 to 32.45. These results suggest that the modified variants are less
+sensitive to increased loop depth than the original LT.
+At the base size, the advantage of FLT is clearer. The original LT drops from 40.52 to 36.56 between
+3 and 6 loops and collapses at 9 loops, while LTi and LTai show only fluctuating or saturated gains.
+FLT is the only variant whose downstream-task average consistently increases, reaching 41.72 at 9
+loops, where it also achieves the best average score, the lowest Wiki2 PPL, the highest Core Metric,
+and a tied-best validation BPB. This indicates that FLT benefits more reliably from additional loop
+iterations when model size increases.
+Overall, FLT provides the most stable scaling behavior with increasing loop iterations. At the base
+size, its Wiki2 PPL decreases from 40.47 to 38.44, its Core Metric rises from 15.37 to 16.16, and its
+validation BPB improves from 0.898 to 0.892. Although LTi remains competitive at the small size,
+FLT achieves the strongest base-size result. In particular, at 6 loops, FLT outperforms the original LT
+by 4.82 absolute points, corresponding to a relative improvement of about 13.2%. These findings
+show that FLT offers a better balance between downstream performance and training stability.
+5.3
+Ablation Experiments
+In this section, we conducted a comprehensive set of ablation experiments to observe and ver-
+ify whether our two proposed improvements effectively improve training stability. The ablation
+experiment results are presented in Figure 3, from which we draw the following four conclusions.
+7
+
+
+Figure 3: Training dynamics comparison of the FLT variants and LT variants. All models compared
+in the same graph use the same number of parameters and loop iterations. Left: comparison chart of
+residual-state norms in the first loop iteration. Middle: comparison chart of training loss. Curves are
+smoothed with an exponential moving average coefficient of 0.9 for readability. Right: comparison
+chart of the gradient L2 norm of the first FFN block.
+Figure 4: The loss of different base size models
+at 12-loop setting. All models except FLT col-
+lapsed. Smoothed with factor 0.9 for readability.
+Metrics
+GQA
+MLA
+SWA
+FA
+Wiki2ppl ↓
+39.68
+38.76
+38.91
+41.12
+Valbpb ↓
+0.897
+0.904
+0.895
+0.895
+Core↑
+16.24
+15.64
+15.58
+15.66
+Table 2: Pretraining performance metrics of four
+Base-size FLT models with 12 loop iterations,
+where Attention Injection is implemented with
+different attention mechanism variants. All four
+models stably completed training and achieved
+high evaluation performance.
+Fully Looped Architecture attenuates residual explosion. Although FLTres still exhibits residual
+explosion, its residuals are significantly smaller than those of the original LT. Meanwhile, the Fully
+Looped Architecture implemented using Attention Injection performs even better, with no residual
+explosion observed throughout the training process. This indicates that FLA attenuates residual
+amplification, but is not sufficient by itself to guarantee stable training.
+Attention Injection can take on the role of Input Injection. Applying Attention Injection only
+at the first layer yields behavior comparable to Input Injection in several settings. This implies that
+the role of Input Injection primarily lie in aggregating the input with the looping residual state, a
+function that Attention Injection naturally fulfills through attention mechanism. However, first-layer
+Attention Injection alone is not sufficient to guarantee stability in highly looped settings, as shown by
+the collapse cases in Table 1 and Figure 4. The first-layer Attention Injection indeed serves a role
+analogous to Input Injection through the attention mechanism.
+Attention Injection can be applied with various attention mechanisms. As shown in Table 2, FLT
+trained with different attention mechanisms can complete training stably and achieve performance
+comparable to Full Attention, with 12 loop iterations at the base size. This result demonstrates that At-
+tention Injection is robust and compatible. More experimental results are provided in Appendix A.1.2.
+The combination of Fully Looped Architecture and Attention Injection performs best. Figure 4
+shows that Input Injection or first-layer Attention Injection alone can still be unstable in the 12-loop
+setting. Under the same setup, Figure 3 (middle and right) shows that applying the Fully Looped
+Architecture alone leads to gradient oscillation and training collapse.
+5.4
+Test-Time Compute Adaptation Experiments
+In this section, we try to answer the following question: after training with a fixed number of loop
+iterations, can Fully Looped Transformer still adapt to different numbers of loop iterations during
+8
+
+
+Figure 5: Test-time adaptation evaluation results of FLT. Models trained with 3, 6, 9, or 12 loop
+iterations are evaluated using 1, 3, 6, 9, and 12 loop iterations. The y-axis reports accuracy.
+inference? For models pretrained with 3, 6, 9, and 12 loop iterations, we evaluated their performance
+at 1, 3, 6, 9, and 12 loop iterations, as shown in Figure 5. When the loop count at inference exceeds
+the maximum used during pretraining, performance begins to fluctuate, indicating that the model
+struggles to adapt to excessive computational resources. However, when it stays within the pretraining
+range, highly looped models such as those with 9 or 12 loop iterations show a positive correlation
+between performance and the number of loop iterations, meaning that more computational resources
+lead to better performance. These results provide preliminary evidence that FLT can exploit additional
+test-time loop iterations within the range seen during training. However, performance becomes less
+predictable when the inference loop count exceeds the training loop count, suggesting that explicit
+training over variable loop counts may be necessary for robust test-time compute adaptation.
+6
+Limitation
+Our study is limited to the model scales and architectures evaluated in this work; whether Fully
+Looped Transformer remains effective for deeper backbones, larger models, and more diverse settings
+requires further validation. Due to the cost of pretraining multiple looped language models, we use a
+single run per configuration and do not report training-run error bars. Future work should examine
+residual-state supervision, interpretability, and robustness across random seeds and larger scales.
+7
+Conclusion
+In this work, we systematically investigate the training instability of the Looped Transformer and
+identify gradient oscillation and residual explosion as two key phenomena associated with this prob-
+lem. To this end, we propose the Fully Looped Transformer, a simple parameter-free improvement
+over the naive Looped Transformer that stabilizes inter-loop information propagation and suppresses
+gradient oscillation through Fully Looped Architecture and Attention Injection. Our model improves
+training stability and downstream-task performance without increasing the parameter count, remains
+compatible with common attention variants, and offers preliminary adaptability by adjusting loop
+iterations at inference. We hope our findings deepen the understanding of Looped Transformer
+training dynamics and inspire future stable, parameter-efficient, and adaptive architectures.
+9
+
+
+References
+J. Ainslie, J. Lee-Thorp, M. de Jong, Y. Zemlyanskiy, F. Lebrón, and S. Sanghai. Gqa: Training
+generalized multi-query transformer models from multi-head checkpoints, 2023. URL https:
+//arxiv.org/abs/2305.13245.
+C. Anil, A. Pokle, K. Liang, J. Treutlein, Y. Wu, S. Bai, J. Z. Kolter, and R. B. Grosse. Path
+independent equilibrium models can better exploit test-time computation. Advances in Neural
+Information Processing Systems, 35:7796–7809, 2022.
+I. Beltagy, M. E. Peters, and A. Cohan. Longformer: The long-document transformer, 2020. URL
+https://arxiv.org/abs/2004.05150.
+Y. Bengio, P. Simard, and P. Frasconi. Learning long-term dependencies with gradient descent is
+difficult. IEEE transactions on neural networks, 5(2):157–166, 1994.
+Y. Bisk, R. Zellers, R. L. Bras, J. Gao, and Y. Choi. Piqa: Reasoning about physical commonsense in
+natural language. In Thirty-Fourth AAAI Conference on Artificial Intelligence, 2020.
+K. Cho, B. Van Merriënboer, Ç. Gulçehre, D. Bahdanau, F. Bougares, H. Schwenk, and Y. Bengio.
+Learning phrase representations using rnn encoder–decoder for statistical machine translation.
+In Proceedings of the 2014 conference on empirical methods in natural language processing
+(EMNLP), pages 1724–1734, 2014.
+P. Clark, I. Cowhey, O. Etzioni, T. Khot, A. Sabharwal, C. Schoenick, and O. Tafjord. Think you
+have solved question answering? try arc, the ai2 reasoning challenge. arXiv:1803.05457v1, 2018.
+DeepSeek-AI, A. Liu, B. Feng, B. Wang, B. Wang, B. Liu, C. Zhao, C. Dengr, C. Ruan, D. Dai,
+D. Guo, D. Yang, D. Chen, D. Ji, E. Li, F. Lin, F. Luo, G. Hao, G. Chen, G. Li, H. Zhang, H. Xu,
+H. Yang, H. Zhang, H. Ding, H. Xin, H. Gao, H. Li, H. Qu, J. L. Cai, J. Liang, J. Guo, J. Ni,
+J. Li, J. Chen, J. Yuan, J. Qiu, J. Song, K. Dong, K. Gao, K. Guan, L. Wang, L. Zhang, L. Xu,
+L. Xia, L. Zhao, L. Zhang, M. Li, M. Wang, M. Zhang, M. Zhang, M. Tang, M. Li, N. Tian,
+P. Huang, P. Wang, P. Zhang, Q. Zhu, Q. Chen, Q. Du, R. J. Chen, R. L. Jin, R. Ge, R. Pan, R. Xu,
+R. Chen, S. S. Li, S. Lu, S. Zhou, S. Chen, S. Wu, S. Ye, S. Ma, S. Wang, S. Zhou, S. Yu, S. Zhou,
+S. Zheng, T. Wang, T. Pei, T. Yuan, T. Sun, W. L. Xiao, W. Zeng, W. An, W. Liu, W. Liang, W. Gao,
+W. Zhang, X. Q. Li, X. Jin, X. Wang, X. Bi, X. Liu, X. Wang, X. Shen, X. Chen, X. Chen, X. Nie,
+X. Sun, X. Wang, X. Liu, X. Xie, X. Yu, X. Song, X. Zhou, X. Yang, X. Lu, X. Su, Y. Wu, Y. K. Li,
+Y. X. Wei, Y. X. Zhu, Y. Xu, Y. Huang, Y. Li, Y. Zhao, Y. Sun, Y. Li, Y. Wang, Y. Zheng, Y. Zhang,
+Y. Xiong, Y. Zhao, Y. He, Y. Tang, Y. Piao, Y. Dong, Y. Tan, Y. Liu, Y. Wang, Y. Guo, Y. Zhu,
+Y. Wang, Y. Zou, Y. Zha, Y. Ma, Y. Yan, Y. You, Y. Liu, Z. Z. Ren, Z. Ren, Z. Sha, Z. Fu, Z. Huang,
+Z. Zhang, Z. Xie, Z. Hao, Z. Shao, Z. Wen, Z. Xu, Z. Zhang, Z. Li, Z. Wang, Z. Gu, Z. Li, and
+Z. Xie. Deepseek-v2: A strong, economical, and efficient mixture-of-experts language model,
+2024. URL https://arxiv.org/abs/2405.04434.
+M. Dehghani, S. Gouws, O. Vinyals, J. Uszkoreit, and L. Kaiser. Universal transformers. In
+International Conference on Learning Representations, 2019.
+J. Geiping, S. McLeish, N. Jain, J. Kirchenbauer, S. Singh, B. R. Bartoldson, B. Kailkhura, A. Bhatele,
+and T. Goldstein. Scaling up test-time compute with latent reasoning: A recurrent depth approach.
+arXiv preprint arXiv:2502.05171, 2025.
+A. Giannou, S. Rajput, J.-y. Sohn, K. Lee, J. D. Lee, and D. Papailiopoulos. Looped transformers as
+programmable computers. In International Conference on Machine Learning, pages 11398–11442.
+PMLR, 2023.
+D. Guo, D. Yang, H. Zhang, J. Song, P. Wang, Q. Zhu, R. Xu, R. Zhang, S. Ma, X. Bi, et al.
+Deepseek-r1: Incentivizing reasoning capability in llms via reinforcement learning. arXiv preprint
+arXiv:2501.12948, 2025.
+K. He, X. Zhang, S. Ren, and J. Sun. Deep residual learning for image recognition. In Proceedings
+of the IEEE conference on computer vision and pattern recognition, pages 770–778, 2016.
+A. Henry, P. R. Dachapally, S. Pawar, and Y. Chen. Query-key normalization for transformers, 2020.
+URL https://arxiv.org/abs/2010.04245.
+10
+
+
+S. Hochreiter and J. Schmidhuber. Long short-term memory. Neural computation, 9(8):1735–1780,
+1997.
+J. Hoffmann, S. Borgeaud, A. Mensch, E. Buchatskaya, T. Cai, E. Rutherford, D. Casas, L. A.
+Hendricks, J. Welbl, A. Clark, et al. Training compute-optimal large language models. arXiv
+preprint arXiv:2203.15556, 10, 2022.
+K. Jordan, J. Bernstein, B. Rappazzo, @fernbear.bsky.social, B. Vlado, Y. Jiacheng, F. Cesista,
+B. Koszarsky, and @Grad62304977. modded-nanogpt: Speedrunning the nanogpt baseline, 2024a.
+URL https://github.com/KellerJordan/modded-nanogpt.
+K. Jordan, Y. Jin, V. Boza, J. You, F. Cesista, L. Newhouse, and J. Bernstein. Muon: An optimizer for
+hidden layers in neural networks, 2024b. URL https://kellerjordan.github.io/posts/
+muon/.
+A. Karpathy. nanochat: The best chatgpt that $100 can buy, 2025. URL https://github.com/
+karpathy/nanochat.
+Y. Koishekenov, A. Lipani, and N. Cancedda. Encode, think, decode: Scaling test-time reasoning
+with recursive latent thoughts. arXiv preprint arXiv:2510.07358, 2025.
+J. Li, A. Fang, G. Smyrnis, M. Ivgi, M. Jordan, S. Gadre, H. Bansal, E. Guha, S. Keh, K. Arora, et al.
+Datacomp-lm: In search of the next generation of training sets for language models. Advances in
+Neural Information Processing Systems, 37:14200–14282, 2024.
+I. Loshchilov and F. Hutter. Decoupled weight decay regularization, 2019. URL https://arxiv.
+org/abs/1711.05101.
+A. Lozhkov, L. Ben Allal, L. von Werra, and T. Wolf. Fineweb-edu: the finest collection of educational
+content, 2024. URL https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu.
+S. Merity, C. Xiong, J. Bradbury, and R. Socher. Pointer sentinel mixture models, 2016.
+T. Mihaylov, P. Clark, T. Khot, and A. Sabharwal. Can a suit of armor conduct electricity? a new
+dataset for open book question answering. In EMNLP, 2018.
+J. Niklaus, G. Penedo, H. Kydlicek, E. Bakouch, L. Tunstall, E. Beeching, T. Frere, C. Raffel, L. von
+Werra, and T. Wolf. The synthetic data playbook: Generating trillions of the finest tokens, 2026.
+D. Paperno, G. Kruszewski, A. Lazaridou, Q. N. Pham, R. Bernardi, S. Pezzelle, M. Baroni, G. Boleda,
+and R. Fernández. The lambada dataset: Word prediction requiring a broad discourse context,
+2016. URL https://arxiv.org/abs/1606.06031.
+R. Pascanu, T. Mikolov, and Y. Bengio. On the difficulty of training recurrent neural networks. In
+International conference on machine learning, pages 1310–1318. Pmlr, 2013.
+H. Prairie, Z. Novack, T. Berg-Kirkpatrick, and D. Y. Fu. Parcae: Scaling laws for stable looped
+language models. arXiv preprint arXiv:2604.12946, 2026.
+A. Radford, J. Wu, R. Child, D. Luan, D. Amodei, and I. Sutskever. Language models are unsupervised
+multitask learners. 2019.
+S. Rajbhandari, J. Rasley, O. Ruwase, and Y. He. Zero: Memory optimizations toward training trillion
+parameter models, 2020. URL https://arxiv.org/abs/1910.02054.
+N. Saunshi, N. Dikkala, Z. Li, S. Kumar, and S. J. Reddi. Reasoning with latent thoughts: On the
+power of looped transformers. arXiv preprint arXiv:2502.17416, 2025.
+J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu. Roformer: Enhanced transformer with rotary
+position embedding, 2023. URL https://arxiv.org/abs/2104.09864.
+11
+
+
+G. Team, M. Riviere, S. Pathak, P. G. Sessa, C. Hardin, S. Bhupatiraju, L. Hussenot, T. Mesnard,
+B. Shahriari, A. Ramé, J. Ferret, P. Liu, P. Tafti, A. Friesen, M. Casbon, S. Ramos, R. Kumar,
+C. L. Lan, S. Jerome, A. Tsitsulin, N. Vieillard, P. Stanczyk, S. Girgin, N. Momchev, M. Hoffman,
+S. Thakoor, J.-B. Grill, B. Neyshabur, O. Bachem, A. Walton, A. Severyn, A. Parrish, A. Ahmad,
+A. Hutchison, A. Abdagic, A. Carl, A. Shen, A. Brock, A. Coenen, A. Laforge, A. Paterson,
+B. Bastian, B. Piot, B. Wu, B. Royal, C. Chen, C. Kumar, C. Perry, C. Welty, C. A. Choquette-
+Choo, D. Sinopalnikov, D. Weinberger, D. Vijaykumar, D. Rogozi´nska, D. Herbison, E. Bandy,
+E. Wang, E. Noland, E. Moreira, E. Senter, E. Eltyshev, F. Visin, G. Rasskin, G. Wei, G. Cameron,
+G. Martins, H. Hashemi, H. Klimczak-Pluci´nska, H. Batra, H. Dhand, I. Nardini, J. Mein, J. Zhou,
+J. Svensson, J. Stanway, J. Chan, J. P. Zhou, J. Carrasqueira, J. Iljazi, J. Becker, J. Fernandez,
+J. van Amersfoort, J. Gordon, J. Lipschultz, J. Newlan, J. yeong Ji, K. Mohamed, K. Badola,
+K. Black, K. Millican, K. McDonell, K. Nguyen, K. Sodhia, K. Greene, L. L. Sjoesund, L. Usui,
+L. Sifre, L. Heuermann, L. Lago, L. McNealus, L. B. Soares, L. Kilpatrick, L. Dixon, L. Martins,
+M. Reid, M. Singh, M. Iverson, M. Görner, M. Velloso, M. Wirth, M. Davidow, M. Miller,
+M. Rahtz, M. Watson, M. Risdal, M. Kazemi, M. Moynihan, M. Zhang, M. Kahng, M. Park,
+M. Rahman, M. Khatwani, N. Dao, N. Bardoliwalla, N. Devanathan, N. Dumai, N. Chauhan,
+O. Wahltinez, P. Botarda, P. Barnes, P. Barham, P. Michel, P. Jin, P. Georgiev, P. Culliton, P. Kuppala,
+R. Comanescu, R. Merhej, R. Jana, R. A. Rokni, R. Agarwal, R. Mullins, S. Saadat, S. M. Carthy,
+S. Cogan, S. Perrin, S. M. R. Arnold, S. Krause, S. Dai, S. Garg, S. Sheth, S. Ronstrom, S. Chan,
+T. Jordan, T. Yu, T. Eccles, T. Hennigan, T. Kocisky, T. Doshi, V. Jain, V. Yadav, V. Meshram,
+V. Dharmadhikari, W. Barkley, W. Wei, W. Ye, W. Han, W. Kwon, X. Xu, Z. Shen, Z. Gong,
+Z. Wei, V. Cotruta, P. Kirk, A. Rao, M. Giang, L. Peran, T. Warkentin, E. Collins, J. Barral,
+Z. Ghahramani, R. Hadsell, D. Sculley, J. Banks, A. Dragan, S. Petrov, O. Vinyals, J. Dean,
+D. Hassabis, K. Kavukcuoglu, C. Farabet, E. Buchatskaya, S. Borgeaud, N. Fiedel, A. Joulin,
+K. Kenealy, R. Dadashi, and A. Andreev. Gemma 2: Improving open language models at a practical
+size, 2024. URL https://arxiv.org/abs/2408.00118.
+O. team, A. Jaech, A. Kalai, A. Lerer, A. Richardson, A. El-Kishky, A. Low, A. Helyar, A. Madry,
+A. Beutel, A. Carney, A. Iftimie, A. Karpenko, A. T. Passos, A. Neitz, A. Prokofiev, A. Wei,
+A. Tam, A. Bennett, A. Kumar, A. Saraiva, A. Vallone, A. Duberstein, A. Kondrich, A. Mishchenko,
+A. Applebaum, A. Jiang, A. Nair, B. Zoph, B. Ghorbani, B. Rossen, B. Sokolowsky, B. Barak,
+B. McGrew, B. Minaiev, B. Hao, B. Baker, B. Houghton, B. McKinzie, B. Eastman, C. Lugaresi,
+C. Bassin, C. Hudson, C. M. Li, C. de Bourcy, C. Voss, C. Shen, C. Zhang, C. Koch, C. Orsinger,
+C. Hesse, C. Fischer, C. Chan, D. Roberts, D. Kappler, D. Levy, D. Selsam, D. Dohan, D. Farhi,
+D. Mely, D. Robinson, D. Tsipras, D. Li, D. Oprica, E. Freeman, E. Zhang, E. Wong, E. Proehl,
+E. Cheung, E. Mitchell, E. Wallace, E. Ritter, E. Mays, F. Wang, F. P. Such, F. Raso, F. Leoni,
+F. Tsimpourlas, F. Song, F. von Lohmann, F. Sulit, G. Salmon, G. Parascandolo, G. Chabot,
+G. Zhao, G. Brockman, G. Leclerc, H. Salman, H. Bao, H. Sheng, H. Andrin, H. Bagherinezhad,
+H. Ren, H. Lightman, H. W. Chung, I. Kivlichan, I. O’Connell, I. Osband, I. C. Gilaberte, I. Akkaya,
+I. Kostrikov, I. Sutskever, I. Kofman, J. Pachocki, J. Lennon, J. Wei, J. Harb, J. Twore, J. Feng,
+J. Yu, J. Weng, J. Tang, J. Yu, J. Q. Candela, J. Palermo, J. Parish, J. Heidecke, J. Hallman, J. Rizzo,
+J. Gordon, J. Uesato, J. Ward, J. Huizinga, J. Wang, K. Chen, K. Xiao, K. Singhal, K. Nguyen,
+K. Cobbe, K. Shi, K. Wood, K. Rimbach, K. Gu-Lemberg, K. Liu, K. Lu, K. Stone, K. Yu,
+L. Ahmad, L. Yang, L. Liu, L. Maksin, L. Ho, L. Fedus, L. Weng, L. Li, L. McCallum, L. Held,
+L. Kuhn, L. Kondraciuk, L. Kaiser, L. Metz, M. Boyd, M. Trebacz, M. Joglekar, M. Chen, M. Tintor,
+M. Meyer, M. Jones, M. Kaufer, M. Schwarzer, M. Shah, M. Yatbaz, M. Y. Guan, M. Xu, M. Yan,
+M. Glaese, M. Chen, M. Lampe, M. Malek, M. Wang, M. Fradin, M. McClay, M. Pavlov, M. Wang,
+M. Wang, M. Murati, M. Bavarian, M. Rohaninejad, N. McAleese, N. Chowdhury, N. Chowdhury,
+N. Ryder, N. Tezak, N. Brown, O. Nachum, O. Boiko, O. Murk, O. Watkins, P. Chao, P. Ashbourne,
+P. Izmailov, P. Zhokhov, R. Dias, R. Arora, R. Lin, R. G. Lopes, R. Gaon, R. Miyara, R. Leike,
+R. Hwang, R. Garg, R. Brown, R. James, R. Shu, R. Cheu, R. Greene, S. Jain, S. Altman, S. Toizer,
+S. Toyer, S. Miserendino, S. Agarwal, S. Hernandez, S. Baker, S. McKinney, S. Yan, S. Zhao,
+S. Hu, S. Santurkar, S. R. Chaudhuri, S. Zhang, S. Fu, S. Papay, S. Lin, S. Balaji, S. Sanjeev,
+S. Sidor, T. Broda, A. Clark, T. Wang, T. Gordon, T. Sanders, T. Patwardhan, T. Sottiaux, T. Degry,
+T. Dimson, T. Zheng, T. Garipov, T. Stasi, T. Bansal, T. Creech, T. Peterson, T. Eloundou, V. Qi,
+V. Kosaraju, V. Monaco, V. Pong, V. Fomenko, W. Zheng, W. Zhou, W. McCabe, W. Zaremba,
+Y. Dubois, Y. Lu, Y. Chen, Y. Cha, Y. Bai, Y. He, Y. Zhang, Y. Wang, Z. Shao, and Z. Li. Openai
+o1 system card, 2024. URL https://arxiv.org/abs/2412.16720.
+12
+
+
+A. Vaswani, N. Shazeer, N. Parmar, J. Uszkoreit, L. Jones, A. N. Gomez, L. Kaiser, and I. Polosukhin.
+Attention is all you need, 2023. URL https://arxiv.org/abs/1706.03762.
+A. Veit, M. Wilber, and S. Belongie. Residual networks behave like ensembles of relatively shallow
+networks, 2016. URL https://arxiv.org/abs/1605.06431.
+P. Villalobos, A. Ho, J. Sevilla, T. Besiroglu, L. Heim, and M. Hobbhahn. Position: Will we run
+out of data? limits of llm scaling based on human-generated data. In Forty-first International
+Conference on Machine Learning, 2024.
+J. Wei, X. Wang, D. Schuurmans, M. Bosma, B. Ichter, F. Xia, E. Chi, Q. Le, and D. Zhou.
+Chain-of-thought prompting elicits reasoning in large language models, 2023. URL https:
+//arxiv.org/abs/2201.11903.
+P. J. Werbos. Backpropagation through time: what it does and how to do it. Proceedings of the IEEE,
+78(10):1550–1560, 2002.
+A. Yang, A. Li, B. Yang, B. Zhang, B. Hui, B. Zheng, B. Yu, C. Gao, C. Huang, C. Lv, C. Zheng,
+D. Liu, F. Zhou, F. Huang, F. Hu, H. Ge, H. Wei, H. Lin, J. Tang, J. Yang, J. Tu, J. Zhang,
+J. Yang, J. Yang, J. Zhou, J. Zhou, J. Lin, K. Dang, K. Bao, K. Yang, L. Yu, L. Deng, M. Li,
+M. Xue, M. Li, P. Zhang, P. Wang, Q. Zhu, R. Men, R. Gao, S. Liu, S. Luo, T. Li, T. Tang,
+W. Yin, X. Ren, X. Wang, X. Zhang, X. Ren, Y. Fan, Y. Su, Y. Zhang, Y. Zhang, Y. Wan,
+Y. Liu, Z. Wang, Z. Cui, Z. Zhang, Z. Zhou, and Z. Qiu. Qwen3 technical report, 2025. URL
+https://arxiv.org/abs/2505.09388.
+G. Yang, E. J. Hu, I. Babuschkin, S. Sidor, X. Liu, D. Farhi, N. Ryder, J. Pachocki, W. Chen, and
+J. Gao. Tensor programs v: Tuning large neural networks via zero-shot hyperparameter transfer,
+2022. URL https://arxiv.org/abs/2203.03466.
+R. Zellers, A. Holtzman, Y. Bisk, A. Farhadi, and Y. Choi. Hellaswag: Can a machine really finish
+your sentence? In Proceedings of the 57th Annual Meeting of the Association for Computational
+Linguistics, 2019.
+B. Zhang and R. Sennrich. Root mean square layer normalization, 2019. URL https://arxiv.
+org/abs/1910.07467.
+Z. Zhang, Y. Song, G. Yu, X. Han, Y. Lin, C. Xiao, C. Song, Z. Liu, Z. Mi, and M. Sun. Relu2 wins:
+Discovering efficient activation functions for sparse llms, 2024. URL https://arxiv.org/abs/
+2402.03804.
+R.-J. Zhu, Z. Wang, K. Hua, T. Zhang, Z. Li, H. Que, B. Wei, Z. Wen, F. Yin, H. Xing, et al. Scaling
+latent reasoning via looped language models. arXiv preprint arXiv:2510.25741, 2025.
+13
+
+
+A
+Appendix
+A.1
+Additional Experiments Results
+A.1.1
+Diagnose Experiment
+Figure 6: Left: the residual norm at the 6th loop iteration. Middle: the residual norm at the 9th loop
+iteration. Right: the residual norm at the 12th loop iteration.
+Figure 7: Left: the gradient norm of LM head block. Middle: the gradient norm of FFN at 5th layer.
+Right: the gradient norm of attention block at 5th layer.
+Figures 6 and 7 provide supplementary evidence for the diagnostic experiment in Section 3. Figure 6
+extends the residual-state norm analysis to later loop iterations. Compared with the first-loop residual
+norm shown in the main text, these results show that the residual amplification of vanilla LT becomes
+more pronounced as the recurrent computation proceeds, especially under larger loop counts. In
+contrast, FLT keeps the residual-state norms substantially smaller and more stable across loop
+iterations. This further supports our diagnosis that highly looped LT suffers from residual explosion,
+while FLT mitigates this instability by stabilizing recurrent information propagation.
+Figure 7 reports gradient norms from additional modules, including the LM head, an intermediate
+FFN block, and an intermediate attention block. These results show that the gradient oscillation
+observed in the main diagnostic figure is not restricted to the first FFN block, but also appears in
+other parts of the model during early training. Therefore, Figures 6 and 7 together strengthen the
+conclusion that LT instability is associated with both residual explosion and gradient oscillation,
+whereas FLT alleviates both phenomena.
+A.1.2
+Ablation Experiment
+Figures 8 and 9 provide supplementary results for the ablation experiment in Section 5.3. Figure 8
+shows the Core Metric trajectories of FLT when Attention Injection is implemented with different
+attention variants, including Full Attention, Sliding Window Attention, Multi-head Latent Atten-
+tion, and Grouped-Query Attention. The comparable trends across these variants indicate that the
+effectiveness of Attention Injection is not tied to a single attention implementation.
+Figure 9 further reports the corresponding training-loss curves. All attention variants train stably
+without collapse, which is consistent with the results in Table 2. These observations support the
+14
+
+
+conclusion that Attention Injection is compatible with multiple attention mechanisms and can serve
+as a robust stabilization component for Fully Looped Transformer.
+Figure 8: Trend chart of Core Metric changes for FLT with different attention variants throughout the
+training process
+Figure 9: The training loss of FLT with different attention variants. Smoothed with factor 0.9.
+A.2
+Training Details
+Data
+We train on a publicly available pretraining corpus streamed from Parquet files and tokenized on-
+the-fly using a BPE tokenizer with vocabulary size |V| = 151643 (padded to 151644 for divisibility).
+Data is loaded in a DDP-aware manner: each rank reads disjoint row groups from the Parquet shards.
+The final Parquet shard is held out as the validation set.
+Optimization
+We use two optimizers running in parallel, following the approach of modded-nanogpt [Jordan et al.,
+2024a]:
+Muon [Jordan et al., 2024b] for transformer block linear layers.
+Muon runs standard SGD with
+momentum internally, then replaces each 2-D parameter update G with the nearest orthogonal matrix
+via a 5-step Newton–Schulz iteration:
+X ←aX + b(XX⊤)X + c(XX⊤)2X,
+(a, b, c) = (3.4445, −4.7750, 2.0315).
+(4)
+We use learning rate ηMuon = 0.02 and momentum µ = 0.95 (warmed up from 0.85 over the first
+300 steps).
+15
+
+
+AdamW [Loshchilov and Hutter, 2019] for embeddings and LM head.
+We use β1 = 0.8,
+β2 = 0.95, ε = 10−10, no weight decay. Learning rates are set to ηembed = 0.2 and ηhead = 0.004,
+and are scaled by
+p
+768/dmodel for models with dmodel̸ = 768, following the µP-style depth-scaling
+convention.
+Learning Rate Schedule
+We use a trapezoidal schedule with no warm-up: the learning rate is held constant for the first
+80% of training, then linearly decayed to zero over the final 20%. All parameters share the same
+multiplicative schedule factor.
+Batch Size and Gradient Accumulation
+We use a fixed total batch size of 219 = 524,288 tokens per optimizer step, with a sequence length of
+T = 1024. When training on NGPU GPUs each processing a per-device batch of Bdev sequences,
+gradient accumulation runs for ⌈524,288/(Bdev · T · NGPU)⌉micro-steps automatically.
+Training Length
+Unless otherwise specified, we follow the Chinchilla optimal ratio Hoffmann et al. [2022] and train
+for a number of steps such that the total token count equals 20 × Nparams, where Nparams counts all
+parameters excluding the token embedding.
+Regularization and Precision
+We apply gradient clipping with maximum norm 1.0. No dropout or weight decay is used. All forward
+passes and backward passes use bfloat16 mixed precision (torch.amp.autocast); the token embed-
+ding is stored in bfloat16 throughout training. torch.compile (TorchInductor, dynamic=False) is
+enabled for the training graph.
+Distributed Training
+We use PyTorch DDP with torchrun. The Muon optimizer uses a distributed variant (DistMuon)
+where Newton–Schulz orthogonalization is computed independently on each rank but momentum
+buffers are kept in sync.The AdamW optimizer uses ZeRO-2 [Rajbhandari et al., 2020] sharding
+(DistAdamW) to reduce optimizer state memory. Our models were trained on 8× A100 GPUs with
+80GB RAM with 32× Intel Xeon CPU processor. At most trained of 5 days for one model.
+Diagnostic metrics
+For the diagnostic experiments in Section 3, we record the following quantities every evaluation
+interval. The residual-state norm is computed as the root-mean-square norm of the loop output hidden
+state, averaged over the batch and sequence dimensions:
+ResNorm(t) =
+1
+BT
+B
+X
+b=1
+T
+X
+i=1
+h(t)
+L,b,i
+
+2 .
+Unless otherwise specified, we report the norm of the first loop output.
+The gradient L2 norm is computed over all parameters of the first FFN block:
+GradNorm =
+
+
+X
+p∈PFFN1
+∥∇pL∥2
+2
+
+
+1/2
+.
+We record this value before global gradient clipping.
+A.3
+Architecture Details
+Backbone Network Architecture
+All model variants share a common set of architectural choices. We use Rotary Positional Embed-
+dings (RoPE) [Su et al., 2023] with base θ = 10000 and no learnable positional embeddings. All
+16
+
+
+normalization is performed by a parameter-free RMSNorm (i.e. norm(x) = x/∥x∥rms with no affine
+parameters). Attention uses QK-Norm [Henry et al., 2020]: after projecting queries and keys, each
+head vector is normalized before computing attention weights, which improves training stability. The
+FFN uses a ReLU2 activation [Zhang et al., 2024] with an expansion ratio of 4. Logits are soft-capped
+via 15 tanh(ℓ/15) before computing cross-entropy loss, following Team et al. [2024]. The token
+embedding matrix and the language-model head are untied (separate parameters). No bias terms are
+used in any linear layer. Model dimensions are derived from a single depth hyperparameter:
+dmodel = 64 × depth,
+H = ⌈dmodel/128⌉,
+L = depth,
+(5)
+where H is the number of query heads and L is the number of unique Transformer blocks. The
+vocabulary size is padded to the nearest multiple of 64 for computational efficiency.
+The total parameter count (standard MHA, padded vocab size V ) is:
+N = 2V dmodel + 12Ld2
+model.
+(6)
+Note that increasing the loop count K adds compute but no additional parameters, since the L blocks
+are reused across all K iterations.
+Attention Variants
+We implement three orthogonal attention design axes, each selectable independently: the KV
+projection scheme (attn_type), the head-sharing ratio (GQA), and the context window size
+(window_pattern).
+Standard attention with Group-Query Attention (attn_type=“full”).
+Each attention layer
+projects the input into Hq query heads and Hkv key/value heads:
+WQ ∈Rd×Hqdh,
+WK ∈Rd×Hkvdh,
+WV ∈Rd×Hkvdh,
+WO ∈Rd×d,
+where dh = dmodel/Hq is the per-head dimension. RoPE is applied to each query and key head vector.
+After RoPE, a parameter-free RMSNorm (QK-Norm) is applied independently to each query and key
+head vector before computing attention weights. This normalizes the pre-softmax dot products and
+improves training stability without introducing learnable parameters.
+Group-Query Attention requires Hkv | Hq: each of the Hkv KV heads is broadcast to Hq/Hkv
+query heads. Setting Hkv = Hq recovers standard Multi-Head Attention (MHA); setting Hkv = 1
+gives Multi-Query Attention (MQA). The per-block parameter count under GQA is (10 + 2r) d2
+model
+where r = Hkv/Hq, compared to 12 d2
+model for MHA. We set Hkv = Hq by default and apply GQA
+selectively as a KV-cache memory reduction technique.
+Multi-head Latent Attention (attn_type=“mla”).
+To further reduce KV-cache memory during
+inference, we implement a low-rank KV compression scheme. Queries are projected in the standard
+way. For keys and values, a shared down-projection first compresses the input to a low-dimensional
+latent:
+ckv = norm(x Wdown) ,
+Wdown ∈Rd×R,
+(7)
+where R is the KV latent rank (default R = 128) and norm is the parameter-free RMSNorm. The
+latent is then expanded back to full KV representations via separate up-projections:
+K = ckv W↑
+K,
+V = ckv W↑
+V ,
+W↑
+K, W↑
+V ∈RR×Hkvdh.
+RoPE and QK-Norm are applied to the expanded Q and K as in the standard case. The RMSNorm on
+ckv decouples the gradient flow between the down-projection and the two up-projections, improving
+optimization stability. The KV cache stores the expanded K and V tensors (not the compressed
+latent), preserving the same inference interface as the standard attention. The per-block attention
+parameter count for MLA is d2 + dR + 2RHkvdh + d2, and the KV-cache footprint per token per
+layer is reduced by a factor of Hkvdh/R compared to MHA.
+Sliding Window Attention (window_pattern).
+Independently of the KV projection scheme, each
+layer’s attention span can be restricted to a local window via the window_pattern string. The
+pattern is a sequence of characters (L or S) that is tiled across the L layers:
+17
+
+
+• L (long): full causal context, w = T (no restriction).
+• S (short): local causal window of size w = ⌊T/4⌋.
+The final layer is always forced to full context regardless of the pattern, ensuring that the last-layer
+representations integrate global information. Concretely, for query position i and key position
+j, the attention mask enforces both the causal constraint (j ≤i) and, when applicable, the win-
+dow constraint (i −j < w). When w = T (full context), the fast is_causal=True path of
+scaled_dot_product_attention is used; otherwise an explicit Boolean mask is constructed and
+passed to the attention kernel.
+Weight Initialization
+Table 3: Weight initialization scheme.
+Parameter
+Distribution
+Scale
+Token embedding wte
+Normal
+σ = 1.0
+LM head lm_head
+Normal
+σ = 0.001
+WQ, WK, WV , FFNfc
+Uniform
+[−s, s], s =
+p
+3/dmodel
+Output projections WO, FFNproj
+Constant
+0
+The Uniform bound s =
+p
+3/dmodel achieves the same standard deviation as N(0, 1/dmodel).
+Initializing output projections to zero ensures that the residual contribution of each block is zero at
+the start of training.
+A.4
+Experiments Details
+We evaluate our models on four complementary metrics. Unless otherwise noted, all evaluations are
+run with bfloat16 mixed precision under torch.amp.autocast and with a per-device batch size of
+4 sequences.
+Bits-per-Byte (BPB)
+During training we track validation BPB every 250 steps as the primary per-training-step signal. BPB
+is a tokenization-independent compression metric defined as
+BPB =
+P
+t ℓt
+log 2 · P
+t bt
+,
+(8)
+where ℓt is the per-token cross-entropy loss (in nats) and bt is the number of UTF-8 bytes that token
+t represents. Special tokens (e.g. <|im_start|>) contribute bt = 0 and are therefore excluded
+from both numerator and denominator, as are any positions masked with ignore_index= −1. This
+normalization makes BPB comparable across models trained with different vocabulary sizes. BPB is
+reported on both the training corpus and the held-out validation shard (the final Parquet shard).
+CORE Benchmark
+CORE is an aggregate benchmark sourced from the DCLM evaluation suite. It covers a diverse set of
+language understanding tasks grouped into three evaluation types:
+• Multiple-choice (multiple_choice): Each item has a shared context (query) and several
+candidate continuations. The model scores each candidate by computing the mean cross-
+entropy loss over the continuation-only tokens (i.e. the tokens that differ across choices;
+the common prefix is not scored). The candidate with the lowest loss is selected as the
+prediction.
+• Schema (schema): Each item has multiple possible contexts paired with a shared continu-
+ation. The model scores each context by computing the mean cross-entropy loss over the
+shared suffix tokens. The context with the lowest loss is selected.
+18
+
+
+• Language modeling (language_modeling): Each item has a single context and a target
+continuation. The model computes the mean cross-entropy loss over the continuation tokens
+only (identified via a prefix-length comparison). Correct prediction requires the loss to fall
+below a threshold implicitly defined by the accuracy computation.
+All three types use few-shot prompting; the number of in-context examples per task is fixed by the
+benchmark configuration. Few-shot examples for each query are sampled without replacement using
+a per-example random seed (1234 + idx), independently of the global data shuffle. Before evaluation,
+the full dataset for each task is shuffled with a fixed seed (1337) for reproducibility. We use all
+examples (i.e. max_per_task= −1) for final evaluations; during training we subsample to at most
+500 examples per task for efficiency.
+The raw per-task accuracy a is converted to a centered accuracy:
+˜a = a −arand
+1 −arand
+,
+(9)
+where arand is the random-baseline accuracy for that task (provided by the benchmark metadata).
+The overall CORE metric is the mean of all per-task centered accuracies.
+WikiText-2 Perplexity
+We evaluate standard language-model perplexity on the WikiText-2 validation set:
+PPL = exp
+ 
+1
+N
+N
+X
+t=1
+ℓt
+!
+,
+(10)
+where ℓt is the per-token NLL at position t and N is the total number of non-masked tokens.
+WikiText-2 PPL is always reported alongside CORE and BPB in post-training evaluations.
+Test-Time Compute Budget Evaluation
+A central aim of this work is to show that inference-time compute can be traded for improved
+performance by adjusting the loop count K without reloading or modifying model weights. To
+characterise this behaviour, we run a budget evaluation for every checkpoint: the model is evaluated
+at K ∈{1, 3, 6, 9, 12} loop iterations in a single pass, logging all four metrics (BPB, CORE,
+WikiText-2 PPL) at each budget point. Results are recorded with K as the x-axis, yielding a compute–
+performance curve for each model. This protocol enables direct comparison of a model at its native
+training compute versus cheaper (K = 1) or more expensive (K = 12) inference settings, as well as
+cross-model comparisons at equal inference cost.
+Benchmark Statistics
+In addition to language-modeling metrics, we evaluate each trained model on a set of standard
+downstream benchmarks. Table 4 summarizes the benchmarks and the number of in-context examples
+used for evaluation. We use 0-shot evaluation for LAMBADA OpenAI [Paperno et al., 2016, Radford
+et al., 2019] and OpenBookQA [Mihaylov et al., 2018], and 10-shot evaluation for PIQA [Bisk et al.,
+2020], HellaSwag [Zellers et al., 2019], ARC-Easy [Clark et al., 2018], and ARC-Challenge [Clark
+et al., 2018]. All downstream results are reported as accuracy.
+B
+Broader Impacts
+This work is primarily methodological and studies how to improve the training stability of looped
+language models without increasing the number of learnable parameters. A potential positive impact
+is that more stable and parameter-efficient architectures may help reduce the cost of training and
+deploying language models, making test-time compute adjustment more accessible. By allowing
+performance to be traded against inference-time computation through the number of loop iterations,
+such models may also provide more flexible deployment options under different resource constraints.
+At the same time, improvements in language-model training efficiency can have broader dual-use
+implications. More stable and compute-adaptive language models may lower the barrier to training
+19
+
+
+Benchmark
+Shots
+Task type
+LAMBADA OpenAI
+0-shot
+Cloze-style language understanding
+OpenBookQA
+0-shot
+Multiple-choice open-book science question answering
+PIQA
+10-shot
+Physical commonsense reasoning
+HellaSwag
+10-shot
+Commonsense sentence completion
+ARC-Easy
+10-shot
+Multiple-choice science question answering
+ARC-Challenge
+10-shot
+Multiple-choice science question answering
+Table 4: Downstream evaluation benchmarks used in this work. The “Shots” column indicates the
+number of in-context examples used during evaluation. All benchmarks are evaluated by selecting
+the answer with the highest model likelihood, unless otherwise specified. We report accuracy for all
+downstream benchmarks.
+capable generative systems, which could be misused for spam, misinformation, or other harmful
+content generation if deployed without safeguards. In addition, although looped models do not
+increase parameter count, using more loop iterations at inference increases computation and energy
+consumption. Like other language models trained on web-scale corpora, models based on this
+architecture may also inherit biases, factual errors, or harmful associations from the training data.
+Our experiments are conducted on publicly available datasets and standard academic benchmarks,
+and this work does not release a high-risk pretrained model. Nevertheless, future applications of this
+architecture should be accompanied by appropriate safety evaluations, bias and robustness analyses,
+content-misuse mitigation, and transparent reporting of compute and energy costs.
+B.1
+Existing Assets
+We use publicly available benchmark datasets and standard open-source software libraries. The
+original sources of the datasets and any external code or models are cited in the main paper. We use
+these assets only for academic research and do not redistribute third-party datasets, models, or code.
+Asset
+Usage
+License
+FineWeb-Edu
+Pretraining data
+ODC-BY-v1.0
+WikiText-2
+Perplexity evaluation
+CC-BY-SA-4.0
+PIQA
+Evaluation benchmark
+Not specified
+HellaSwag
+Evaluation benchmark
+MIT
+ARC
+Evaluation benchmark
+Not specified
+OpenBookQA
+Evaluation benchmark
+Not specified
+Qwen3 tokenizer
+Tokenizer
+Apache-2.0
+nanochat
+Code reference
+MIT
+Table 5: Existing assets used in this work.
+20

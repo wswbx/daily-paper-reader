@@ -1,0 +1,1678 @@
+Scaling Looped MoE Language Models under Matched Budgets:
+Information Flow and Parameter Allocation
+Shipeng Bai†, Jiayu Qin†, Hong Liu†, Xili Wang†, Jianchao Tan*, Jiacheng Li
+He Zhang, Yifan Lu, Jiaqi Zhang, Kefeng Zhang, Yuchen Xie, Xunliang Cai
+Meituan
+Abstract
+Looped Transformers decouple computational
+depth from parameter count, and prior stud-
+ies have demonstrated promising performance
+gains with increased computation. However,
+systematic design principles for configuring
+these models under strict iso-parameter and
+iso-FLOP constraints remain scarce. We con-
+tribute to this direction by improving informa-
+tion flow in looped models and systematically
+studying loop parameter configurations. Specif-
+ically, we refine this information flow via gated
+inner-loop state updates and a cross-stage resid-
+ual connection. Building on this design, con-
+trolled studies identify a configuration combin-
+ing a single-pass Core depth of 25%–35% of
+the total unrolled depth with reallocating saved
+parameters into extra routed experts per layer,
+improving performance at zero extra compute
+while preserving compatibility with existing
+training infrastructure. Evaluated after 1T pre-
+training tokens, our 69B MLA and 51B KDA
+Mixture-of-Experts models outperform budget-
+matched non-recurrent baselines by an average
+of 1.16 and 2.29 percentage points across four
+benchmarks, respectively. Further reproduc-
+tion experiments on a common backbone with
+a 200B-token training budget show that our
+method achieves lower perplexity than other
+looped methods. Code for these reproduction
+experiments is available at GitHub.
+1
+Introduction
+Looped Transformers decouple computational
+depth from parameter scale through the iterative
+reuse of weight-shared layers, presenting an alterna-
+tive depth-scaling paradigm orthogonal to conven-
+tional parameter expansion (Geiping et al., 2025;
+Prairie et al., 2026). Prior work demonstrates that
+†Equal contribution.
+*Corresponding author.
+Contact: {baishipeng02, tanjianchao02}@meituan.com.
+MMLU
+CMMLU
+C-Eval
+BBH
+0
+1
+2
+3
+4
+Gain vs. non-loop (pp)
++0.59
++0.39
++0.78
++2.86
++1.94
++1.58
++1.56
++4.08
+50
+100
+150
+200
+Training tokens (B)
+2.12
+2.18
+2.24
+2.30
+Training LM loss
+Dolma val. PPL
+Baseline
+8.4948
+Parcae
+8.3596
+SMELT
+8.3567
+Ours
+8.3109
+(a) Benchmark Gains (1T Tokens)
+(b) Training Loss & Val. PPL (200B Tokens)
+MLA (69B total)
+KDA (51B total)
+Baseline
+Parcae
+SMELT
+Ours
+150
+165
+2.145
+2.155
+150-165B
+Figure 1: Main results and comparison with existing
+looped models. (a) Benchmark gains in percentage
+points (pp) over corresponding non-loop baselines after
+1T tokens with MLA or KDA attention. (b) Training
+LM loss and final validation PPL on Dolma 3 Mix with a
+common GQA-MoE backbone, trained for 200B tokens.
+such architectures can match or even surpass com-
+petitive non-recurrent models on complex reason-
+ing and algorithmic induction tasks. Recent stud-
+ies (Wang et al., 2026; Chen et al., 2026) have
+further substantiated the advantages of recurrent
+computation under strictly matched parameter bud-
+gets as well as training and serving FLOPs.
+Although prior studies have demonstrated the
+promise of looped architectures, they offer lim-
+ited guidance on how to scale them systemati-
+cally under matched parameter and compute bud-
+gets. Reusing weights across iterations requires
+balancing input preservation against progressive
+state updates, whereas varying the recurrent span
+and iteration count shifts the trade-off between ef-
+fective computational depth and unique parame-
+ter capacity—inherently coupling loop topology
+with budget allocation. These structural dependen-
+cies motivate two central research questions: In-
+formation Flow within the Loop: Under weight
+sharing, how should inner-loop state updates and
+cross-stage representation transfer be structured to
+enable effective iterative refinement? Loop Config-
+uration and Cross-Architecture Generality: Un-
+der iso-parameter and iso-FLOP constraints, how
+1
+arXiv:2611.34276v1  [cs.LG]  25 Nov 2026
+
+
+should the looped structure be partitioned with ap-
+propriate parameter allocation, and does the same
+recurrent design improve performance across dif-
+ferent backbone architectures?
+Existing looped models predominantly organize
+recurrent computation into a three-stage Prelude–
+Core–Coda topology (Geiping et al., 2025; Prairie
+et al., 2026), iteratively updating hidden states by
+combining them with input representations. To
+address the first question, we refine internal in-
+formation flow through inner-loop state updates
+and a cross-stage residual connection.
+Firstly,
+for inner-loop state updates, we stabilize feature
+scales across loop iterations via boundary normal-
+ization and combine historical states with injected
+inputs through independently controlled gated fu-
+sion. Secondly, we add a cross-stage residual con-
+nection linking the Prelude directly to the Coda
+to restore the direct residual pathway and gradient
+flow interrupted by boundary normalization and
+gated fusion. Together, these simple yet effective
+designs establish a stable recurrent flow that rec-
+onciles low-level feature fidelity with iterative se-
+mantic evolution, yielding substantial performance
+gains.
+Beyond information flow within the loop, sys-
+tematically scaling recurrent models requires prin-
+cipled loop configuration and cross-architecture
+generality. While recent studies have begun extend-
+ing looped architectures to larger-scale models—
+such as SMELT (Wang et al., 2026), which eval-
+uates looping the middle half of a sparse MoE
+twice under matched budgets, and SenseNova-
+Loop (OpenSenseNova, 2026), which integrates
+recurrence with hybrid attention and Manifold-
+Constrained Hyper-Connections (mHC) (Xie et al.,
+2026)—existing efforts remain restricted to iso-
+lated topologies or fixed configurations, leaving
+generalizable allocation principles largely unex-
+plored. To bridge this gap, we systematically in-
+vestigate the joint design of loop topology and
+parameter capacity under strictly matched bud-
+gets, i.e., iso-parameter and iso-FLOP constraints.
+Our controlled studies reveal that effective scal-
+ing hinges on a structural trade-off between shared
+computational depth and independent parameter
+capacity: core partitioning and capacity restora-
+tion must be jointly determined. Guided by this
+insight, we formulate two transferable design prin-
+ciples: (1) Recurrent Core Configuration: Al-
+locating 25%–35% of the total unrolled depth to
+the single-pass depth of the shared Core balances
+computation reuse against independent boundary-
+layer capacity; and (2) Parameter-to-Expert Re-
+allocation: Transferring weight-sharing parameter
+savings into extra routed experts per layer improves
+performance at zero compute cost, offering a bet-
+ter quality–compatibility trade-off than alternative
+restoration strategies that alter layer or module di-
+mensions.
+To evaluate architectural generality, we apply
+this design to Mixture-of-Experts (MoE) mod-
+els equipped with Multi-Head Latent Attention
+(MLA) (DeepSeek-AI, 2024) and Kimi Delta At-
+tention (KDA) (Kimi Team, 2025). After 1T pre-
+training tokens, the 69B MLA and 51B KDA
+looped models outperform budget-matched non-
+recurrent baselines across four downstream bench-
+marks, delivering average gains of +1.16 and +2.29
+percentage points, respectively. Furthermore, on
+a common Qwen3-style MoE backbone (Qwen
+Team, 2025) trained for 200B tokens, our method
+achieves lower perplexity than both Parcae and
+SMELT. Figure 1 summarizes these benchmark
+gains and the separate 200B-token training-loss
+comparison with Parcae and SMELT.
+2
+Related Work
+Looped Language Models and Recurrent Infor-
+mation Flow.
+Early studies explored depth-wise
+parameter reuse through recurrent computation and
+cross-layer weight tying (Dehghani et al., 2019;
+Lan et al., 2020). Subsequent theoretical and empir-
+ical work connected recurrent depth to iterative rea-
+soning and large-scale language modeling (Saunshi
+et al., 2025; Geiping et al., 2025; Zhu et al., 2026),
+while complementary approaches introduced recur-
+rence into pretrained models (Bae et al., 2025a;
+McLeish et al., 2025). Recent work further in-
+vestigates training stability, token-dependent depth
+allocation, and budget-conditioned recurrent trajec-
+tories (Prairie et al., 2026; Bae et al., 2025b; Jeddi
+et al., 2026). Building on these developments, we
+study inner-loop state updates and a cross-stage
+residual connection, combining gated fusion with
+independently parameterized state retention and in-
+put injection and a Prelude-to-Coda residual path.
+Loop Configuration, Parameter Allocation, and
+Backbone Applicability.
+Combining recurrence
+with sparse experts provides flexibility in balanc-
+ing parameter capacity and computation (Csordás
+et al., 2024; Gao et al., 2026). SMELT (Wang
+et al., 2026) investigates loop topology through
+2
+
+
+Embed(x)
+
+E
+ω
+1
+
+ω
+⋯
+R−1
+
+ω
++
+
+z
+ẽ
+e
+h1
+u2
+h2
+hR−1
+uR
+hR̃
+e
+e
+Loop 1
+Loop 2
+Loop R
+Shared Core weights ω
+Prelude
+Core
+Coda
+Input Injection
+Residual Stream
+: Gated Fusion
+Figure 2: Overview of our looped model with R Core passes. P, Fω, and C denote the Prelude, shared Core, and
+Coda; all Core passes share weights ω. Given token embeddings Embed(x), the first pass receives ˜e = NE(e)
+directly. For t ≥2, boundary normalization Nt−1 precedes the gated fusion operator M, which combines the
+previous state with the fixed input ˜e (dashed path; Section 3.2). The cross-stage residual connection adds the raw
+Prelude output e to hR before C produces z. Output-head operations are omitted.
+depth–width adjustments and expert expansion
+under matched budgets, while LoopMoE (Chen
+et al., 2026) emphasizes attention–FFN capacity
+balancing. Meanwhile, advances in latent atten-
+tion, gated linear attention, and residual connec-
+tivity broaden the architectural settings for recur-
+rent computation (DeepSeek-AI, 2024; Kimi Team,
+2025). In particular, mHC (Xie et al., 2026) and At-
+tention Residuals (Kimi Team, 2026) enrich inter-
+layer residual information flow, and SenseNova-
+Loop (OpenSenseNova, 2026) combines recur-
+rence with hybrid attention and mHC. Our work
+investigates how parameter restoration changes the
+preferred Core partition and compares allocation
+strategies under iso-parameter and iso-FLOP bud-
+gets. We further evaluate the same recurrent formu-
+lation across MLA- and KDA-based MoE models,
+alongside a separate study of its compatibility with
+mHC.
+3
+Information Flow Design for Looped
+Transformers
+3.1
+Base Architecture
+We build on the three-stage Prelude–Core–Coda
+architecture (Geiping et al., 2025; Prairie et al.,
+2026), where the Prelude P extracts initial repre-
+sentations, the weight-shared Core Fω iteratively
+refines hidden states over R passes, and the Coda C
+maps the final state to next-token predictions (Fig-
+ure 2). Given a token sequence x of length n and
+hidden dimension d, a standard three-stage forward
+pass computes:
+e = P(Embed(x)),
+ht = Fω
+ M(ht−1, e)
+
+,
+t = 1, . . . , R,
+z = C(hR),
+(1)
+where e ∈Rn×d is the Prelude output, ht is the
+hidden state after the t-th Core iteration, and M
+denotes the fusion operator combining the previ-
+ous state with e. Throughout the forward pass, P
+and C execute once, whereas Fω reuses parame-
+ters ω across all R passes. Below, we refine this
+framework along two axes: inner-loop state up-
+dates within the Core (Section 3.2) and a cross-
+stage residual connection from the Prelude to the
+Coda (Section 3.3).
+3.2
+Inner-Loop State Updates
+Within the weight-shared Core, iterative refinement
+requires coordinating the fixed input representation
+with evolving hidden states across passes. We for-
+mulate inner-loop state updates through a direct
+first-iteration pass, boundary normalization, and a
+channel-wise gated fusion operator M (Figure 2).
+Direct First-Iteration Pass and Gated State
+Transition.
+Given the Prelude output e, we apply
+Root Mean Square Layer Normalization (Zhang
+and Sennrich, 2019) NE to obtain ˜e = NE(e) and
+route it directly into the shared Core for the first
+pass:
+h1 = Fω(˜e),
+˜e = NE(e).
+(2)
+Across repeated passes through Fω, unnormalized
+residual updates accumulate and cause the hidden-
+state magnitude to grow rapidly relative to the
+fixed input representation, which can overwhelm
+the injected input signal. For subsequent itera-
+tions t ∈{2, . . . , R}, we therefore apply inter-step
+boundary RMSNorm Nt−1 to align the scale of the
+recurrent state with the normalized input ˜e prior to
+3
+
+
+fusion:
+ut = M
+ Nt−1(ht−1), ˜e
+
+= α ⊙Nt−1(ht−1) + ∆⊙B(˜e),
+ht = Fω(ut),
+(3)
+where B ∈Rd×d is a learnable projection matrix
+and ⊙denotes the Hadamard product. The channel-
+wise state retention coefficient α ∈(0, 1)d and
+input injection scale ∆∈Rd
+>0 are independently
+parameterized by separate learnable vectors θ, b ∈
+Rd:
+α = exp(−exp(θ)),
+∆= softplus(b). (4)
+Here, the Core weights ω are shared across all
+R passes, {B, θ, b} are tied across iterations t ≥
+2, and each boundary normalization Nt−1 uses
+iteration-specific scale parameters strictly confined
+to internal gated fusion.
+Relation to Prior Gated Fusion.
+Prior recur-
+rent designs such as Huginn (Geiping et al., 2025)
+and Parcae (Prairie et al., 2026) initialize h0 with
+isotropic Gaussian noise and inject inputs at ev-
+ery step; in particular, Parcae adopts channel-wise
+gated fusion with α = exp(−∆⊙exp(a)) and
+∆= softplus(b). Our formulation differs in two
+key respects:
+• Direct first-iteration input. Initializing h0
+with unconditioned Gaussian noise forces a
+shared retention coefficient α to simultane-
+ously suppress stochastic noise at t = 1 and
+preserve structured semantic trajectories at
+t ≥2. Anchoring the first pass directly on ˜e
+in Eq. (2) eliminates this optimization conflict
+so that recurrent feedback operates exclusively
+on meaningful Core states.
+• Independent retention and injection. In
+Parcae’s parameterization α = exp(−∆⊙
+exp(a)), state retention and input injection
+are coupled through b: holding a fixed yields
+∂αi
+∂∆i
+= −αi exp(ai) < 0,
+i = 1, . . . , d,
+(5)
+so increasing the input injection scale ∆i in-
+evitably suppresses state retention αi for a
+fixed ai (creating gradient coupling through
+bi). By contrast, our formulation in Eq. (4)
+parameterizes α and ∆with separate vectors
+θ and b (corresponding to a bijective channel-
+wise mapping θ = a + log ∆), preserving the
+exact functional range α ∈(0, 1) while en-
+suring ∂α/∂b = 0. State retention and input
+injection thus remain jointly optimized under
+the training objective without direct parameter
+entanglement.
+3.3
+Cross-Stage Residual Connection
+In a standard Pre-Norm Transformer without loop
+boundaries, an unobstructed direct residual path-
+way connects early representations to later layers.
+In the recurrent architecture above, however, insert-
+ing NE before the first Core pass and boundary
+normalization Nt−1 (together with gated fusion
+M) between iterations—while essential for align-
+ing feature scales and preventing growing recurrent
+states from overwhelming ˜e—interrupts this direct
+residual pathway from the Prelude to the Coda.
+Breaking this shortcut restricts direct gradient prop-
+agation back to the Prelude and forces the termi-
+nal state hR to simultaneously encode multi-step
+refinements and preserve initial low-level represen-
+tations.
+To restore a direct residual pathway without com-
+promising internal scale alignment, we introduce a
+cross-stage residual connection that bypasses NE,
+the shared Core, and all boundary normalization
+layers Nt−1. Specifically, we add the unnormalized
+Prelude output e directly to the final recurrent state
+hR before entering the Coda:
+z = C(e + hR).
+(6)
+This single cross-stage addition introduces no ex-
+tra trainable parameters, preserves an unobstructed
+gradient path from the Coda to the Prelude, and
+allows the recurrent Core to focus on learning com-
+plementary iterative refinements on top of the ini-
+tial representation.
+4
+Loop Configuration and Parameter
+Allocation
+Building upon the information-flow design in Sec-
+tion 3, we systematically examine the joint config-
+uration of loop topology and parameter capacity.
+At a fixed unrolled depth and per-layer configura-
+tion, changing the loop partition alters the number
+of independently parameterized layers and, con-
+sequently, the capacity that must be restored to
+meet the parameter budget. We therefore study
+loop configuration and budget restoration jointly:
+first investigating recurrence count and Core depth
+under iso-parameter and iso-FLOP budgets, then
+4
+
+
+comparing restoration strategies and evaluating the
+effect of parameter restoration.
+4.1
+Recurrent Core Configuration
+We examine recurrent Core configuration along
+two dimensions: recurrence count and Core depth.
+Let Lpre, Lcore, and Lcoda denote the numbers of
+layers in the Prelude, Core, and Coda, respectively,
+and let R denote the recurrence count. We define
+the total unrolled depth and the Core depth ratio as
+Dtotal = Lpre + RLcore + Lcoda,
+ρ = Lcore
+Dtotal
+.
+(7)
+The Core depth ratio ρ measures the single-pass
+depth of the shared Core as a fraction of the total
+unrolled depth and corresponds to the percentages
+annotated in Figures 3 and 4. We conduct con-
+trolled sweeps on an MLA-MoE backbone with
+approximately 0.8B active and 12.9B total parame-
+ters (including 4.23B over-embedding parameters),
+fixing Dtotal = 20 under iso-parameter and iso-
+FLOP budgets via uniform expert-pool restoration
+(Section 4.2) and reporting training LM loss after
+170B tokens. For example, ρ = 5% and ρ = 35%
+correspond to Core depths of one and seven layers,
+respectively.
+Choice of recurrence count.
+We first compare
+recurrence counts while holding the Prelude and
+Coda depths fixed. Configurations connected by
+the same color in Figure 3 share these boundary-
+stage depths; Core depth and recurrence count are
+jointly adjusted to preserve the total unrolled depth.
+Two iterations yield lower training loss than config-
+urations with more iterations across the evaluated
+comparisons. For example, with three layers each
+in the Prelude and Coda, increasing the recurrence
+count from two to seven reduces the Core depth
+ratio from 35% to 10% and raises loss from 1.5603
+to 1.5684. We therefore adopt R = 2 as the default
+recurrence count, consistent with the two-pass con-
+figurations used in SMELT (Wang et al., 2026) and
+SenseNova-Loop (OpenSenseNova, 2026).
+Core depth allocation.
+Having selected the re-
+currence count, we compare the two-pass config-
+urations with different Core depth ratios in Fig-
+ure 3. Increasing the ratio from 5% to 25% and
+35% reduces training loss from 1.5759 to 1.5618
+and 1.5603, respectively. Further increasing it to
+45% raises loss to 1.5702. At fixed unrolled depth,
+2
+3
+4
+5
+6
+7
+Recurrence count R
+1.560
+1.565
+1.570
+1.575
+Training LM loss
+5% | 1.575937
+15% | 1.564975
+5% | 1.573816
+25% | 1.561756
+10% | 1.566468
+30% | 1.561025
+20% | 1.561940
+10% | 1.563824
+35% | 1.560288
+10% | 1.568435
+45% | 1.570176
+Core layer executions
+2
+6
+10
+12
+14
+18
+Figure 3: Training LM loss after 170B tokens under iso-
+parameter and iso-FLOP budgets, with 20 unrolled lay-
+ers and parameter capacity restored via uniform expert-
+pool expansion (Section 4.2). Colors group configura-
+tions with the same total number of Core layer execu-
+tions and fixed Prelude and Coda depths. Point labels
+give the Core depth ratio ρ as a percentage, followed
+by loss. The run with three iterations and 18 Core layer
+executions diverged (loss 6.931539) and is omitted from
+the plotted range.
+expanding the shared Core reduces the number of
+independent boundary layers: ratios of 25%–35%
+retain three to five layers each in the Prelude and
+Coda, whereas a ratio of 45% leaves only one layer
+in each stage. These results show that extending
+the shared span does not yield monotonic improve-
+ments. We consequently use two Core iterations
+and allocate 25%–35% of the total unrolled depth
+to the single-pass Core in subsequent experiments.
+4.2
+Parameter Budget Restoration Strategies
+To compensate for the independent parameter ca-
+pacity removed by weight sharing, existing ap-
+proaches adopt different budget-restoration strate-
+gies. SMELT (Wang et al., 2026) jointly adjusts
+model depth and width, narrowing the hidden di-
+mension to accommodate additional recurrent com-
+putation and increasing the expert count to restore
+parameter capacity. LoopMoE (Chen et al., 2026)
+instead expands the MLA Q/KV low-rank projec-
+tions, reduces individual expert widths, and en-
+larges the expert pool, redistributing capacity be-
+tween attention and FFN modules.
+We incorporate these restoration strategies into
+our recurrent framework and compare three vari-
+5
+
+
+ants on an MLA-MoE backbone: depth–width re-
+allocation (Depth–Width), attention–FFN realloca-
+tion (Attn–FFN), and uniform layer-wise expert-
+pool expansion (Ours). Our strategy restores the pa-
+rameter budget by increasing expert counts across
+physical layers while retaining the hidden dimen-
+sion, attention configuration, per-expert FFN width,
+and number of activated experts. All variants use
+the same training data, tokenizer, and learning-rate
+schedule, with iso-parameter and iso-FLOP budget
+targets, and are evaluated at approximately 100B
+training tokens.
+Strategy
+∆Val. Avg.
+∆MMLU
+∆CMMLU
+Ours
+0.0000
+0.0000
+0.0000
+Depth–Width
+−0.0007
++0.0025
+−0.0198
+Attn–FFN
++0.0112
++0.0323
++0.0217
+Strategy
+∆GSM8K
+∆FullStack
+Bench
+∆OWT2
+Ours
+0.0000
+0.0000
+0.0000
+Depth–Width
++0.0019
++0.0141
+−0.0009
+Attn–FFN
++0.0086
++0.0181
++0.0090
+Table 1: Changes in validation loss relative to Ours.
+Negative values indicate improvements, while positive
+values indicate degradation. ∆Val. Avg. denotes the
+change in the unweighted mean loss across our 20 held-
+out validation sets, with five representative sets shown
+individually.
+As shown in Table 1, Attn–FFN increases mean
+validation loss by approximately 0.0112 relative to
+Ours, whereas Depth–Width reduces it by approx-
+imately 0.0007. The aggregate gap between Ours
+and Depth–Width is small, while their task-level
+results reveal different trade-offs: Ours achieves
+lower losses on MMLU (Hendrycks et al., 2021),
+GSM8K (Cobbe et al., 2021), and FullStack-
+Bench (Liu et al., 2024), whereas Depth–Width
+performs better on CMMLU (Li et al., 2024) and
+OWT2 (Gao et al., 2021). Given the small aggre-
+gate loss gap and task-dependent trade-offs, we also
+consider compatibility with existing implementa-
+tions. Expert-pool expansion preserves the original
+attention and per-expert FFN dimensions, facilitat-
+ing reuse of existing kernel implementations. We
+therefore adopt uniform layer-wise expert-pool ex-
+pansion as the default restoration strategy.
+Effect of parameter restoration.
+We further
+evaluate the selected strategy by comparing Core
+configurations with and without parameter restora-
+tion. These experiments use two Core iterations
+5%
+15%
+25%
+35%
+45%
+Core depth ratio ρ
+1.560
+1.570
+1.580
+1.590
+Training LM loss
+1.576043
+1.577199
+1.569050
+1.575146
+1.592185
+1.575937
+1.564975
+1.561756
+1.560288
+1.570176
+Without parameter restoration
+Uniform expert-based restoration
+Non-recurrent reference (1.587159)
+Figure 4: Effect of parameter restoration across Core
+depth ratios ρ. All models have 20 unrolled layers and
+two Core iterations (R = 2). Values are training LM
+loss after 170B tokens. Green: uniform layer-wise ex-
+pert expansion; blue: no restoration. The dashed line
+marks the non-recurrent baseline; circles identify each
+curve’s best configuration.
+and 20 unrolled layers, retain the same loop topol-
+ogy before and after restoration, and report training
+LM loss after 170B tokens. As shown in Figure 4,
+uniform layer-wise expert expansion lowers loss
+across all evaluated configurations. For Core depth
+ratios of 25% and 35%, restoration reduces loss
+from 1.5691 and 1.5751 to 1.5618 and 1.5603, re-
+spectively. These results demonstrate that replen-
+ishing the parameter capacity removed by weight
+sharing through expert-pool expansion further im-
+proves training loss.
+Together, these findings motivate a unified con-
+figuration with two Core iterations, a single-pass
+Core depth of 25%–35% of the total unrolled depth,
+and uniform layer-wise expert expansion. We eval-
+uate this configuration across distinct attention
+backbones in the next section.
+5
+Scaling Validation and Ablations
+Our experiments examine inner-loop state updates
+and the cross-stage residual connection, together
+with the applicability of the unified recurrent de-
+sign across modern backbones. We evaluate large-
+scale pre-training with MLA and KDA attention un-
+der iso-parameter and iso-FLOP budgets, compare
+against Parcae and SMELT on a common back-
+bone using public Dolma 3 Mix data (Team Olmo,
+2025), and analyze components through controlled
+ablations. Experiments with mHC further examine
+compatibility with multiple residual streams.
+6
+
+
+Attention
+Model
+MMLU
+CMMLU
+C-Eval
+BBH
+Avg.
+Baseline
+70.44
+75.96
+76.31
+48.09
+67.70
+MLA
+Ours
+71.03 (+0.59)
+76.35 (+0.39)
+77.09 (+0.78)
+50.95 (+2.86)
+68.86 (+1.16)
+Baseline
+68.69
+74.92
+73.83
+44.24
+65.42
+KDA
+Ours
+70.63 (+1.94)
+76.50 (+1.58)
+75.39 (+1.56)
+48.32 (+4.08)
+67.71 (+2.29)
+Table 2: Main results at 1T training tokens. Scores are percentages (higher is better); parentheses show gains in pp.
+Avg. is the unweighted mean of all four benchmarks.
+5.1
+Experimental Setup
+Models and budgets.
+To evaluate recurrent com-
+putation at scale, we consider two MoE language
+models whose attention modules are implemented
+with MLA and KDA, respectively.
+The MLA
+model has 4.37B active and 69B total parame-
+ters, including 31B over-embedding (OE) parame-
+ters (Liu et al., 2026); the KDA model has 3.24B
+active and 51B total parameters, including 10B OE
+parameters. Each recurrent model is paired with
+its corresponding non-recurrent baseline under iso-
+parameter and iso-FLOP budgets, and all main ex-
+periments use 1T training tokens. Total parameter
+counts include shared weights once, whereas active
+scales follow the unrolled execution convention,
+counting each access to the shared Core.
+Following the configuration principles in Sec-
+tion 4 (R = 2, ρ ∈[25%, 35%]), we configure
+the MLA and KDA models with unrolled depths
+Dtotal = 28 (ρ = 28.6%) and Dtotal = 32
+(ρ = 25.0%), respectively, using symmetric Pre-
+lude and Coda stages (full layer breakdowns in
+Appendix A). Both configurations preserve their
+backbone-specific attention computations while
+incorporating the same inner-loop state updates
+and cross-stage residual connection. Reallocating
+the parameters saved by weight sharing into ex-
+tra routed experts per layer restores the removed
+capacity within the prescribed budgets.
+Evaluation.
+We assess model performance on
+MMLU (Hendrycks et al., 2021), CMMLU (Li
+et al., 2024), C-Eval (Huang et al., 2023), and
+BBH (Suzgun et al., 2023). Recurrent models and
+their paired baselines share the same evaluation
+scope and scoring protocol. Scores are reported
+as percentages and gains as percentage points (pp).
+The aggregate score is the unweighted mean across
+all four evaluations, and the aggregate gain is com-
+puted relative to the corresponding non-recurrent
+baseline.
+Additional experiments.
+Comparisons with Par-
+cae and SMELT use a common GQA-MoE back-
+bone (Ainslie et al., 2023; Qwen Team, 2025) with
+approximately 0.8B active and 7.4B total param-
+eters, trained on 200B tokens from a fixed subset
+of the public Dolma 3 Mix dataset. Component
+ablations use an MLA-MoE recurrent model with
+approximately 1.3B active and 14.6B total param-
+eters, including 4.23B OE parameters, evaluated
+near 100B tokens. The mHC comparison uses the
+same token budget and approximately 1.3B active
+parameters in both models, with 14.5B total param-
+eters for the non-recurrent baseline and 11.9B for
+the recurrent model; both include 4.23B OE param-
+eters. Detailed training protocols, implementation
+choices, and parameter accounting are provided in
+Appendices A–C.
+5.2
+Main Results
+The unified recurrent design yields consistent
+gains across both attention architectures under iso-
+parameter and iso-FLOP budgets. As shown in
+Table 2, the recurrent models outperform their non-
+recurrent counterparts on all four evaluations after
+1T training tokens. The average score increases
+from 67.70 to 68.86 with MLA and from 65.42 to
+67.71 with KDA, corresponding to improvements
+of 1.16 and 2.29 pp.
+The strongest improvements occur on BBH,
+where the MLA model advances from 48.09 to
+50.95 and the KDA model from 44.24 to 48.32,
+yielding gains of 2.86 and 4.08 pp, respectively.
+5.3
+Comparison with Existing Recurrent
+Methods
+Comparison setup.
+To examine how the pro-
+posed information-flow design compares with es-
+tablished recurrent formulations, we implement
+our method, Parcae (Prairie et al., 2026), and
+SMELT (Wang et al., 2026) on a common Qwen3-
+style GQA-MoE backbone (Qwen Team, 2025;
+Ainslie et al., 2023), alongside a non-recurrent ref-
+erence. Parcae organizes recurrence through input
+7
+
+
+Method
+Parameters (B)
+Dolma Val PPL ↓
+LAMBADA PPL ↓
+Active
+Total
+83.89B
+200B
+83.89B
+200B
+Baseline
+0.80
+7.406
+9.3692
+8.4948
+8.8334
+6.7623
+Parcae
+0.81
+7.430
+9.2175
+8.3596
+8.2774
+6.6870
+SMELT
+0.81
+7.361
+9.2050
+8.3567
+8.3895
+6.4837
+Ours
+0.81
+7.427
+9.1839
+8.3109
+8.0987
+6.2286
+Table 3: Comparison on the common GQA-MoE backbone. Active parameter scales are approximate unrolled
+execution counts; total parameters count shared weights once. Both are reported in billions. Column groups report
+PPL at 83.89B and 200B training tokens; lower is better.
+injection and gated state feedback, whereas SMELT
+repeats the middle portion of the network and ad-
+justs internal computation widths and expert capac-
+ity to satisfy the parameter and compute constraints.
+This comparison evaluates the complete recurrent
+formulations, with their common-backbone adapta-
+tions documented in Appendix B.
+All configurations share a fixed Dolma 3 Mix
+subset, the Qwen3 Base tokenizer, and an identi-
+cal training-token stream, and are trained for 200B
+tokens. The reference model has approximately
+0.80B active and 7.406B total parameters; the re-
+current variants have approximately 0.81B active
+and 7.4B total parameters, with individual counts
+reported in Table 3.
+Each layer visit activates
+eight experts. Our method and Parcae share the
+same two-pass configuration (Dtotal = 15, R = 2,
+ρ = 26.7%), expert-pool size, and basic attention
+setup, while SMELT combines more layer visits
+with narrower attention projections and expert in-
+termediate dimensions.
+Evaluation protocol.
+We measure language-
+modeling performance using perplexity (PPL) on
+held-out Dolma 3 Mix text and target-word PPL on
+LAMBADA (Paperno et al., 2016). Dolma valida-
+tion PPL is the exponential of the validation loss;
+LAMBADA is evaluated on the same fixed set of
+5,153 test examples in a zero-shot setting. Each
+metric is compared across methods under its own
+scoring protocol.
+The proposed framework achieves the lowest per-
+plexity on both evaluations at both training check-
+points (Table 3). At 200B tokens, Dolma valida-
+tion PPL reaches 8.3109, compared with 8.3596
+for Parcae and 8.3567 for SMELT, while LAM-
+BADA target-word PPL reaches 6.2286, compared
+with 6.6870 and 6.4837, respectively. Relative to
+the non-recurrent baseline, these results represent
+reductions of 2.16% on Dolma and 7.89% on LAM-
+BADA. The same ranking at 83.89B tokens indi-
+cates that the advantage holds at both evaluated
+stages of training.
+5.4
+Component Ablations
+Ablation setup.
+To examine the contributions
+of the cross-stage residual connection and inner-
+loop state updates, we conduct controlled abla-
+tions on an MLA-MoE model with approximately
+1.3B active and 14.6B total parameters, including
+4.23B OE parameters. All recurrent variants share
+the same two-pass Prelude–Core–Coda configura-
+tion (R = 2), expert capacity, and training setup,
+and are evaluated near 100B tokens. We remove
+the cross-stage residual or replace the inner-loop
+state-update mechanism while retaining the remain-
+ing components. A depth-matched non-recurrent
+model with approximately 1.3B active and 14.5B
+total parameters provides an additional reference.
+Architecture details and loss aggregation are speci-
+fied in Appendix C.
+Variant
+Val. loss ↓Train loss ↓
+Non-recurrent baseline
+1.848004
+1.626291
+Full method
+1.801952
+1.586823
+No cross-stage residual
+1.832668
+1.608155
+Additive fusion
+1.804715
+1.588480
+Concatenation + random
+1.810110
+1.592462
+Table 4: Component ablations near 100B tokens. Lower
+losses are better; validation loss is the unweighted mean
+across the 20 held-out validation sets. Concatenation +
+random applies concatenation-based linear fusion from
+a random initial state. Other components are retained
+unless specified.
+Cross-stage residual connection.
+The cross-
+stage residual connection provides a direct route
+from the Prelude representation to the Coda, com-
+plementing the information carried by the recurrent
+state. Removing this connection increases valida-
+tion loss from 1.8020 to 1.8327 and training loss
+8
+
+
+from 1.5868 to 1.6082 (Table 4). This degradation
+supports the value of preserving initial representa-
+tions through an explicit cross-stage pathway.
+Inner-loop state updates.
+To evaluate the pro-
+posed inner-loop state-update design, we compare
+our gated fusion operator (with direct first-iteration
+input) against element-wise addition (retaining di-
+rect first-iteration input) and concatenation fol-
+lowed by a linear projection from a random ini-
+tial state, while keeping the cross-stage residual
+connection intact. The two alternatives increase
+validation loss from 1.8020 to 1.8047 and 1.8101,
+respectively, with the same ordering in training loss
+(1.5868 vs. 1.5885 and 1.5925). Although additive
+fusion remains competitive, the complete method
+achieves the lowest training and validation losses
+across all evaluated configurations, supporting ex-
+plicit channel-wise control over state retention and
+input injection together with the cross-stage resid-
+ual connection.
+5.5
+Integration with mHC
+Because our looped design explicitly structures
+inner-loop state updates and cross-stage residual
+connectivity, a natural concern is whether its gains
+overlap with recent architectures that enhance inter-
+layer residual information flow, such as Manifold-
+Constrained Hyper-Connections (mHC) (Xie et al.,
+2026) and Attention Residuals (Kimi Team, 2026).
+To verify whether recurrent computation delivers
+orthogonal gains on top of enhanced residual con-
+nectivity, we combine recurrence with four-stream
+mHC and compare against a non-recurrent mHC
+baseline using the same data, sequence length,
+global batch size, and approximately 100B training
+tokens. The recurrent model matches the unrolled
+depth of the non-recurrent baseline using a two-
+pass shared Core (R = 2; details in Appendix C).
+To examine recurrence with the existing mHC
+configuration, we retain the original expert-pool
+size without restoring the parameter capacity re-
+moved by sharing. Both models have approxi-
+mately 1.3B active parameters, while the recurrent
+model has 11.9B total parameters compared with
+14.5B for the baseline; both include approximately
+4.23B OE parameters. This comparison uses a
+common training-token budget while allowing to-
+tal parameter capacity to differ.
+The recurrent model improves language model-
+ing while using fewer total parameters (Table 5).
+Mean validation loss decreases from 1.8104 to
+Model
+Params (B)
+Val. loss ↓Train loss ↓
+Active Total
+mHC
+1.3
+14.5
+1.810356
+1.591382
+mHC + Loop
+1.3
+11.9
+1.784440
+1.572306
+Table 5: mHC comparison near 100B tokens. Active and
+total parameter counts are reported in billions (shared
+weights counted once, without parameter restoration).
+Validation loss is the unweighted mean across the 20
+held-out validation sets; training loss is averaged over a
+window near 100B tokens.
+1.7844—with improvements on 18 of the 20 held-
+out validation sets—and training loss decreases
+from 1.5914 to 1.5723. These findings support
+the compatibility of the proposed information-flow
+design with mHC in this setting.
+6
+Conclusion
+We presented a framework for scaling looped
+MoE language models under matched budgets that
+jointly addresses information flow and parameter
+allocation. Inner-loop state updates with gated fu-
+sion stabilize iterative refinement, while a cross-
+stage residual connection preserves a direct resid-
+ual pathway from the Prelude to the Coda. Allo-
+cating 25%–35% of the unrolled depth to a two-
+pass shared Core and reallocating the parameters
+saved by weight sharing into extra routed experts
+per layer yields consistent gains over iso-parameter
+and iso-FLOP baselines with MLA and KDA back-
+bones up to 69B parameters, remains effective
+alongside mHC, and achieves lower perplexity than
+prior looped methods. Future work includes ex-
+tending the analysis to larger recurrence counts and
+token-adaptive depth, and measuring end-to-end
+inference efficiency.
+Limitations
+Our study focuses on pre-training looped MoE lan-
+guage models from scratch. First, we do not investi-
+gate warm-starting or retrofitting looped recurrence
+from existing non-recurrent checkpoints. Second,
+all evaluations are conducted on base models after
+pre-training without post-training stages such as su-
+pervised fine-tuning (SFT) or reinforcement learn-
+ing (RL), leaving the interaction between looped
+MoE pre-training and post-training alignment to
+future work.
+9
+
+
+References
+Joshua Ainslie, James Lee-Thorp, Michiel de Jong, Yury
+Zemlyanskiy, Federico Lebrón, and Sumit Sanghai.
+2023. GQA: Training generalized multi-query trans-
+former models from multi-head checkpoints. In Pro-
+ceedings of the 2023 Conference on Empirical Meth-
+ods in Natural Language Processing, pages 4895–
+4901. Association for Computational Linguistics.
+Sangmin Bae, Adam Fisch, Hrayr Harutyunyan, Zi-
+wei Ji, Seungyeon Kim, and Tal Schuster. 2025a.
+Relaxed recursive transformers: Effective parame-
+ter sharing with layer-wise LoRA. arXiv preprint
+arXiv:2410.20672.
+Sangmin Bae, Yujin Kim, Reza Bayat, Sungnyun Kim,
+Jiyoun Ha, Tal Schuster, Adam Fisch, Hrayr Haru-
+tyunyan, Ziwei Ji, Aaron Courville, and Se-Young
+Yun. 2025b. Mixture-of-Recursions: Learning dy-
+namic recursive depths for adaptive token-level com-
+putation. In Proceedings of the 42nd International
+Conference on Machine Learning.
+Wenkai Chen, Tianshu Li, Wenyong Huang, Yichun
+Yin, Lifeng Shang, and Chengwei Qin. 2026. Loop-
+MoE: Unifying iterative computation with mixture-
+of-experts for language modeling. arXiv preprint
+arXiv:2606.04438.
+Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian,
+Mark Chen, Heewoo Jun, Łukasz Kaiser, Matthias
+Plappert, Jerry Tworek, Jacob Hilton, Reiichiro
+Nakano, Christopher Hesse, and John Schulman.
+2021. Training verifiers to solve math word prob-
+lems. arXiv preprint arXiv:2110.14168.
+Róbert Csordás, Kazuki Irie, Jürgen Schmidhuber,
+Christopher Potts, and Christopher D. Manning. 2024.
+MoEUT: Mixture-of-experts universal transformers.
+In Advances in Neural Information Processing Sys-
+tems, volume 37, pages 28589–28614.
+DeepSeek-AI. 2024. DeepSeek-V2: A strong, economi-
+cal, and efficient mixture-of-experts language model.
+arXiv preprint arXiv:2405.04434.
+Mostafa Dehghani, Stephan Gouws, Oriol Vinyals,
+Jakob Uszkoreit, and Łukasz Kaiser. 2019. Universal
+transformers. arXiv preprint arXiv:1807.03819.
+Leo Gao, Stella Biderman, Sid Black, Laurence Gold-
+ing, Travis Hoppe, Charles Foster, Jason Phang,
+Horace He, Anish Thite, Noa Nabeshima, Shawn
+Presser, and Connor Leahy. 2021.
+The Pile: An
+800GB dataset of diverse text for language modeling.
+arXiv preprint arXiv:2101.00027.
+Zitian Gao, Yilong Chen, Yihao Xiao, Xinyu Yang, Ran
+Tao, Joey Zhou, and Bryan Dai. 2026. Loop the
+Loopies! arXiv preprint arXiv:2607.16051.
+Jonas Geiping, Sean McLeish, Neel Jain, John Kirchen-
+bauer, Siddharth Singh, Brian R. Bartoldson, Bhavya
+Kailkhura, Abhinav Bhatele, and Tom Goldstein.
+2025. Scaling up test-time compute with latent rea-
+soning: A recurrent depth approach. arXiv preprint
+arXiv:2502.05171.
+Dan Hendrycks, Collin Burns, Steven Basart, Andy Zou,
+Mantas Mazeika, Dawn Song, and Jacob Steinhardt.
+2021. Measuring massive multitask language under-
+standing. arXiv preprint arXiv:2009.03300.
+Yuzhen Huang, Yuzhuo Bai, Zhihao Zhu, Junlei
+Zhang, Jinghan Zhang, Tangjun Su, Junteng Liu,
+Chuancheng Lv, Yikai Zhang, Jiayi Lei, Yao Fu,
+Maosong Sun, and Junxian He. 2023. C-Eval: A
+multi-level multi-discipline Chinese evaluation suite
+for foundation models. In Advances in Neural Infor-
+mation Processing Systems, volume 36, pages 62991–
+63010.
+Ahmadreza Jeddi, Marco Ciccone, and Babak Taati.
+2026.
+LoopFormer: Elastic-depth looped trans-
+formers for latent reasoning via shortcut modulation.
+arXiv preprint arXiv:2602.11451.
+Keller Jordan, Yuchen Jin, Vlado Boza, Jiacheng You,
+Franz Cesista, Laker Newhouse, and Jeremy Bern-
+stein. 2024. Muon: An optimizer for hidden layers
+in neural networks. Blog post.
+Kimi Team. 2025.
+Kimi Linear:
+An expressive,
+efficient attention architecture.
+arXiv preprint
+arXiv:2510.26692.
+Kimi Team. 2026. Attention residuals. arXiv preprint
+arXiv:2603.15031.
+Zhenzhong Lan, Mingda Chen, Sebastian Goodman,
+Kevin Gimpel, Piyush Sharma, and Radu Soricut.
+2020. ALBERT: A lite BERT for self-supervised
+learning of language representations. arXiv preprint
+arXiv:1909.11942.
+Haonan Li, Yixuan Zhang, Fajri Koto, Yifei Yang, Hai
+Zhao, Yeyun Gong, Nan Duan, and Timothy Bald-
+win. 2024. CMMLU: Measuring massive multitask
+language understanding in Chinese. In Findings of
+the Association for Computational Linguistics: ACL
+2024, pages 11260–11285. Association for Computa-
+tional Linguistics.
+Hong Liu, Jiaqi Zhang, Chao Wang, Xing Hu, Linkun
+Lyu, Jiaqi Sun, Xurui Yang, Bo Wang, Fengcun Li,
+Yulei Qian, Lingtong Si, Yerui Sun, Rumei Li, Peng
+Pei, Yuchen Xie, and Xunliang Cai. 2026. Scaling
+embeddings outperforms scaling experts in language
+models. arXiv preprint arXiv:2601.21204.
+Jingyuan Liu, Jianlin Su, Xingcheng Yao, Zhejun Jiang,
+Guokun Lai, Yulun Du, Yidao Qin, Weixin Xu, En-
+zhe Lu, Junjie Yan, Yanru Chen, Huabin Zheng, Yibo
+Liu, Shaowei Liu, Bohong Yin, Weiran He, Han Zhu,
+Yuzhi Wang, Jianzhou Wang, and 9 others. 2025.
+Muon is scalable for LLM training. arXiv preprint
+arXiv:2502.16982.
+10
+
+
+Siyao Liu, He Zhu, Jerry Liu, Shulin Xin, Aoyan Li, Rui
+Long, Li Chen, Jack Yang, Jinxiang Xia, Z. Y. Peng,
+Shukai Liu, Zhaoxiang Zhang, Ge Zhang, Wenhao
+Huang, Kai Shen, and Liang Xiang. 2024. FullStack
+Bench: Evaluating LLMs as full stack coders. arXiv
+preprint arXiv:2412.00535.
+Ilya Loshchilov and Frank Hutter. 2019.
+Decou-
+pled weight decay regularization.
+arXiv preprint
+arXiv:1711.05101.
+Sean McLeish, Ang Li, John Kirchenbauer, Dayal Singh
+Kalra, Brian R. Bartoldson, Bhavya Kailkhura, Avi
+Schwarzschild, Jonas Geiping, Tom Goldstein, and
+Micah Goldblum. 2025. Teaching pretrained lan-
+guage models to think deeper with retrofitted recur-
+rence. arXiv preprint arXiv:2511.07384.
+OpenSenseNova. 2026. SenseNova-Loop-9B-Preview.
+GitHub repository.
+Denis Paperno, Germán Kruszewski, Angeliki Lazari-
+dou, Ngoc Quan Pham, Raffaella Bernardi, Sandro
+Pezzelle, Marco Baroni, Gemma Boleda, and Raquel
+Fernández. 2016. The LAMBADA dataset: Word
+prediction requiring a broad discourse context. In
+Proceedings of the 54th Annual Meeting of the Associ-
+ation for Computational Linguistics (Volume 1: Long
+Papers), pages 1525–1534. Association for Compu-
+tational Linguistics.
+Hayden Prairie,
+Zachary Novack,
+Taylor Berg-
+Kirkpatrick, and Daniel Y. Fu. 2026. Parcae: Scal-
+ing laws for stable looped language models. arXiv
+preprint arXiv:2604.12946.
+Qwen Team. 2025. Qwen3 technical report. arXiv
+preprint arXiv:2505.09388.
+Nikunj Saunshi, Nishanth Dikkala, Zhiyuan Li, Sanjiv
+Kumar, and Sashank J. Reddi. 2025. Reasoning with
+latent thoughts: On the power of looped transformers.
+arXiv preprint arXiv:2502.17416.
+Noam Shazeer. 2020. GLU variants improve Trans-
+former. arXiv preprint arXiv:2002.05202.
+Mirac Suzgun, Nathan Scales, Nathanael Schärli, Se-
+bastian Gehrmann, Yi Tay, Hyung Won Chung,
+Aakanksha Chowdhery, Quoc Le, Ed Chi, Denny
+Zhou, and Jason Wei. 2023. Challenging BIG-bench
+tasks and whether chain-of-thought can solve them.
+In Findings of the Association for Computational
+Linguistics: ACL 2023, pages 13003–13051. Associ-
+ation for Computational Linguistics.
+Team Olmo. 2025.
+Olmo 3.
+arXiv preprint
+arXiv:2512.13961.
+Lean Wang, Huazuo Gao, Chenggang Zhao, Xu Sun,
+and Damai Dai. 2024.
+Auxiliary-loss-free load
+balancing strategy for mixture-of-experts.
+arXiv
+preprint arXiv:2408.15664.
+Shaowen Wang, Ge Zhang, Kairong Luo, Yuhao Wu,
+Shaofan Liu, Jiaheng Liu, Wenhao Huang, Shen Yan,
+and Jian Li. 2026. SMELT: Scaling laws for compute-
+matched MoE looped transformers. arXiv preprint
+arXiv:2609.01343.
+Zhenda Xie, Yixuan Wei, Huanqi Cao, Chenggang
+Zhao, Chengqi Deng, Jiashi Li, Damai Dai, Huazuo
+Gao, Jiang Chang, Kuai Yu, Liang Zhao, Shangyan
+Zhou, Zhean Xu, Zhengyan Zhang, Wangding Zeng,
+Shengding Hu, Yuqing Wang, Jingyang Yuan, Lean
+Wang, and Wenfeng Liang. 2026. mHC: Manifold-
+constrained hyper-connections.
+arXiv preprint
+arXiv:2512.24880.
+Biao Zhang and Rico Sennrich. 2019. Root mean square
+layer normalization. In Advances in Neural Informa-
+tion Processing Systems, volume 32, pages 12360–
+12371.
+Rui-Jie Zhu, Zixuan Wang, Kai Hua, Tianyu Zhang,
+Ziniu Li, Haoran Que, Boyi Wei, Zixin Wen, Fan Yin,
+He Xing, Lu Li, Jiajun Shi, Kaijing Ma, Shanda Li,
+Taylor Kergan, Andrew Smith, Xingwei Qu, Mude
+Hui, Bohong Wu, and 14 others. 2026. Scaling la-
+tent reasoning via looped language models. arXiv
+preprint arXiv:2510.25741.
+11
+
+
+A
+Training Details
+For the 1T-token main experiments, the MLA
+model uses a 6 + 8 × 2 + 6 Prelude–Core–Coda
+layout (Dtotal = 28, ρ = 28.6%) and the KDA
+model uses an 8 + 8 × 2 + 8 layout (Dtotal = 32,
+ρ = 25.0%).
+Table 6 lists the training hyper-
+parameters for the model with KDA attention.
+The recurrent-method comparisons and the com-
+ponent/mHC configurations are documented sepa-
+rately in Appendices B and C.
+Setting
+Value
+Sequence length
+8,192 tokens
+Micro batch size
+1
+Global batch size
+1,024 →4,096 →8,192
+Precision
+BF16
+Optimizer
+Muon with AdamW parameter
+groups
+Base learning rate
+7.5 × 10−4
+AdamW base rate
+7.5 × 10−4
+Learning-rate schedule
+Linear warmup, then constant
+Warmup samples
+1,024,000 sequences
+Warmup steps
+1,000
+AdamW (β1, β2)
+(0.9, 0.95)
+AdamW ϵ
+10−16
+Muon momentum
+0.95
+Muon NS iterations
+5
+Base weight decay
+0.1
+Injection weight decay
+0
+Gradient clipping
+1.0
+Attention / hidden dropout 0 / 0
+Random seed
+48
+Table 6: Training hyperparameters for the 1T-token
+main experiment with KDA attention. Learning rates
+are base values before parameter-group scaling.
+Batch-size and learning-rate schedules.
+The
+global batch size is 1,024 sequences for the first
+6,000 optimizer steps, 4,096 through step 12,000,
+and 8,192 thereafter. Learning-rate warmup spans
+1,024,000 sequences, corresponding to 1,000 ini-
+tial optimizer steps and 8,388,608,000 tokens at
+the configured sequence length. After warmup, the
+base learning rate remains constant at 7.5 × 10−4.
+Optimizer
+assignments.
+The
+implemen-
+tation uses Muon (Jordan et al., 2024; Liu
+et al., 2025) for eligible matrix parameters and
+AdamW (Loshchilov and Hutter, 2019) for the
+remaining parameter groups. The recurrent input
+projection B uses Muon, while the state-retention
+and input-injection vectors (θ, b) use AdamW.
+Recurrent fusion parameters use zero weight decay
+in this configuration, and the base weight decay for
+regularized weights is 0.1.
+Training horizon.
+The learning-rate and batch-
+size schedules are defined over a configured 30T-
+token training horizon (3,662,109,375 sequences
+at a sequence length of 8,192), and all main-
+experiment evaluations in Section 5.1 are con-
+ducted at the 1T-token checkpoint.
+B
+Details of Comparisons with Recurrent
+Methods
+B.1
+Common Backbone and Parameter
+Accounting
+All configurations use a Qwen3-style sparse MoE
+decoder (Qwen Team, 2025) with a hidden dimen-
+sion of 1536, Pre-RMSNorm (Zhang and Sennrich,
+2019), GQA attention (Ainslie et al., 2023), and
+SwiGLU experts (Shazeer, 2020). Each layer visit
+activates eight experts. The attention head dimen-
+sion is 128, the vocabulary contains 151,936 tokens,
+and the input embedding and output projection are
+untied. Every Transformer block contains an MoE
+module, with no shared experts.
+Total parameter counts include embeddings, the
+output projection, attention, experts, routers, nor-
+malization, and parameters introduced by recur-
+rence; shared weights are counted once. Active
+scales count the parameters accessed along the un-
+rolled execution path, including the output head
+and excluding the input embedding. Thus, a shared
+Core weight is counted on each visit. These scales
+do not measure the union of distinct weights se-
+lected by token-dependent routing across iterations.
+The non-recurrent reference has approximately
+0.569B active backbone parameters, or 0.803B in-
+cluding the output head. Our method and Parcae
+use the same layer layout, expert capacity, and ba-
+sic attention configuration. The SMELT adaptation
+uses more layer visits and narrower attention pro-
+jections and experts, with an enlarged expert pool.
+These are the implementations evaluated on our
+common backbone, rather than the original papers’
+complete training configurations.
+B.2
+Data and Training Protocol
+All four models use a fixed subset of the pub-
+lic Dolma 3 Mix dataset (Team Olmo, 2025)
+(allenai/dolma3_mix-6T,
+revision
+689a3ea2
+d8217e64d73a5058913fa43ad15e81aa). We tok-
+enize the data using the Qwen3 Base tokenizer and
+partition documents into training, validation, and
+test sets using a hash of the original text, prevent-
+ing exact duplicates from crossing splits. The mod-
+12
+
+
+Method
+Layout
+Active / total
+Experts/layer
+Expert width
+Q heads
+KV heads
+Baseline
+15 independent blocks
+0.80 / 7.406
+128
+768
+16
+8
+Ours
+2 + 4 × 2 + 5
+0.81 / 7.427
+176
+768
+16
+8
+Parcae
+2 + 4 × 2 + 5
+0.81 / 7.430
+176
+768
+16
+8
+SMELT
+4 + 8 × 2 + 4
+0.81 / 7.361
+192
+480
+10
+5
+Table 7: Architectures used in the common-backbone comparison. Layouts follow Prelude + Core × iterations
++ Coda notation. Active and total parameter scales are in billions; active scales are approximate unrolled counts.
+Expert width denotes the intermediate dimension.
+Setting
+Value
+Training tokens
+200B
+Sequence length
+4,096
+Global batch size
+2,048 sequences
+Precision
+BF16
+Optimizer
+AdamW
+Peak learning rate
+3 × 10−4
+Learning-rate schedule
+Linear warmup over
+approximately 2B tokens,
+then constant
+Adam (β1, β2)
+(0.9, 0.95)
+Adam ϵ
+10−8
+Base weight decay
+0.1
+Gradient clipping
+1.0
+Attention / hidden dropout 0 / 0
+Active experts per visit
+8
+Load balancing
+Auxiliary-loss-free
+expert-bias updates
+Expert-bias update rate
+10−3
+Table 8: Shared training settings for method compar-
+isons. Method-specific weight-decay assignments are
+described in Appendix B.3.
+els share the processed data snapshot and training-
+token order, and are trained for 200B tokens. The
+selected subset’s source composition is recorded
+in its manifest; we do not assume that its mixture
+proportions exactly match those of the complete
+6T-token collection.
+The
+routing
+and
+auxiliary-loss-free
+load-
+balancing rules (Wang et al., 2024) are shared
+across configurations. Routers use sigmoid scores,
+with expert biases affecting expert selection; output
+weights use the original routing scores. The auxil-
+iary load-balancing loss coefficient is zero. Shared
+Core routers and expert biases are reused across it-
+erations, while expert selection is recomputed from
+the current hidden states on each visit.
+B.3
+Recurrent Implementations
+Our method.
+The first iteration feeds the normal-
+ized Prelude representation directly into the shared
+Core. Subsequent updates mix the recurrent state
+and fixed input using independently parameterized
+state-retention and input-injection coefficients. The
+Core executes twice, and the original Prelude out-
+put is added before the Coda through the cross-
+stage residual connection. The input projection
+B, state-retention parameter θ, and input-injection
+parameter b are shared across iterations. In this
+AdamW-trained GQA-MoE setup, fusion parame-
+ters receive the main model’s weight decay (0.1),
+while normalization parameters follow the common
+normalization-parameter grouping rule.
+Parcae.
+We implement random-state initializa-
+tion, input injection, coupled state retention, and
+the output projection on the common backbone,
+with two fixed iterations and full backpropagation
+through both. The initial state follows a truncated
+normal distribution with standard deviation 0.02
+and bounds [−0.06, 0.06]. Input and output pro-
+jections are initialized to the identity. Initial input-
+injection and state-retention coefficients are approx-
+imately 0.804719 and 0.447214, respectively. Fol-
+lowing Parcae’s specification, the input/output pro-
+jections and state-retention/input-injection vectors
+use parameter groups without weight decay.
+SMELT.
+We repeat the middle eight of 16 inde-
+pendent blocks twice and scale the attention and
+MoE residual updates within the recurrent region
+by 1/2. The residual-stream dimension remains
+1536. The Q/KV head counts are 10/5, the expert
+intermediate dimension is 480, and each layer has
+192 experts. Prelude and Coda residual-update co-
+efficients remain 1.
+The comparison with Parcae evaluates the com-
+plete recurrent configurations, including initializa-
+tion, input fusion, the cross-stage residual connec-
+tion, boundary normalization, and method-specific
+optimizer grouping. It is not an isolated ablation of
+the state-retention parameterization.
+13
+
+
+B.4
+Evaluation Protocol
+Dolma validation PPL is computed by exponenti-
+ating the loss recorded explicitly for the held-out
+validation set. LAMBADA reports target-word
+PPL on a fixed evaluation version containing 5,153
+test examples in the zero-shot setting. All models
+use the same evaluation data, tokenizer, and scor-
+ing rules; recurrent models retain their two Core
+iterations at evaluation time. Training budgets in
+Table 3 refer to effective training tokens.
+C
+Ablation and mHC Experimental
+Details
+C.1
+mHC Configuration
+The recurrent mHC model matches the unrolled
+depth of the non-recurrent mHC baseline using a
+Prelude–Core–Coda topology in which the shared
+Core executes twice (R = 2), while retaining the
+original post-recurrent fusion and normalization
+boundaries in the Coda.
+Both models use four mHC residual streams, hid-
+den dimension 1536, and MLA attention with 16
+heads. The query and key–value low-rank dimen-
+sions are 768 and 256, respectively, and the expert
+intermediate dimension is 512. The expert-pool
+configuration is unchanged between the baseline
+and recurrent model; the latter does not restore the
+capacity removed by sharing. Both have approx-
+imately 1.3B active parameters. Total parameter
+counts are approximately 14.5B and 11.9B, respec-
+tively, including approximately 4.23B OE parame-
+ters in each model. The comparison uses the same
+training-token budget.
+C.2
+Component Ablation Configuration
+The ablations use MLA-MoE models without mHC.
+All recurrent variants share the same two-pass
+Prelude–Core–Coda layout (R = 2), with hidden
+dimension 1536 and expert intermediate dimension
+512. MLA uses 16 heads with query and key–value
+low-rank dimensions of 768 and 256. The recurrent
+variants incorporate uniform expert-pool restora-
+tion to match the parameter budget of the depth-
+matched non-recurrent reference (approximately
+1.3B active and 14.5B total parameters, including
+4.23B OE parameters), resulting in approximately
+1.3B active and 14.6B total parameters (including
+4.23B OE parameters).
+Across recurrent ablation variants, the backbone
+and restored expert capacity are held fixed. Remov-
+ing or replacing the fusion module changes only a
+small number of projection and control parameters.
+The full method and the variant without the cross-
+stage residual connection share the same inner-loop
+state update. Additive fusion replaces the gated op-
+erator while retaining direct first-iteration input,
+and the random-initialization concatenation variant
+applies concatenation-based linear fusion from a
+random initial state across both passes.
+Parameter scales are estimated from the effec-
+tive architecture configurations and the repository’s
+parameter-counting script. Total scales are reported
+to approximately 0.1B and OE scales to 0.01B. Ac-
+tive scales include the output head and exclude
+input embeddings and OE; they use the config-
+ured average expert-activation budget and count
+shared blocks at each unrolled visit. At approxi-
+mately 1.3B, the reported precision reflects small
+additional fusion and connection parameters and
+does not imply an exact count of distinct active
+weights for each routed token.
+C.3
+Loss Aggregation
+The mHC and ablation experiments use sequence
+length 8,192 and global batch size 2,048, corre-
+sponding to 16,777,216 tokens per optimizer step.
+Training LM loss is averaged over the last 100
+complete steps before 100B tokens: the inter-
+val [5861, 5961), covering approximately 98.33B–
+99.99B tokens. Validation loss is the unweighted
+mean over our 20 held-out validation sets (span-
+ning general domains, knowledge, math, and code)
+at step 6,000, corresponding to approximately
+100.66B tokens.
+We retrieve and freeze each complete metric se-
+ries before aggregation. If retries produce multiple
+records for the same step, the record with the latest
+timestamp is retained. All comparisons use these
+fixed snapshots and the same aggregation rules.
+Loss differences, when reported, are the variant’s
+loss minus the corresponding reference loss.
+14
