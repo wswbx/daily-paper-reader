@@ -1,0 +1,738 @@
+Title: More Than a Score: Reinforcement Learning with Verbalized Feedback for Generative Recommendation
+
+URL Source: https://arxiv.org/pdf/2611.22410v1
+
+Published Time: Wed, 18 Nov 2026 02:23:11 GMT
+
+Number of Pages: 10
+
+Markdown Content:
+# More Than a Score: Reinforcement Learning with Verbalized Feedback for Generative Recommendation 
+
+Zipeng Chen 1, Xinyu Lin 2B, Yuliang Sun 3, Sheng Zhang 1, Zeyu Wang 1, Xiaowen Shi 1, Junwei Pan 1, Chengguo Yin 1
+
+> 1
+
+Tencent Inc., China 2National University of Singapore, Singapore 3The Chinese University of Hong Kong, Hong Kong, China 
+
+> 1beckzpchen@tencent.com, dragon_201203@yeah.net, peterzywang@tencent.com, princewen2019@outlook.com, jonaspan@tencent.com, turingyin@tencent.com
+> 2xylin1028@gmail.com
+> 3ylsun@link.cuhk.edu.hk
+
+Large language models (LLMs) are increasingly used for generative recommendation, where recommended items are generated directly from users’ interaction histories. To further improve recommendation quality, reinforcement learning (RL) has been applied to align these models with recommendation objectives. However, existing RL methods rely on scalar rewards to implicitly guide exploration. These rewards do not specify which aspects of a candidate conflict with the user’s preferences or how the next candidate should differ. To address this gap, we propose VerRec, a verbalized feedback-guided RL framework for generative recommendation. Specifically, a user simulator generates personalized verbalized feedback based on the user’s historical preferences and the candidate item profile. The policy uses this feedback to produce refined recommendations. Original and refined candidates form an expanded group and are jointly optimized with group relative policy optimization. The user simulator is only required during training and is removed at inference time. Experiments on three Amazon review datasets with two generative recommendation backbones demonstrate that VerRec improves recommendation accuracy and ranking quality. Further analyses show that verbalized guidance encourages exploration of more diverse candidates and helps the policy discover more rewarding recommendations during training. 
+
+Keywords: Large Language Models, Generative Recommendation, User Simulator, Reinforcement Learning  
+
+> B
+
+Corresponding author. 
+
+## 1 Introduction 
+
+Generative recommendation (GR) reformulates personalized rec-ommendation as autoregressive generation of the next item condi-tioned on a user’s interaction history [12, 26, 37, 52]. A common training pipeline combines supervised fine-tuning (SFT) with sub-sequent reinforcement learning (RL) [10, 34, 53, 54]. Although SFT trains the recommendation policy by fitting to the interactions, its supervision is largely restricted to observed behavior, causing poor generalization and diversity [9, 21, 38, 53, 54]. RL then complements SFT by sampling items from the current policy and optimizing the policy with recommendation-oriented rewards [23, 34, 54]. Explor-ing interactions that are absent from the training data, RL extends supervision beyond observed behavior and thereby improves the generalization ability, making it an important step in GR train-ing [20, 23, 32, 44, 50]. RL for GR follows an iterative process. Conditioned on a user’s interaction history, the policy samples candidate items and receives scalar rewards based on recommendation objectives. It then up-dates its parameters to increase the likelihood of candidates with higher rewards. Prior work has applied this learning process to improve recommendation accuracy or user engagement through item generation [20, 32, 53, 54], and to optimize reasoning trajec-tories together with item predictions based on recommendation outcomes [23, 34, 44]. In essence, these methods rely on scalar re-ward to judge the policy’s behaviors and update the policy to favor those that can lead to higher rewards. User history 
+
+> Fantasy & adventure
+> Policy A
+> Policy B
+> Lack of preference alignment Lack of diversity
+> 0.1
+> Reward
+> 0.1
+> Reward
+> Same reward
+> Update Update
+> Policy
+> Why? Preference mismatch?
+> Policy A*
+> Policy B*
+> Mismatch corrected
+> Fantasy alternative
+> Repetition persists
+> Already in history
+
+Figure 1: Ambiguity of scalar reward. Preference mismatch and repetitive recommendations receive the same low reward, although they require different corrections. 
+
+However, the reliance on scalar rewards will lead to the implicit exploration issue : a low reward can only indicate an unsuccessful recommendation but fail to reveal the underlying reason and opti-mization direction. As an example shown in Figure 1, we consider a user whose interaction history contains fantasy and adventure books. Policy A recommends finance books that miss the user’s interests, whereas Policy B recommends books the user has already read and offers insufficient diversity. Both recommendations may receive the same low reward, but require different corrections: the former should move toward the user’s preferred genres, while the latter should avoid previously consumed books within those genres. The reward alone does not indicate which correction is needed, leaving the policy to discover better candidates through repeated trial and error. arXiv:2611.22410v1 [cs.IR] 17 Nov 2026 Chen et al. 
+
+Based on the above insights, we aim to investigate explicit guid-ance in RL, which can identify the cause of failure and direct explo-ration toward suitable candidates. However, incorporating explicit guidance into RL for GR presents two key challenges: 
+
+• Guidance acquisition. The guidance should identify why a candidate matches or conflicts with a user’s preferences and in-dicate how it can be improved. Simulated verbalized feedback (VF) offers a potential source of such guidance by expressing preference assessments and refinement suggestions in natural language [4, 17, 48]. The challenge is to obtain reliable, personal-ized feedback based on the user’s historical preferences and the recommended candidate, so that it provides concrete directions for refinement. 
+
+• Guidance utilization. The obtained feedback should inform policy updates so that the policy can internalize the suggested improvements. However, verbalized feedback is discrete and can-not directly guide policy updates through backpropagation. The challenge is to incorporate the information in textual guidance into rewards, enabling the policy to learn from useful suggestions and improve subsequent recommendations. Building on these insights, we propose VerRec, a reinforcement learning framework with verbalized feedback for generative rec-ommendation. At its core, VerRec consists of two tightly coupled components. 1) Personalized Feedback Simulation : For each original candidate generated by the policy, an LLM-based user simulator generates personalized VF based on the user’s historical preferences and the candidate. This VF explains how the candidate matches or conflicts with the user’s preferences. 2) Joint Optimization : For each original candidate, the policy combines the candidate, its cor-responding VF, and the user’s history to construct a refinement prompt and generate a refined candidate. The original and refined candidates are then combined into an expanded group and jointly optimized with GRPO using scalar rewards. This process allows VF to guide exploration while the reward function penalizes unsuc-cessful original candidates. To evaluate the effectiveness of VerRec, we conduct comprehen-sive experiments on three real-world datasets. The results demon-strate that VerRec effectively uses verbalized feedback to guide exploration and improve recommendation performance. Further analyses show that verbalized guidance encourages exploration of more diverse candidates and enables the policy to attain higher rewards as training progresses. The main contributions of this work are summarized as follows: 
+
+• We formulate personalized verbalized feedback as an explicit ex-ploration signal that guides the policy in reinforcement learning for generative recommendation. 
+
+• We propose VerRec, a novel RL framework that integrates per-sonalized feedback simulation, feedback-conditioned candidate refinement, and joint GRPO optimization over original and re-fined candidates. 
+
+• We evaluate VerRec on three Amazon review datasets with two generative recommendation backbones. The results show im-provements on recommendation performance and reveal how verbalized feedback affects policy exploration and optimization. 
+
+## 2 Related Work 2.1 Generative Recommendation 
+
+Generative recommendation has emerged as a paradigm for directly generating items from user interaction histories. Early work ex-plores recommendation through text generation, using pretrained language models to process user and item information and generate recommendation outputs [2, 13, 46]. Subsequent work introduces compact semantic IDs (SIDs) to represent items and formulates next-item prediction as SID generation [20, 26, 37, 54]. Recent work further improves generative recommendation through multi-task supervised fine-tuning that aligns language semantics with col-laborative signals [15, 42, 52]. Beyond supervised learning, recent studies apply reinforcement learning to align generative recom-mendation with recommendation objectives, either by directly op-timizing item generation [9, 20, 32, 50] or by jointly optimizing reasoning and item prediction [4, 15, 23, 44]. These approaches use scalar rewards to evaluate recommendation outcomes and guide policy updates. Our work introduces personalized verbalized feed-back to explicitly guide candidate exploration. 
+
+## 2.2 Reinforcement Learning with Verbalized Feedback 
+
+Verbalized (natural language) feedback provides actionable guid-ance beyond scalar rewards by identifying errors and suggesting improvements. Existing work has primarily explored such feed-back in general-purpose tasks. One line of work uses such feedback at inference time, revising outputs through iterative self-critique or retaining verbal reflections to guide subsequent attempts with-out updating model parameters [24, 30]. External tools can further ground this process by providing feedback for output verification and correction [6, 14]. Another line incorporates such feedback into model training, either by optimizing critique generators to improve a fixed model’s revisions [1, 25] or by constructing syn-thetic preference data for offline optimization while constraining changes in unrelated contexts [31]. Recent studies combine textual critiques with scalar rewards in online RL, learning from initial responses and their refinements to guide exploration and using successful refinements as off-policy guidance [17, 48]. Our work investigates explicit guidance in RL for generative recommendation and develops a recommendation-specific framework for guidance acquisition and utilization. 
+
+## 2.3 User Simulator 
+
+User simulators provide controllable environments for training and evaluating recommender systems without costly online in-teractions. Traditional platforms model user choices or responses through handcrafted or learned behavioral models [18, 29, 51]. Re-cent LLM-based simulators enrich this process with profiles, mem-ory, and reasoning. One line of work directly initializes generative user agents with interaction histories and user profiles, relying on the in-context understanding ability of LLMs to simulate user pref-erences and behaviors [5, 22, 36, 45, 47]. Another line fine-tunes LLM-based simulators on user feedback or behavioral trajectories, enabling them to better understand user preferences and align sim-ulated behaviors with real users [8, 39, 49]. Other studies evaluate More Than a Score: Reinforcement Learning with Verbalized Feedback for Generative Recommendation User-Item History Recommender Policy User Simulator 
+
+> Previous candidate: User feedback:
+
+Verbalized Feedback Update Joint GRPO        
+
+> y(1)
+> y(G)
+> y(G+1)
+> y(G+G)
+> VF (1) VF (G)
+> y(G+1)
+> y(1)
+> y(G+G)
+> y(G)
+> r(G+1)
+> r(1)
+> r(G+G)
+> r(G)
+
+... ... ... ... ... ... ...   
+
+> 1234
+> Original Refined Joint
+> y(g)
+> VF (g)
+> Refine if needed.
+
+Figure 2: Overview of VerRec. 1○ The recommender policy generates original SID candidates from the user–item interaction history. 2○ The user simulator analyzes the user’s historical preferences and the candidate item profile to produce personalized verbalized feedback. 3○ Verbalized user feedback guides the refinement of original recommendation candidates. 4○ The original and refined candidates are combined into an expanded rollout group and jointly optimized with GRPO. 
+
+whether LLMs can faithfully express preferences and provide consis-tent feedback in conversational recommendation [5, 43, 55]. Unlike prior simulators that mainly serve as interactive environments or evaluation tools, we employ a user simulator to synthesize person-alized verbalized feedback from the user’s historical preferences. 
+
+## 3 Preliminary 3.1 Task Formulation 
+
+Generative recommendation aims to generate the next item that a user is likely to interact with based on their historical behaviors. Let 
+
+U and I denote the sets of users and items, respectively. For each user 𝑢 ∈ U , the chronological interaction history is represented as 
+
+H𝑢 = (𝑖 𝑢  
+
+> 1
+
+, 𝑖 𝑢  
+
+> 2
+
+, . . . , 𝑖 𝑢 𝑇 ), where 𝑖 𝑢 𝑇 ∈ I . Following existing SID-based generative recommenders [20, 26], each item 𝑖 ∈ I is represented as 
+
+𝑦 (𝑖 ) = SID (𝑖 ) = (𝑠 1 
+
+> 𝑖
+
+, 𝑠 2 
+
+> 𝑖
+
+, . . . , 𝑠 𝐿 𝑖 ), where 𝑠 𝑙 𝑖 ∈ S is the semantic token at level 𝑙 , S is the SID token vocabulary, and 𝐿 is the SID length. The original LLM vocabulary is extended with the semantic tokens in S, each treated as an indivisible token. Given H𝑢 , the generative recommender 𝜋 𝜃 , parameterized by 𝜃 , is trained to directly generate the target SID 𝑦 𝑢 𝑇 +1 for the next item 𝑖 𝑢 𝑇 +1 ∈ I . We adopt the existing SID construction and SFT alignment pipeline [20, 37], and focus on subsequent RL post-training. 
+
+## 3.2 Group Relative Policy Optimization 
+
+GRPO is an online RL algorithm that optimizes an LLM policy with-out training an additional value model [28]. For each recommenda-tion context 𝑥 𝑢 constructed from H𝑢 , GRPO samples a group of 𝐺 
+
+candidate SIDs {𝑦 (𝑔 ) 
+
+> 𝑢
+
+}𝐺 𝑔 =1 from the rollout policy 𝜋 old and assigns each candidate a scalar reward 𝑟 (𝑔 ) 
+
+> 𝑢
+
+. The group-relative advantage is computed by normalizing rewards within the same group: ˆ𝐴 (𝑔 ) 
+
+> 𝑢
+
+= 𝑟 (𝑔 ) 
+
+> 𝑢
+
+− mean ({ 𝑟 ( 𝑗 ) 
+
+> 𝑢
+
+}𝐺 𝑗 =1)
+
+std ({ 𝑟 ( 𝑗 ) 
+
+> 𝑢
+
+}𝐺 𝑗 =1) , (1) where the same candidate-level advantage ˆ 𝐴 (𝑔 ) 
+
+> 𝑢
+
+is assigned to every token in 𝑦 (𝑔 ) 
+
+> 𝑢
+
+. GRPO maximizes the following token-level clipped surrogate objective: 
+
+LGRPO (𝜃 ) = E
+
+"
+
+1
+
+𝐺 
+
+> 𝐺
+
+∑︁ 
+
+> 𝑔 =1
+
+1
+
+𝐿 
+
+> 𝐿
+
+∑︁  
+
+> 𝑡 =1
+
+CLIP  𝜌 (𝑔 ) 
+
+> 𝑢,𝑡
+
+(𝜃 ), ˆ𝐴 (𝑔 ) 
+
+> 𝑢
+
+, 𝜂 #
+
+− 𝛽𝐷 KL (𝜋 𝜃 ∥ 𝜋 ref ) ,
+
+(2) CLIP (𝜌, 𝐴, 𝜂 ) = min  𝜌𝐴, clip (𝜌, 1 − 𝜂, 1 + 𝜂 )𝐴 , (3) where the expectation is over recommendation contexts and candi-date groups sampled from 𝜋 old , and 𝐿 is the SID length. The parame-ters 𝜂 and 𝛽 control the clipping range and KL penalty, respectively, and 𝜌 (𝑔 ) 
+
+> 𝑢,𝑡
+
+(𝜃 ) = 𝜋 𝜃 (𝑦 (𝑔 )           
+
+> 𝑢,𝑡 |𝑥 𝑢 ,𝑦 (𝑔 )
+> 𝑢, <𝑡 )
+> 𝜋 old (𝑦 (𝑔 )
+> 𝑢,𝑡 |𝑥 𝑢 ,𝑦 (𝑔 )
+> 𝑢, <𝑡 )
+
+is the token-level importance ratio, with 𝑦 (𝑔 ) 
+
+> 𝑢, <𝑡
+
+denoting the candidate prefix preceding token 𝑡 . The KL term denotes the corresponding average token-level regularization against the reference policy 𝜋 ref .
+
+## 4 Method 4.1 Overview 
+
+We propose VerRec, a reinforcement learning framework with ver-balized feedback for generative recommendation. As illustrated in Figure 2, VerRec consists of two components. In guidance ac-quisition (Section 4.2), a user simulator provides personalized ver-balized feedback for sampled candidates. In guidance utilization 
+
+(Section 4.3), the policy refines candidates using this feedback and jointly optimizes original and refined candidates with GRPO. The user simulator is only required during training. 
+
+## 4.2 Guidance Acquisition 
+
+Scalar rewards provide only a coarse correctness signal, without revealing how a recommended item aligns with the user’s pref-erences. To provide more informative guidance, we introduce an LLM-based user simulator that generates personalized verbalized Chen et al. 
+
+User Simulator Prompt               
+
+> Here is information about yourself and a new <item category> “<item title> ”being recommended to you. Ratings range from 1 to 5.
+> ### Your Rating History ###
+> 1. <historical item title> ,<rating> ;
+> Positive Aspects: [Aspect 1], [Aspect 2], . . .
+> Negative Aspects: [Aspect 1], [Aspect 2], . . .
+> User Preference Elements: [Preference 1], [Preference 2], . . . . . .
+> Your Average Rating: <user average rating>
+> ### Item Rating History by other users ###
+> 1. <rating> ;
+> Positive Aspects: [Aspect 1], [Aspect 2], . . .
+> Negative Aspects: [Aspect 1], [Aspect 2], . . .
+> User Preference Elements: [Preference 1], [Preference 2], . . . . . .
+> Item’s Average Rating: <item average rating>
+> Task: Based on the above information, provide your likely rating and review for “ <item title> ”. The review should reflect your preferences and the item’s characteristics.
+> Output Format:
+> My Rating: [A rating between 1 and 5] My Review: [A review text]
+
+Figure 3: Prompt template for obtaining verbalized feedback from the user simulator. 
+
+feedback for sampled candidates. Such feedback explicitly describes the user’s interests and helps the recommendation policy explore better candidates. Specifically, to obtain a fine-grained representation of user pref-erences, following prior work [11], we use an LLM to summarize the reasons behind each historical interaction into positive and neg-ative aspects. We further characterize the user’s rating tendency by computing the average rating over all previous interactions. To provide a detailed profile of the candidate item, we collect its re-views from other users and summarize them in the same manner, together with its historical average rating. For both sides, we retain the ten most recent records before the current timestamp to prevent information leakage. Formally, given the resulting user history H𝑢 ,candidate item 𝑖 𝑇 , and item review history E𝑇 , the user simulator generates simulated verbalized feedback 𝑉 𝐹 𝑇 :
+
+𝑓 𝑈 (H 𝑢 , 𝑖 𝑇 , E𝑇 ) = 𝑉 𝐹 𝑇 . (4) 
+
+𝑉 𝐹 𝑇 consists of a rating that directly reflects the user’s degree of preference for the candidate item and a review that explains the specific reasons behind this preference. The specific user simulator prompt is presented in Figure 3. 
+
+## 4.3 Guidance Utilization 
+
+We now describe how verbalized feedback is used to optimize the recommendation policy 𝜋 𝜃 . The goal is to let the policy internalize feedback-driven improvements during training, so that it can gen-erate better recommendations at inference time without requiring the user simulator. 
+
+4.3.1 Feedback-Conditioned Refinement. Given a recommendation context 𝑥 𝑢 constructed from H𝑢 (as shown in Figure 4), the policy 
+
+Original Recommendation Prompt   
+
+> ### User Input:
+> The user has interacted with items <SID 1>, <SID 2>, . . . in chronological order. Can you predict the next possible item that the user may expect?
+> ### Response:
+> <semantic ID>
+
+Figure 4: Prompt template for generating original recommen-dation candidates. 
+
+Refinement Prompt  
+
+> Your previous task and recommendation was:...
+> <original recommendation prompt> <original semantic ID>
+> User’s feedback on your recommendation: <verbalized feedback>
+> Based on the above feedback, please refine your recommendation (if needed). Can you recommend a suitable next item for the user?
+> ### Response:
+> <refined semantic ID>
+
+Figure 5: Prompt template for generating feedback-conditioned refined candidates. 
+
+first samples a group of 𝐺 original candidates {𝑦 (𝑔 ) 
+
+> 𝑢, 0
+
+}𝐺 𝑔 =1:
+
+𝑦 (𝑔 ) 
+
+> 𝑢, 0
+
+∼ 𝜋 old (· | 𝑥 𝑢 ), 𝑔 = 1, . . . , 𝐺. (5) For each original candidate 𝑦 (𝑔 ) 
+
+> 𝑢, 0
+
+, the corresponding item is passed to the user simulator, which returns personalized verbalized feed-back 𝑉 𝐹 (𝑔 ) 
+
+> 𝑢
+
+following Eq. (4). Conditioned on the same history, the original recommendation, and this feedback, the policy generates a refined candidate: 
+
+𝑦 (𝑔 ) 
+
+> 𝑢, 1
+
+∼ 𝜋 old (· | 𝑥 𝑢 , 𝑦 (𝑔 ) 
+
+> 𝑢, 0
+
+, 𝑉 𝐹 (𝑔 ) 
+
+> 𝑢
+
+). (6) Both 𝑦 𝑢, 0 and 𝑦 𝑢, 1 are produced by the same model; they differ only in the generation context. The original prompt asks the policy to predict the next item from the user’s interaction history, while the refined prompt further includes the previous recommendation and the simulated user feedback, as shown in Figures 4 and 5. Con-strained decoding is applied in both cases, so that every completed SID corresponds to a valid item. 
+
+4.3.2 Reward Design. After refinement, we combine the original and refined candidates and rescore each candidate using 𝑠 (𝑦 ) =
+
+Í𝐿 𝑡 =1 log 𝜋 old (𝑦 𝑡 | 𝑥 𝑢 , 𝑦 <𝑡 ). We then rerank the candidates in de-scending order of 𝑠 (𝑦 ) to form the final expanded rollout group 
+
+G( 𝑥 𝑢 ). To align the policy with recommendation objectives, we assign each candidate 𝑦 ∈ G( 𝑥 𝑢 ) a combination of a rule-based reward and a rank-aware reward. Let 𝑦 𝑢 𝑇 +1 denote the target SIDs. The rule-based term provides a binary correctness signal: 
+
+𝑟 rule (𝑦 ) = I𝑦 = 𝑦 𝑢 𝑇 +1
+
+ . (7) A purely binary reward treats all incorrect candidates equally. We therefore further penalize hard negatives according to their ranks 
+
+𝜌 (𝑦 ) within the expanded group, where 𝜌 (𝑦 ) = 1 corresponds to More Than a Score: Reinforcement Learning with Verbalized Feedback for Generative Recommendation 
+
+the most probable candidate: 
+
+e𝑟 rank (𝑦 ) =
+
+
+
+0, if 𝑦 = 𝑦 𝑢 𝑇 +1,
+
+− 1log (𝜌 (𝑦 ) + 1) , otherwise. (8) The rank-aware reward is then normalized over the 2 𝐺 candidates, 
+
+𝑟 rank (𝑦 ) = − e𝑟 rank (𝑦 )
+
+Í𝑦 ′ ∈ G ( 𝑥 𝑢 ) e𝑟 rank (𝑦 ′) , (9) and the final reward is 
+
+𝑟 (𝑦 ) = 𝑟 rule (𝑦 ) + 𝑟 rank (𝑦 ). (10) 
+
+4.3.3 Joint Optimization. We jointly optimize the original and re-fined candidates to learn from both direct exploration and feedback-conditioned refinement. For an expanded rollout group containing 
+
+𝐺 original and 𝐺 refined candidates, the final objective is 
+
+L𝑉 𝑒𝑟𝑅𝑒𝑐 (𝜃 ) = E
+
+"
+
+12𝐺 
+
+> 𝐺
+
+∑︁ 
+
+> 𝑔 =1
+
+ J (𝑔 ) 
+
+> 𝑢, 0
+
++ J (𝑔 )
+
+> 𝑢, 1
+
+#
+
+− 𝛽𝐷 KL (𝜋 𝜃 ∥ 𝜋 ref ) ,
+
+(11) where J (𝑔 ) 
+
+> 𝑢, 0
+
+and J (𝑔 ) 
+
+> 𝑢, 1
+
+use different surrogates for original and refined candidates. We apply the CLIP operator only to the original candidate samples, not to the candidates refined by feedback: 
+
+J (𝑔 ) 
+
+> 𝑢, 0
+
+= 1
+
+𝐿 
+
+> 𝐿
+
+∑︁ 
+
+> 𝑡 =1
+
+CLIP  𝜌 (𝑔 ) 
+
+> 𝑢, 0,𝑡
+
+(𝜃 ), ˆ𝐴 (𝑔 ) 
+
+> 𝑢, 0
+
+, 𝜂 , (12) 
+
+J (𝑔 ) 
+
+> 𝑢, 1
+
+= 1
+
+𝐿 
+
+> 𝐿
+
+∑︁ 
+
+> 𝑡 =1
+
+𝑓  𝑝 (𝑔 ) 
+
+> 𝑢, 1,𝑡
+
+(𝜃 ) ˆ𝐴 (𝑔 ) 
+
+> 𝑢, 1
+
+. (13) To compute the advantages, we first calculate the reward of each candidate in the final expanded candidate group G( 𝑥 𝑢 ) and collect these rewards as r(𝑥 𝑢 ). We then normalize these rewards as follows: ˆ𝐴 (𝑔 ) 
+
+> 𝑢,𝑏
+
+= 𝑟 (𝑦 (𝑔 ) 
+
+> 𝑢,𝑏
+
+) − mean (r(𝑥 𝑢 )) 
+
+std (r(𝑥 𝑢 )) , 𝑏 ∈ { 0, 1}, (14) Since refined candidates are generated with feedback but optimized under the original context 𝑥 𝑢 , they may have very low token prob-abilities under the optimization policy. This mismatch can lead to unstable probability ratios and high-variance updates, potentially destabilizing training. To address this issue, inspired by LUFFY [40], we employ Policy Shaping 𝑓 (𝑥 ) = 𝑥 𝑥 +𝛾 , where 0 < 𝛾 < 1. This shaping function gives low-probability tokens in refined samples greater relative emphasis, encouraging the policy to learn from rewarding refinements that are rarely generated under the original context. The standard ratio for original candidates and the shaped weight for refined candidates are defined as follows: 
+
+𝜌 (𝑔 ) 
+
+> 𝑢, 0,𝑡
+
+(𝜃 ) = 𝜋 𝜃 (𝑦 (𝑔 ) 
+
+> 𝑢, 0,𝑡
+
+| 𝑥 𝑢 , 𝑦 (𝑔 ) 
+
+> 𝑢, 0,<𝑡
+
+)
+
+𝜋 old (𝑦 (𝑔 ) 
+
+> 𝑢, 0,𝑡
+
+| 𝑥 𝑢 , 𝑦 (𝑔 ) 
+
+> 𝑢, 0,<𝑡
+
+) , (15) 
+
+𝑓  𝑝 (𝑔 ) 
+
+> 𝑢, 1,𝑡
+
+(𝜃 ) = 𝜋 𝜃 (𝑦 (𝑔 ) 
+
+> 𝑢, 1,𝑡
+
+| 𝑥 𝑢 , 𝑦 (𝑔 ) 
+
+> 𝑢, 1,<𝑡
+
+)
+
+𝜋 𝜃 (𝑦 (𝑔 ) 
+
+> 𝑢, 1,𝑡
+
+| 𝑥 𝑢 , 𝑦 (𝑔 ) 
+
+> 𝑢, 1,<𝑡
+
+) + 𝛾 , (16) 
+
+Table 1: Statistics of the recommendation datasets.             
+
+> Dataset #Users #Items #Interaction
+> Book 12,969 13,515 69,794 Baby 17,734 6,863 128,755 Cell Phones 26,482 9,616 151,087
+
+## 5 Experiments 
+
+In this section, we present the experimental results and correspond-ing analysis to answer the following research questions (RQs). 
+
+• RQ1: How does the recommendation performance of VerRec compare to other baselines? 
+
+• RQ2: How do different feedback strategies compare in simulation quality and downstream recommendation performance? 
+
+• RQ3: How does verbalized feedback affect candidate exploration during RL training? 
+
+• RQ4: How do the key components of VerRec affect its overall performance? 
+
+## 5.1 Experimental Setup 
+
+5.1.1 Datasets and Evaluation. Following prior works [2, 3, 20], we conduct experiments on three categories of the Amazon review dataset 1: Cell Phones and Accessories (Cell Phones), Baby, and Book. Each dataset contains users’ interaction histories and rich textual metadata associated with the items. We apply 5-core filtering to ensure that every user and item has at least five interactions. Each user’s interactions are chronologically ordered and segmented using a sliding window with a maximum sequence length of 10. To simulate realistic recommendation scenarios, we adopt a temporal split and partition the resulting sequences into training, validation, and test sets at a ratio of 8:1:1, reserving the most recent interactions for validation and testing. Detailed statistics for each category are reported in Table 1. For evaluation metrics, we adopt the full-item ranking setting, where each model is required to rank all candidate items rather than a sampled subset. We evaluate the effectiveness of top-𝐾 rec-ommendations using Hit Ratio (H@ 𝐾 ) and Normalized Discounted Cumulative Gain (N@ 𝐾 ), with 𝐾 ∈ { 5, 10 , 20 }.
+
+5.1.2 Baselines. We compare VerRec with three groups of meth-ods: traditional recommenders, LLM-based recommenders without reasoning, and reasoning-enhanced LLM-based recommenders. The traditional recommenders are as follows: 
+
+• SASRec [19] uses self-attention to weight historical interactions according to their relevance to the next item. 
+
+• GRU4Rec [16] encodes interaction sequences with gated recur-rent units and predicts the next item from the evolving hidden state. 
+
+• Caser [33] applies horizontal and vertical convolutional filters to a matrix of recent item embeddings to extract sequential patterns. The LLM-based recommenders without reasoning are as follows: 
+
+• BIGRec [2] fine-tunes an LLM to generate textual item repre-sentations from interaction histories, then maps the generated outputs to items in the catalog. 
+
+> 1https://cseweb.ucsd.edu/~jmcauley/datasets/amazon/links.html. Chen et al.
+
+Table 2: Overall performance of VerRec and baselines on three real-world datasets. All results are averaged over 5 runs with different random seeds. The best results are in bold, and the second-best results (i.e., the strongest baseline) are underlined. Gray rows denote the SFT backbone. ∗ indicates that the improvement of VerRec over the strongest baseline is statistically significant (paired 𝑡 -test, 𝑝 < 0.05 ).                                                                                                                                                                                                                                                               
+
+> Model Cell Phones Baby Book H@5 N@5 H@10 N@10 H@20 N@20 H@5 N@5 H@10 N@10 H@20 N@20 H@5 N@5 H@10 N@10 H@20 N@20 SASRec 0.0189 0.0114 0.0295 0.0148 0.0456 0.0188 0.0100 0.0065 0.0199 0.0097 0.0336 0.0131 0.0348 0.0233 0.0527 0.0291 0.0762 0.0356 GRU4Rec 0.0238 0.0160 0.0394 0.0209 0.0611 0.0264 0.0126 0.0077 0.0244 0.0115 0.0359 0.0147 0.0209 0.0142 0.0337 0.0183 0.0576 0.0243 Caser 0.0262 0.0162 0.0420 0.0213 0.0639 0.0274 0.0103 0.0063 0.0203 0.0095 0.0349 0.0135 0.0299 0.0184 0.0504 0.0250 0.0752 0.0319 BIGRec 0.0290 0.0205 0.0415 0.0244 0.0578 0.0286 0.0125 0.0081 0.0215 0.0109 0.0333 0.0139 0.0347 0.0237 0.0512 0.0289 0.0696 0.0340 D30.0330 0.0226 0.0464 0.0268 0.0646 0.0314 0.0142 0.0089 0.0236 0.0119 0.0373 0.0152 0.0395 0.0262 0.0572 0.0318 0.0777 0.0375 S-DPO 0.0317 0.0213 0.0457 0.0258 0.0636 0.0307 0.0138 0.0092 0.0232 0.0122 0.0376 0.0155 0.0383 0.0261 0.0562 0.0324 0.0772 0.0382 MiniOneRec 0.0346 0.0240 0.0477 0.0282 0.0664 0.0330 0.0149 0.0095 0.0247 0.0126 0.0383 0.0160 0.0416 0.0278 0.0587 0.0334 0.0800 0.0393 LatentR 30.0338 0.0231 0.0491 0.0280 0.0655 0.0323 0.0145 0.0093 0.0242 0.0124 0.0384 0.0157 0.0417 0.0279 0.0595 0.0335 0.0797 0.0391 R2ec 0.0346 0.0233 0.0503 0.0284 0.0671 0.0326 0.0146 0.0092 0.0240 0.0122 0.0388 0.0159 0.0423 0.0283 0.0600 0.0339 0.0802 0.0395 MiniOneRec-SFT 0.0273 0.0166 0.0462 0.0227 0.0644 0.0277 0.0137 0.0090 0.0234 0.0121 0.0359 0.0153 0.0385 0.0257 0.0567 0.0321 0.0795 0.0384
+> VerRec 0.0357 ∗0.0246 ∗0.0525 ∗0.0300 ∗0.0730 ∗0.0351 ∗0.0159 ∗0.0099 ∗0.0279 ∗0.0137 ∗0.0442 ∗0.0178 ∗0.0416 0.0290 ∗0.0623 ∗0.0357 ∗0.0820 ∗0.0406 ∗
+> LETTER 0.0260 0.0188 0.0420 0.0239 0.0646 0.0295 0.0135 0.0084 0.0222 0.0112 0.0359 0.0150 0.0374 0.0262 0.0526 0.0316 0.0797 0.0391
+> VerRec 0.0361 ∗0.0264 ∗0.0513 ∗0.0313 ∗0.0733 ∗0.0368 ∗0.0163 ∗0.0107 ∗0.0253 ∗0.0136 ∗0.0397 ∗0.0169 ∗0.0420 0.0311 ∗0.0609 ∗0.0372 ∗0.0822 ∗0.0425 ∗
+
+• D3 [3] adjusts decoding to reduce score amplification and repet-itive recommendations. It removes length normalization and incorporates guidance from a text-free recommender. 
+
+• S-DPO [7] extends preference optimization to contrast a preferred item with multiple negative items through a softmax objective, strengthening ranking supervision. 
+
+• LETTER [37] learns item codes that combine hierarchical seman-tics, collaborative information, and diverse code assignments for generative recommendation. 
+
+• MiniOneRec [20] generates semantic IDs and follows supervised fine-tuning with GRPO. It combines constrained beam search with accuracy and rank-aware rewards. The reasoning-enhanced LLM-based recommenders are as fol-lows: 
+
+• R2ec [44] combines explicit reasoning with a dedicated item prediction head. Its RL framework jointly optimizes reasoning and recommendation using ranking and similarity rewards. 
+
+• LatentR 3 [50] represents reasoning with continuous latent tokens and optimizes them through RL. It uses negative target-item perplexity as the reward without generating reasoning traces. We evaluate VerRec on two backbones, MiniOneRec-SFT and 
+
+LETTER , and report their performance before applying our frame-work. MiniOneRec-SFT is the supervised checkpoint before Min-iOneRec’s RL stage [20]. 
+
+5.1.3 Implementation Details. For MiniOneRec-SFT and LETTER, we construct item SIDs following their respective tokenization schemes [20, 37]. For both backbones, we perform SFT on Qwen2.5-3B-Instruct [35]. The learning rates are 3 × 10 −4 for SFT and 1 ×
+
+10 −5 for RL. Both stages use AdamW with a batch size of 128. For the key RL hyperparameters, we set 𝛾 = 0.1 and 𝛽 = 0.001. We adopt Qwen3-30B-A3B-Instruct-2507 [41] both to summarize user and item preferences from historical reviews and to serve as the user simulator that generates verbalized feedback. In the performance comparison with existing recommenders, traditional recommenders are trained with binary cross-entropy and the Adam optimizer; learning rates are chosen from {10 −2, 10 −3, 10 −4 }, and the weight-decay term is scanned over {10 −2, 10 −3, 10 −4, 10 −5, 10 −6 }.For LLM-based baselines, we carefully tune the hyperparameters of the baselines following the suggestions in the original papers. 
+
+## 5.2 Overall Performance (RQ1) 
+
+Table 2 reports the overall recommendation performance under the full-item ranking setting. VerRec outperforms all other baselines on most metrics across the evaluated datasets with both recommen-dation backbones. Its advantages extend to comparisons with both direct-generation and reasoning-enhanced recommenders, demon-strating the effectiveness of the proposed framework in improving recommendation accuracy and ranking quality. Compared with MiniOneRec, VerRec achieves further improve-ments on most metrics from the same MiniOneRec-SFT checkpoint. This comparison supports the effectiveness of our novel training framework beyond existing RL methods that rely solely on scalar rewards. Personalized verbalized feedback provides explicit guid-ance for refinement, while scalar rewards evaluate the original and refined candidates for joint policy optimization. 
+
+## 5.3 Feedback Quality and Effect (RQ2) 
+
+5.3.1 Feedback Simulation Quality. To evaluate how well our sim-ulator captures user preferences, we compare it with MGFRec [4] and Agent4Rec [45] using MAE and RMSE for rating prediction and BLEURT [27] for review generation. All simulators use the same backbone LLM and are evaluated on the validation and test sets. As shown in Table 3, our simulator achieves the lowest prediction errors and the highest BLEURT scores across the evaluated datasets. These results indicate better alignment with user ratings and re-views under the adopted metrics, supporting the effectiveness of the proposed feedback simulation approach in modeling preferences. More Than a Score: Reinforcement Learning with Verbalized Feedback for Generative Recommendation 
+
+Table 3: Performance comparison on the three Amazon re-view datasets. Lower MAE and RMSE indicate better perfor-mance, while higher BLEURT indicates better performance. 
+
+Dataset Method MAE ↓ RMSE ↓ BLEURT ↑
+
+Cell Phones MGFRec 1.2996 1.5887 0.4232 Agent4Rec 0.8873 1.3494 0.4561 Ours 0.8272 1.3111 0.4623 
+
+Baby MGFRec 1.2973 1.5983 0.4399 Agent4Rec 0.8712 1.3489 0.4627 Ours 0.7999 1.2866 0.4685 
+
+Book MGFRec 1.5242 1.8187 0.4065 Agent4Rec 0.6914 1.0618 0.4446 Ours 0.5789 0.9387 0.4523 w/o VF Shuf. Bin. MGF. A4R. Ours 
+
+(a) MiniOneRec-SFT     
+
+> 0.040 0.045 0.050 0.055
+> HR@10
+> w/o VF Shuf. Bin. MGF. A4R. Ours
+
+(b) LETTER 
+
+> 0.040 0.045 0.050 0.055
+> HR@10
+> 0.018 0.023 0.028 0.033
+> NDCG@10
+> HR@10 NDCG@10 0.018 0.023 0.028 0.033
+> NDCG@10
+> HR@10 NDCG@10
+
+Figure 6: Comparison of different feedback settings on the Cell Phones dataset. 
+
+5.3.2 Effect of Feedback Quality on Recommendation Performance. 
+
+To examine how different feedback strategies affect recommenda-tion learning, we compare the following settings on MiniOneRec-SFT and LETTER. “Bin.” provides binary feedback derived from user interaction records, either “I like it” or “I do not like it”. “Shuf.” replaces each user’s feedback with that of a randomly selected user for the same candidate, disrupting personalized preference align-ment. For “MGF.” (MGFRec) and “A4R.” (Agent4Rec), we replace the user simulator in our framework with their respective simulators to generate feedback, while “Ours” uses our proposed simulator. Figure 6 compares the downstream recommendation perfor-mance of different feedback settings on both backbones. “Bin.” yields performance similar to “w/o VF”, suggesting that binary feedback provides limited guidance for policy optimization. Notably, “Shuf.” and “MGF.” perform even worse than the setting without verbal-ized feedback, indicating that mismatched feedback can misguide candidate refinement and hinder policy learning. This further high-lights that the effectiveness of verbalized feedback depends on its alignment with user preferences, rather than merely introducing textual guidance. The relative ordering of our simulator, “A4R.”, and “MGF.” is consistent between the simulation evaluation and the downstream comparison. Better simulation scores are accompanied by stronger recommendation performance, suggesting that more accurate and informative verbalized feedback can provide more effective learning signals for recommendation models. 
+
+## 5.4 Exploration during RL Training (RQ3) 
+
+5.4.1 Training Curves. To examine how verbalized feedback affects candidate exploration, we compare VerRec with MiniOneRec on Cell Phones, starting from the same MiniOneRec-SFT checkpoint. 0 800 1600 2400          
+
+> Training step
+> 0.000 0.010 0.020 0.030
+> Reward
+> (a) Training reward
+> MiniOneRec Ours 1.9× 1.6×
+> 0800 1600 2400
+> Training step
+> 3.0 3.5 4.0 4.5 5.0 5.5
+> #L3 categories
+> (b) Category diversity per group
+> 0800 1600 2400
+> Training step
+> 0.16 0.20 0.24 0.28
+> Token diversity
+> (c) Token diversity of rollouts
+> 0800 1600 2400
+> Training step
+> 80 120 160 200
+> Unique items
+> (d) Item coverage per batch
+
+Figure 7: RL training dynamics on the Cell Phones dataset. We compare VerRec and MiniOneRec from the same MiniOneRec-SFT checkpoint. 
+
+Both methods generate and optimize over 2 𝐺 candidates per re-quest. Figure 7 presents training reward and three complementary exploration metrics: the number of distinct level-3 item categories per rollout group, SID token diversity, and the number of unique items per batch. As shown in Figure 7(a), VerRec achieves greater reward improve-ments as training progresses. MiniOneRec requires approximately 1.9× as many training steps to reach the reward level highlighted in the figure, while VerRec achieves approximately 1 .6× its reward at the indicated comparison step. VerRec achieves these gains at 1 .47 ×
+
+the total RL training time of the baseline. These results suggest that feedback-guided refinement helps the policy identify candidates with higher rewards earlier in training, with moderate computa-tional overhead. Figures 7(b)–(d) further show that VerRec maintains greater ex-ploration diversity across categories, SID tokens, and unique items. Although both methods exhibit an early decline in token diversity and unique items per batch, VerRec preserves a broader range of candidates as training proceeds. Its higher category diversity also indicates that this exploration extends across item categories. To-gether with the reward improvements, these observations suggest that personalized verbalized feedback provides useful directions for candidate refinement, helping the policy explore diverse alter-natives that better satisfy the recommendation objective. 
+
+5.4.2 Case Study. To demonstrate the effectiveness of verbalized feedback, we present an illustrative example of refinement in the Book domain. As shown in Figure 8, the user’s history includes 
+
+The Hobbit , The Lion, the Witch, and the Wardrobe , two Harry Potter 
+
+books, and The Princess Bride . These choices suggest a preference for fast-paced fantasy adventures with young heroes and strong friendships. The policy initially recommends Twilight . The user sim-ulator assigns it a rating of 2/5 and explains that the user prefers “less romance and more adventure.” Using the history, original can-didate, and verbalized feedback, the same policy generates a refined Chen et al. User–item history 
+
+> The Hobbit / The Lion, the Witch, and the Wardrobe Harry Potter and the Sorcerer's Stone / Harry Potter and the Chamber of Secrets
+> Brisk pacing, young heroes, friendship and accessible fantasy.
+
+Original candidate 
+
+Twilight 
+
+> (The Twilight Saga, Book 1)
+> SID: <a_114><b_70><c_19>
+> Verbalized feedback from the user simulator
+
+My rating: 2 / 5 My review: I enjoy fantasy, but I would prefer less romance and more adventure, with a young hero and strong friendships. Refinement  
+
+> Same policy uses the SID history, original candidate and verbalized feedback.
+> Generate a revised SID: y ₁~ π old ( · | x ᵤ, y ₀, VF )
+> Refined candidate
+
+The Lightning Thief SID: <a_31><b_106><c_216> 
+
+> The Princess Bride
+
+Figure 8: An example of how the recommendation policy revises its candidate through verbalized feedback. w/o RL w/o VF w/o Jopt VerRec 
+
+(a) MiniOneRec-SFT    
+
+> 0.041 0.045 0.049 0.053
+> HR@10
+> w/o RL w/o VF w/o Jopt VerRec
+
+(b) LETTER 
+
+> 0.034 0.040 0.046 0.052
+> HR@10
+> 0.014 0.020 0.026 0.032
+> NDCG@10
+> HR@10 NDCG@10 0.017 0.022 0.027 0.032
+> NDCG@10
+> HR@10 NDCG@10
+
+Figure 9: Ablation study on the Cell Phones dataset. “VF” and “Jopt” denote “Verbalized Feedback” and “Joint Optimiza-tion”, respectively. 
+
+candidate corresponding to The Lightning Thief . This recommenda-tion better matches the preferences expressed in the feedback. The example illustrates how verbalized feedback explains a low rating and gives the policy an explicit direction for refinement. 
+
+## 5.5 Impact of Key Components (RQ4) 
+
+5.5.1 Ablation Study. To assess the contribution of each compo-nent, we conduct ablation studies of VerRec on Cell Phones using MiniOneRec-SFT and LETTER. The “w/o RL” variant denotes the original backbone before RL training. The “w/o VF” variant opti-mizes 2 𝐺 candidates per input on the corresponding backbone with-out verbalized feedback. The “w/o Jopt” variant excludes original candidates from optimization and trains only on refined candidates. As shown in Figure 9, VerRec achieves the best performance on both metrics across the two backbones. Removing verbalized feedback reduces performance, suggesting that explicit guidance about preference mismatches and revision directions benefits learn-ing beyond scalar rewards alone. Removing joint optimization also reduces performance, although training on refined candidates still improves over the original backbones. This indicates the benefit of jointly learning from original and refined candidates. Together, these results support the contributions of verbalized feedback and joint rollout optimization to recommendation performance. 
+
+5.5.2 Hyperparameter Analysis. We examine how the number of candidates selected for refinement and the original candidate group size 𝐺 affect recommendation performance on the Cell Phones dataset. 0 2 4 6 8      
+
+> Refined Candidates
+> 0.048 0.052 0.056
+> HR@10
+> MiniOneRec-SFT NDCG@10
+> 02468
+> Refined Candidates
+> 0.048 0.052 0.056
+> HR@10
+> LETTER NDCG@10
+> 0.026 0.028 0.030 0.032
+> NDCG@10
+> 0.026 0.028 0.030 0.032
+> NDCG@10
+
+Figure 10: Effect of the number of candidates selected for the refinement on the Cell Phones dataset. 2 4 8    
+
+> The number of G
+> 0.048 0.051 0.054 0.057
+> HR@10
+> MiniOneRec-SFT NDCG@10
+> 248
+> The number of G
+> 0.048 0.051 0.054 0.057
+> HR@10
+> LETTER NDCG@10
+> 0.020 0.025 0.030 0.035
+> NDCG@10
+> 0.020 0.025 0.030 0.035
+> NDCG@10
+
+Figure 11: Effect of the number of generated candidates G on the Cell Phones dataset. Number of candidates selected for refinement. We vary the number of original candidates selected for refinement among 
+
+{0, 2, 4, 6, 8}. As shown in Figure 10, both evaluation metrics im-prove on MiniOneRec-SFT and LETTER as more candidates are refined. This trend suggests that applying verbalized feedback to more candidates creates more opportunities to find rewarding rec-ommendations, providing useful learning signals for optimization. 
+
+Rollout group size. We vary 𝐺 among {2, 4, 8} and generate one refined candidate for each original candidate, yielding an expanded group of size 2 𝐺 . As shown in Figure 11, increasing 𝐺 improves both metrics on MiniOneRec-SFT and LETTER, with 𝐺 = 8 achieving the best performance among the tested settings. A larger group provides more candidates for exploration and more opportunities to learn from reward differences. 
+
+## 6 Conclusion and Future Work 
+
+In this work, we propose VerRec, a novel reinforcement learning framework with verbalized feedback for generative recommenda-tion. VerRec augments scalar rewards with personalized feedback generated by an LLM-based user simulator. Experiments on three Amazon review datasets with two backbones demonstrate that VerRec improves recommendation performance. Further analyses More Than a Score: Reinforcement Learning with Verbalized Feedback for Generative Recommendation 
+
+highlight the complementary roles of personalized verbalized feed-back and joint optimization in guiding exploration toward more diverse candidates with higher rewards. In future work, we will develop more personalized and accurate user simulators to improve feedback quality. Moreover, incorporat-ing real-world users’ verbalized feedback into this framework is a promising direction for guiding candidate refinement and aligning the policy with users’ evolving preferences. Finally, we will also investigate more efficient feedback generation (e.g., asynchronous generation) to reduce RL training overhead. 
+
+## References 
+
+[1] Afra Feyza Akyürek, Ekin Akyürek, Ashwin Kalyan, Peter Clark, Derry Tanti Wijaya, and Niket Tandon. 2023. Rl4f: Generating natural language feedback with reinforcement learning for repairing model outputs. In Proceedings of the 61st Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . 7716–7733. [2] Keqin Bao, Jizhi Zhang, Wenjie Wang, Yang Zhang, Zhengyi Yang, Yanchen Luo, Chong Chen, Fuli Feng, and Qi Tian. 2025. A bi-step grounding paradigm for large language models in recommendation systems. ACM Transactions on Recommender Systems 3, 4 (2025), 1–27. [3] Keqin Bao, Jizhi Zhang, Yang Zhang, Xinyue Huo, Chong Chen, and Fuli Feng. 2024. Decoding matters: Addressing amplification bias and homogeneity issue for llm-based recommendation. arXiv preprint arXiv:2406.14900 (2024). [4] Shihao Cai, Chongming Gao, Haoyan Liu, Wentao Shi, Jianshan Sun, Ruiming Tang, and Fuli Feng. 2026. Mgfrec: Towards reinforced reasoning recommen-dation with multiple groundings and feedback. In Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 1 . 49–58. [5] Luyu Chen, Quanyu Dai, Zeyu Zhang, Xueyang Feng, Mingyu Zhang, Pengcheng Tang, Xu Chen, Yue Zhu, and Zhenhua Dong. 2025. Recusersim: A realistic and diverse user simulator for evaluating conversational recommender systems. In 
+
+Companion Proceedings of the ACM on Web Conference 2025 . 133–142. [6] Xinyun Chen, Maxwell Lin, Nathanael Schärli, and Denny Zhou. 2024. Teaching large language models to self-debug. In International Conference on Learning Representations , Vol. 2024. 8746–8825. [7] Yuxin Chen, Junfei Tan, An Zhang, Zhengyi Yang, Leheng Sheng, Enzhi Zhang, Xiang Wang, and Tat-Seng Chua. 2024. On softmax direct preference optimization for recommendation. Advances in Neural Information Processing Systems 37 (2024), 27463–27489. [8] Zipeng Chen, Jiaer Zheng, Xiangyang Xu, Xinyu Lin, Zhaobin Wang, Zhaohui Liu, Qianjin Xiang, Xiaoyu Zhao, Zhuozhen Yu, Guangshuo Wang, et al. 2026. Beyond Action Imitation: Learning a Decision-Aware User Simulator for Online Advertising. arXiv preprint arXiv:2607.26893 (2026). [9] Hongxun Ding, Keqin Bao, Jizhi Zhang, Yi Fang, Wenxin Xu, Fuli Feng, and Xiangnan He. 2026. Towards Sample-Efficient and Stable Reinforcement Learning for LLM-based Recommendation. arXiv preprint arXiv:2602.00632 (2026). [10] Chenxiao Fan, Chongming Gao, Yaxin Gong, Haoyan Liu, Fuli Feng, and Xiang-nan He. 2026. Uncertainty-aware generative recommendation. In Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 2 .1015–1026. [11] Yi Fang, Wenjie Wang, Yang Zhang, Fengbin Zhu, Qifan Wang, Fuli Feng, and Xiangnan He. 2026. Reason4Rec: Deliberative User Preference Alignment of Large Language Models for Recommendation. IEEE Transactions on Knowledge and Data Engineering (2026). [12] Jiawei Feng, Xiaoyu Kong, Leheng Sheng, Bin Wu, Chao Yi, Feifang Yang, Xiang-Rong Sheng, Han Zhu, Xiang Wang, Jiancan Wu, et al. 2026. Fine-grained Semantics Integration for Large Language Model-based Recommendation. arXiv preprint arXiv:2602.22632 (2026). [13] Shijie Geng, Shuchang Liu, Zuohui Fu, Yingqiang Ge, and Yongfeng Zhang. 2022. Recommendation as language processing (rlp): A unified pretrain, personalized prompt & predict paradigm (p5). In Proceedings of the 16th ACM conference on recommender systems . 299–315. [14] Zhibin Gou, Zhihong Shao, Yeyun Gong, Yujiu Yang, Nan Duan, Weizhu Chen, et al. 2024. Critic: Large language models can self-correct with tool-interactive critiquing. In International Conference on Learning Representations , Vol. 2024. 57734–57811. [15] Yingzhi He, Yan Sun, Junfei Tan, Yuxin Chen, Xiaoyu Kong, Chunxu Shen, Xiang Wang, An Zhang, and Tat-Seng Chua. 2026. Reasoning over semantic ids enhances generative recommendation. In Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 2 . 1638–1649. [16] Balázs Hidasi, Alexandros Karatzoglou, Linas Baltrunas, and Domonkos Tikk. 2015. Session-based recommendations with recurrent neural networks. arXiv preprint arXiv:1511.06939 (2015). [17] Lei Huang, Xiang Cheng, Chenxiao Zhao, Guobin Shen, Junjie Yang, Xiaocheng Feng, Yuxuan Gu, Xing Yu, and Bing Qin. 2026. Bootstrapping exploration with group-level natural language feedback in reinforcement learning. arXiv preprint arXiv:2603.04597 (2026). [18] Eugene Ie, Chih-wei Hsu, Martin Mladenov, Vihan Jain, Sanmit Narvekar, Jing Wang, Rui Wu, and Craig Boutilier. 2019. Recsim: A configurable simulation platform for recommender systems. arXiv preprint arXiv:1909.04847 (2019). [19] Wang-Cheng Kang and Julian McAuley. 2018. Self-attentive sequential recom-mendation. In 2018 IEEE international conference on data mining (ICDM) . IEEE, 197–206. [20] Xiaoyu Kong, Leheng Sheng, Junfei Tan, Yuxin Chen, Jiancan Wu, An Zhang, Xiang Wang, and Xiangnan He. 2025. Minionerec: An open-source framework for scaling generative recommendation. arXiv preprint arXiv:2510.24431 (2025). [21] Xinyu Lin, Pengyuan Liu, Wenjie Wang, Yicheng Hu, Chen Xu, Fuli Feng, Qifan Wang, and Tat-Seng Chua. 2026. Bringing reasoning to generative recommen-dation through the lens of cascaded ranking. In Proceedings of the ACM Web Conference 2026 . 8939–8949. [22] Fei Liu, Xinyu Lin, Hanchao Yu, Mingyuan Wu, Jianyu Wang, Qiang Zhang, Zhuokai Zhao, Yinglong Xia, Yao Zhang, Weiwei Li, et al. 2026. Recoworld: Build-ing simulated environments for agentic recommender systems. In Companion Proceedings of the ACM Web Conference 2026 . 650–659. [23] Zhanyu Liu, Shiyao Wang, Xingmei Wang, Rongzhou Zhang, Jiaxin Deng, Honghui Bao, Jinghao Zhang, Wuchao Li, Pengfei Zheng, Xiangyu Wu, et al. 2025. Onerec-think: In-text reasoning for generative recommendation. arXiv preprint arXiv:2510.11639 (2025). [24] Aman Madaan, Niket Tandon, Prakhar Gupta, Skyler Hallinan, Luyu Gao, Sarah Wiegreffe, Uri Alon, Nouha Dziri, Shrimai Prabhumoye, Yiming Yang, et al. 2023. Self-refine: Iterative refinement with self-feedback. Advances in neural information processing systems 36 (2023), 46534–46594. [25] Debjit Paul, Mete Ismayilzada, Maxime Peyrard, Beatriz Borges, Antoine Bosselut, Robert West, and Boi Faltings. 2024. Refiner: Reasoning feedback on intermediate representations. In Proceedings of the 18th Conference of the European Chapter of the Association for Computational Linguistics (Volume 1: Long Papers) . 1100–1126. [26] Shashank Rajput, Nikhil Mehta, Anima Singh, Raghunandan Hulikal Keshavan, Trung Vu, Lukasz Heldt, Lichan Hong, Yi Tay, Vinh Tran, Jonah Samost, et al. 2023. Recommender systems with generative retrieval. Advances in Neural Information Processing Systems 36 (2023), 10299–10315. [27] Thibault Sellam, Dipanjan Das, and Ankur Parikh. 2020. BLEURT: Learning robust metrics for text generation. In Proceedings of the 58th annual meeting of the association for computational linguistics . 7881–7892. [28] Zhihong Shao, Peiyi Wang, Qihao Zhu, Runxin Xu, Junxiao Song, Xiao Bi, Haowei Zhang, Mingchuan Zhang, YK Li, Yang Wu, et al. 2024. Deepseekmath: Pushing the limits of mathematical reasoning in open language models. arXiv preprint arXiv:2402.03300 (2024). [29] Jing-Cheng Shi, Yang Yu, Qing Da, Shi-Yong Chen, and An-Xiang Zeng. 2019. Virtual-taobao: Virtualizing real-world online retail environment for reinforce-ment learning. In Proceedings of the AAAI Conference on Artificial Intelligence ,Vol. 33. 4902–4909. [30] Noah Shinn, Federico Cassano, Ashwin Gopinath, Karthik Narasimhan, and Shunyu Yao. 2023. Reflexion: Language agents with verbal reinforcement learn-ing. Advances in neural information processing systems 36 (2023), 8634–8652. [31] Moritz Stephan, Alexander Khazatsky, Eric Mitchell, Annie S Chen, Sheryl Hsu, Archit Sharma, and Chelsea Finn. 2024. Rlvf: Learning from verbal feedback without overgeneralization. arXiv preprint arXiv:2402.10893 (2024). [32] Junfei Tan, Yuxin Chen, An Zhang, Junguang Jiang, Bin Liu, Ziru Xu, Han Zhu, Jian Xu, Bo Zheng, and Xiang Wang. 2025. Reinforced preference optimization for recommendation. arXiv preprint arXiv:2510.12211 (2025). [33] Jiaxi Tang and Ke Wang. 2018. Personalized top-n sequential recommenda-tion via convolutional sequence embedding. In Proceedings of the eleventh ACM international conference on web search and data mining . 565–573. [34] OneRec Team, Biao Yang, Boyang Ding, Chenglong Chu, Dunju Zang, Fei Pan, Han Li, Hao Jiang, Honghui Bao, Huanjie Wang, et al. 2026. OneReason Technical Report. arXiv preprint arXiv:2606.06260 (2026). [35] Qwen Team. 2024. Qwen2.5: A Party of Foundation Models. https://qwenlm. github.io/blog/qwen2.5/ [36] Lei Wang, Jingsen Zhang, Hao Yang, Zhi-Yuan Chen, Jiakai Tang, Zeyu Zhang, Xu Chen, Yankai Lin, Hao Sun, Ruihua Song, et al. 2025. User behavior simulation with large language model-based agents. ACM Transactions on Information Systems 43, 2 (2025), 1–37. [37] Wenjie Wang, Honghui Bao, Xinyu Lin, Jizhi Zhang, Yongqi Li, Fuli Feng, See-Kiong Ng, and Tat-Seng Chua. 2024. Learnable item tokenization for generative recommendation. In Proceedings of the 33rd ACM International Conference on Information and Knowledge Management . 2400–2409. [38] Yejing Wang, Shengyu Zhou, Jinyu Lu, Qidong Liu, Xinhang Li, Wenlin Zhang, Feng Li, Pengjie Wang, Chuan Yu, Jian Xu, et al. 2026. Gflowgr: Fine-tuning generative recommendation frameworks with generative flow networks. In 
+
+Proceedings of the 49th International ACM SIGIR Conference on Research and Development in Information Retrieval . 1925–1936. Chen et al. 
+
+[39] Tianjun Wei, Huizhong Guo, Yingpeng Du, Zhu Sun, Huang Chen, Dongxia Wang, and Jie Zhang. 2026. Mirroring Users: Towards Building Preference-aligned User Simulator with User Feedback in Recommendation. In Proceedings of the 64th Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) . 6046–6071. [40] Jianhao Yan, Yafu Li, Zican Hu, Zhi Wang, Ganqu Cui, Xiaoye Qu, Yu Cheng, and Yue Zhang. 2026. Learning to reason under off-policy guidance. Advances in Neural Information Processing Systems 38 (2026), 117157–117186. [41] An Yang, Anfeng Li, Baosong Yang, Beichen Zhang, Binyuan Hui, Bo Zheng, Bowen Yu, Chang Gao, Chengen Huang, Chenxu Lv, et al. 2025. Qwen3 technical report. arXiv preprint arXiv:2505.09388 (2025). [42] Wencai Ye, Mingjie Sun, Shuhang Chen, Wenjin Wu, and Peng Jiang. 2026. Align 3GR: Unified Multi-Level Alignment for LLM-based Generative Recommen-dation. In Proceedings of the AAAI Conference on Artificial Intelligence , Vol. 40. 16154–16162. [43] Se-eun Yoon, Zhankui He, Jessica Echterhoff, and Julian McAuley. 2024. Eval-uating large language models as generative user simulators for conversational recommendation. In Proceedings of the 2024 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Tech-nologies (Volume 1: Long Papers) . 1490–1504. [44] Runyang You, Yongqi Li, Xinyu Lin, Xin Zhang, Wenjie Wang, Wenjie Li, and Liqiang Nie. 2026. R 2ec: Towards Large Recommender Models with Reasoning. 
+
+Advances in Neural Information Processing Systems 38 (2026), 62376–62405. [45] An Zhang, Yuxin Chen, Leheng Sheng, Xiang Wang, and Tat-Seng Chua. 2024. On generative agents in recommendation. In Proceedings of the 47th international ACM SIGIR conference on research and development in Information Retrieval . 1807– 1817. [46] Junjie Zhang, Ruobing Xie, Yupeng Hou, Wayne Xin Zhao, Leyu Lin, and Ji-Rong Wen. 2026. Recommendation as instruction following: A large language model empowered recommendation approach. ACM Transactions on Information Systems 43, 5 (2026), 1–37. [47] Wenlin Zhang, Xiangyang Li, Qiyuan Ge, Kuicai Dong, Pengyue Jia, Xiaopeng Li, Zijian Zhang, Maolin Wang, Yichao Wang, Huifeng Guo, et al. 2026. Exploring Recommender System Evaluation: A Multi-Modal LLM Agent Framework for A/B Testing. In Proceedings of the 32nd ACM SIGKDD Conference on Knowledge Discovery and Data Mining V. 1 . 2878–2889. [48] Xiaoying Zhang, Yipeng Zhang, Hao Sun, Kaituo Feng, Chaochao Lu, Chao Yang, and Helen Meng. 2025. Critique-grpo: Advancing llm reasoning with natural language and numerical feedback. arXiv preprint arXiv:2506.03106 (2025). [49] Yimeng Zhang, Tian Wang, Jiri Gesi, Ziyi Wang, Yuxuan Lu, Jiacheng Lin, Simon Zhan, Vianne Gao, Ruochen Jiao, Junze Liu, et al. 2026. Shop-r1: Rewarding llms to simulate human behavior in online shopping via reinforcement learning. In 
+
+International Conference on Learning Representations , Vol. 2026. 8406–8423. [50] Yang Zhang, Wenxin Xu, Xiaoyan Zhao, Wenjie Wang, Fuli Feng, Xiangnan He, and Tat-Seng Chua. 2026. Reinforced latent reasoning for llm-based recom-mendation. In International Conference on Learning Representations , Vol. 2026. 128449–128470. [51] Kesen Zhao, Shuchang Liu, Qingpeng Cai, Xiangyu Zhao, Ziru Liu, Dong Zheng, Peng Jiang, and Kun Gai. 2023. KuaiSim: A comprehensive simulator for recom-mender systems. Advances in Neural Information Processing Systems 36 (2023), 44880–44897. [52] Bowen Zheng, Yupeng Hou, Hongyu Lu, Yu Chen, Wayne Xin Zhao, Ming Chen, and Ji-Rong Wen. 2024. Adapting large language models by integrating collaborative semantics for recommendation. In 2024 IEEE 40th International Conference on Data Engineering (ICDE) . IEEE, 1435–1448. [53] Guorui Zhou, Honghui Bao, Jiaming Huang, Jiaxin Deng, Jinghao Zhang, Junda She, Kuo Cai, Lejian Ren, Lu Ren, Qiang Luo, et al. 2025. Openonerec technical report. arXiv preprint arXiv:2512.24762 (2025). [54] Guorui Zhou, Jiaxin Deng, Jinghao Zhang, Kuo Cai, Lejian Ren, Qiang Luo, Qianqian Wang, Qigen Hu, Rui Huang, Shiyao Wang, et al. 2025. Onerec technical report. arXiv preprint arXiv:2506.13695 (2025). [55] Lixi Zhu, Xiaowen Huang, and Jitao Sang. 2024. How reliable is your simulator? analysis on the limitations of current llm-based user simulators for conversational recommendation. In Companion Proceedings of the ACM Web Conference 2024 .1726–1732.
