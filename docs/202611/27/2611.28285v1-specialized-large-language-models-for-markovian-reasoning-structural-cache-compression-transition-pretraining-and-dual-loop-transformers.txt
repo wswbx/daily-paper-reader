@@ -1,0 +1,479 @@
+Title: Specialized Large Language Models for Markovian Reasoning: Structural Cache Compression, Transition Pretraining, and Dual-Loop Transformers
+
+URL Source: https://arxiv.org/pdf/2611.28285v1
+
+Published Time: Tue, 24 Nov 2026 01:19:18 GMT
+
+Number of Pages: 21
+
+Markdown Content:
+# Specialized Large Language Models for Markovian Reasoning: Structural Cache Compression, Transition Pretraining, and Dual-Loop Transformers 
+
+Haibin Tong 1 Liangliang Xin 2 Yamei Zhu 3 Jiang Yu 4,∗
+
+> 1
+
+Henan University 2China Construction Seventh Engineering Division 
+
+> 3
+
+Henan Natural Resources and Environment Testing Co. 
+
+> 4
+
+National University of Defense Technology 
+
+> ∗
+
+Corresponding author 
+
+# Abstract 
+
+Standard autoregressive large language models attend to the growing history of generated tokens, making the key–value (KV) cache a central memory and through-put bottleneck in long-chain reasoning and multi-branch sampling. Yet an im-portant class of reasoning problems is naturally first-order Markovian: the next step depends on a sufficient representation of the current state, rather than on the raw sequence of all earlier steps. We develop a unified design paradigm for 
+
+Markovian-reasoning specialized large language models . At the cache level, the Markovian state interface transforms history-dependent KV storage into constant-size state transfer with respect to the number of reasoning steps. At the learning level, we reformulate long-chain prediction as independently trainable one-step transition objectives, with explicit state bottlenecks, distillation, invariance, and drift-consistency losses. At the architectural level, we introduce a dual-loop Trans-former: an outer loop advances the reasoning state, while an inner recurrent-depth loop allocates adaptive computation to each transition through shared weights and explicit memory tokens or recurrent matrix states. We connect this architecture to a three-region cache, step-relative positions, truncated backpropagation, branch-aware checkpoints, and a transition-centric evaluation protocol. The organizing principle is simple: the optimal reasoning system need not remember everything; it must carry forward exactly what the future needs . This principle opens a path toward specialized reasoning engines whose memory footprint is decoupled from reasoning-chain length. 
+
+# 1 Introduction 
+
+1.1 Background and motivation 
+
+Autoregressive language models usually approach multistep reasoning through explicit or implicit long-context modeling. When decoding token t, conventional causal attention may revisit the keys and values of all earlier tokens. The resulting KV cache grows linearly with context length, becoming a dominant constraint in long reasoning chains, branched search, and large-batch inference. For example, a 70-billion-parameter model at a 128K context can require KV memory on the order of tens of gigabytes, depending on its attention layout and numerical format. 
+
+> Preprint. arXiv:2611.28285v1 [cs.AI] 20 Nov 2026
+
+Sliding-window attention, attention sinks, attention-score eviction, compressed-cache transport, recurrent memory, and state-space models have made remarkable progress in controlling this cost [3–7, 12, 30, 31]. These methods primarily operate at the level of attention patterns, cache budgets, or computational representations. A stronger opportunity arises when the task itself imposes a dependency structure: a broad family of reasoning trajectories has a state-transition description in which the next step is conditionally independent of the earlier trajectory given a sufficient current state. Examples include staged mathematical derivations, execution traces, instruction-level program transformation, state-machine agents, theorem-proving tactic states, and industrial process validation. Markov Chain of Thought (MCoT) makes this perspective concrete through a derive-then-reduce 
+
+operation: after solving a subproblem, the reasoner rewrites the remaining task as a new, self-contained problem [28]. The complete trajectory is no longer the indispensable interface. The new problem state is. We advocate a fundamental change in the design philosophy of reasoning models: from maximizing retained history to enforcing the transmission of sufficient state . Markovian reasoning is a distinct computational paradigm, not merely a cache-management trick. Its structural prior makes it possible to redesign architecture, data, training objectives, and serving systems around the transition itself. This opens a direct route to long-horizon inference with bounded memory, reusable computation, and scalable state branching. 
+
+1.2 Contributions 
+
+Our contributions form one integrated research program: 1. A formal state-transition foundation. We define Markovian reasoning, state sufficiency, history invariance, and compression error as properties that determine when exact history removal is justified. 2. Structural KV-cache pruning. We develop three realization paths—training-free approx-imation, training-aligned block-causal attention, and recurrent-state architecture—and a concrete three-region cache with step-wise rotation, fixed state slots, positional consistency, rollback, and inference-engine integration. 3. Transition-centric pretraining. We replace long-chain joint supervision with state–action– next-state triplets, independent transition losses, bottleneck regularization, counterfactual dependence probes, teacher distillation, and step-parallel data scheduling. 4. A dual-loop Transformer. We combine an outer Markovian step loop with an inner shared-weight depth loop, using memory tokens or recurrent matrix states as the explicit cross-step interface and adaptive halting as a compute allocator. 5. An evaluation framework aligned with the task. We measure transition fidelity, state sufficiency, chain-level success, long-horizon extrapolation, counterfactual robustness, and the dependence of cache size and latency on the number of reasoning steps. 
+
+# 2 Problem Formulation and Theoretical Motivation 
+
+2.1 A reasoning chain as a state-transition process 
+
+Let a task comprise k reasoning steps over a state space S and an action space A, with initial condition 
+
+Q, initial state q1, and terminal predicate Term : S → { 0, 1}. Step i maps an input problem state qi
+
+into an action or reasoning segment si and a reduced successor state qi+1 . The first-order Markov property is 
+
+P (si, q i+1 | q1: i, s 1: i−1, Q ) = P (si, q i+1 | qi, Q ). (1) The previous trajectory becomes unnecessary once the current reduced state is known. Under this condition the joint trajectory distribution factors into one-step transition distributions: 
+
+P (s1: k, q 2: k+1 | Q, q 1) = 
+
+> k
+
+Y
+
+> i=1
+
+P (si, q i+1 | Q, q i). (2) The fundamental learning object is therefore a transition operator , not the unbounded concatenation of earlier reasoning text. 22.2 Memorylessness, sufficient state, and compression error Definition 1 (History invariance) . For two histories h and h′ that map to the same terminal state, the conditional distribution of the next action is identical: P (a | h, Q ) = P (a | h′, Q ) whenever 
+
+Enc( h) = Enc( h′).
+
+Definition 2 (State sufficiency) . A fixed-dimensional representation zi = ϕ(qi, s i) is sufficient if 
+
+P (ai+1 | Q, h i) = P (ai+1 | Q, z i) for every admissible next action ai+1 . (3) 
+
+Equivalently, conditional independence is expressed as 
+
+I(Ai+1 ; Hi | Q, Z i) = 0 . (4) The significance of Eq. (4) is operational. If the past adds no information about the next transition beyond zi, discarding the raw past does not discard task-relevant information. The model may retain a fixed static prompt, fixed attention sinks, and a bounded within-step workspace; it does not need to retain all preceding step tokens. 
+
+Definition 3 (State compression error) . For an original history h and a compressed model distribution 
+
+Pθ (· | Enc( h)) , define 
+
+ϵ(h) = DTV (P (· | h), P θ (· | Enc( h))) = 12
+
+X
+
+> a
+
+|P (a | h) − Pθ (a | Enc( h)) | . (5) This error makes the state interface testable. The goal of specialized training is to construct a state encoder and transition model for which task-relevant information is conserved while historical redundancy is aggressively removed. 
+
+2.3 Markovian reasoning versus conventional chain of thought 
+
+Conventional chain-of-thought (CoT) prompting retains every intermediate derivation in a growing transcript [35]. Markovian CoT adds a decisive operation at every step: reduce the completed reasoning into the next self-contained problem . This semantic reduction is what separates a structured state interface from an arbitrary sliding context window. It is also what makes the reasoning horizon independent of the raw context window, provided the state remains sufficient. 
+
+# 3 Structural KV-Cache Compression 
+
+3.1 From heuristic eviction to task-structured removal 
+
+Full caching stores the complete token history. Sliding windows and StreamingLLM maintain bounded windows and attention sinks; H2O and SnapKV select a bounded set of apparently important past tokens; CacheGen compresses cache transfer; and recurrent architectures update a fixed hidden state [3–5, 12, 31]. Our approach establishes the retention rule from the task dependency graph: 
+
+retain the sufficient state; remove earlier semantic steps . This changes the rationale for pruning from an empirical estimate of token importance to a structural property of the state transition. 
+
+3.2 Decoupling semantic history from attention support 
+
+Attention has two distinct responsibilities: retrieving semantically relevant past information and providing nonsemantic support positions such as attention sinks. Once a sufficient state zi exists, the former is already represented by zi. A constant number of sink tokens can retain the latter role. At token position t of step i + 1 , the exposed context is 
+
+Ci,t = KV( Q) ⊕ KV(sink) ⊕ zi ⊕ KV( s≤ti+1 ), (6) where Q is the static problem condition. The entire earlier semantic trajectory is absent from the computational graph. 3Table 1: Cache strategies and their organizing principles. W and B are fixed cache budgets; k is the number of reasoning steps.              
+
+> Strategy Cache in kRetention principle Full autoregressive KV O(k)Preserve all generated tokens StreamingLLM / sliding win-dow
+> O(W)Fixed window with attention sinks H2O / SnapKV O(B)Attention-based token selection CacheGen Compressed
+> O(k)
+> Encode/transmit stored KV Recurrent state / SSM O(1) Update a fixed latent state
+> Markovian structural prun-ing
+> O(1) Preserve only sufficient step state
+
+3.3 Three realization paths 
+
+We organize implementation into three mutually reinforcing paths: 
+
+A: Training-free approximation. Retain sinks, static Q, and the latest reduced state while dropping earlier step KV from an existing model. Use KL or Jensen–Shannon probes and fall back to recomputation when output distributions drift. 
+
+B: Training-aligned exact structure. Train with block-causal masks, explicit step-final state tokens, and step-relative positions. At inference, use exactly the same dependency graph and position convention. This is the direct route to structural pruning. 
+
+C: Recurrent-state architecture. Replace raw cross-step KV with an SSM, linear-attention state, or learned matrix recurrence. The cross-step interface is fixed in size and updated in place. Path A discovers useful task families; Path B enforces their dependency structure in training; Path C realizes the strongest memory-efficient inference engine. 
+
+3.4 Three-region cache and step-wise rotation 
+
+The cache is divided into static , state , and within-step regions: As illustrated in Figure 1, this is Table 2: A three-region KV-cache discipline.             
+
+> Region Content Lifetime Static System / Qtokens and sinks Entire chain State mmemory tokens or recurrence tensor ziReplaced at each step Within-step Current step’s causally generated KV Released at step boundary
+
+step-wise rather than token-wise rolling: the window is delimited by semantic state transitions. A step-end swap replaces zi by zi+1 and frees the within-step region. With a fixed state interface and bounded step length, storage is constant in k. Positional consistency is central. Under RoPE [2], slot reuse must not be confused with the logical position of the token. A particularly clean arrangement resets local positions at every step, assigns virtual positions to memory tokens, and treats inter-step evolution through the state interface rather than through growing absolute positions. Sinks retain fixed coordinates. A block-sparse or variable-length attention kernel can implement the corresponding mask without materializing a dense attention matrix [19]. 
+
+3.5 Dependence probes and branch-aware rollback 
+
+Before structural pruning, probe whether a task is genuinely Markovian: inject distant-prefix per-turbations, measure changes in the next-token distribution, inspect remote attention mass, and test whether counterfactual updates to the current state alter the successor correctly. A mixed policy can preserve small local windows or selected global heads when needed. In-place state replacement is irreversible unless checkpoints are retained. For beam search, reflection, and self-correction, serialize periodic state checkpoints and their positional metadata to CPU or NVMe. Recovery loads the closest 4Figure 1: Structural KV-cache compression for a Markovian reasoning chain. Conventional autore-gressive attention retains the entire sequence of previous reasoning steps. In contrast, a Markovian state-rolling interface retains the fixed context Q, the latest sufficient state zt, and the bounded current-step KV workspace, which is released after each transition. With a fixed-size sufficient-state interface and bounded step length, cross-step memory does not grow with the number of completed steps k.checkpoint and replays bounded steps. Since a checkpoint stores only a fixed state, branching does not require copying an entire historical KV trajectory. 
+
+# 4 Transition-Centric Pretraining 
+
+4.1 From joint long-context prediction to transition learning 
+
+A conventional language model trains a joint next-token distribution over long documents and transcripts. A Markovian reasoner learns a repeated conditional transition. Given triplets (qt, s t, q t+1 ),an elementary transition objective is 
+
+Lstep (θ) = −
+
+> T
+
+X
+
+> t=1
+
+log Pθ (st, q t+1 | Q, q t). (7) Each observed transition supplies an independently batchable training instance. The data and computational pathway need not include the entire chain as one monolithic sequence. The result is a direct route from task structure to data parallelism, short local contexts, and reusable transition operators. 
+
+4.2 Dataset construction 
+
+The critical operation is to cut each reasoning chain at semantically independent boundaries , not at arbitrary token positions. From a trajectory (q1, s 1: T , a ), construct (qt, s t, q t+1 ) samples; use a capable generator to produce reduced successor problems; then conduct a zero-history verification test: can a solver continue from qt+1 without the earlier transcript? Reject or regenerate samples that fail. Counterfactual perturbations distinguish genuine state dependence from shortcuts that recover future steps from unrelated historical patterns. Programs, automata, theorem-proving tactic states, symbolic 5Table 3: The pretraining paradigm changes when the primitive is a state transition.                 
+
+> Dimension General-purpose LLM Markovian specialized model Attention Global causal sequence Local causal step + state interface Training example Long document / complete CoT State–action–next-state triplet Supervision Joint next-token loss Transition + state compression Position Global sequence coordinates Reset step-relative coordinates Gradient path Long-sequence activations Independent transitions / truncated re-currence Parallelism Sequence-aware TP/PP/CP Strong data-parallel scaling Evaluation Perplexity and long retrieval Transition, sufficiency, chain success
+
+algebra, chess-like game states, and tool-call traces admit large volumes of verifiable transitions. Different instances can be packed into longer hardware batches with block-diagonal attention masks that prevent cross-sample leakage. The data curriculum begins with explicit transitions and moves toward long autonomous state evolution. 
+
+4.3 Multi-objective loss 
+
+The native training objective joins transition prediction with constraints that make the state represen-tation useful and minimal: 
+
+L = LNTP + λ1Ltrans + λ2Lbottleneck + λ3LKD 
+
++ λ4Ldep + λ5Ldrift + λ6Lboundary . (8) Transition NLL teaches the local operator; an information bottleneck prevents the state from degen-erating into a copied transcript; dependence losses enforce invariance to irrelevant earlier prefixes; full-context teacher distillation transfers useful conditional distributions into the state-only student; drift consistency compares free-running and directly initialized transitions; and boundary supervision recognizes step completion and chain termination. The resulting model is trained to forget the irrelevant past . Its memory economy is learned and architecturally enforced rather than applied as an afterthought. 
+
+# 5 Dual-Loop Transformer Architecture 
+
+5.1 Outer transition loop and inner depth loop 
+
+Two families of recurrent Transformers supply complementary building blocks. Recurrent Memory Transformers pass memory tokens between segments [8]; Universal and looped Transformers reuse a computational stack at increasing effective depth [9, 11, 24, 25, 32]. We integrate them into a dual-loop design: • Outer step loop ( t = 1 , . . . , T ): consumes current state qt and memory Mt, generates action st and successor state qt+1 , and discards step-local KV. • Inner depth loop ( r = 1 , . . . , R t): repeatedly applies a shared Transformer stack to the current step’s hidden representation, allowing hard transitions to receive more computation without adding parameters. The architecture uses a single shared transition core, as visualized in Figure 2. Depth is a reusable computational resource; the state is the sole cross-step semantic interface. 
+
+5.2 Explicit memory tokens and recurrent matrix states 
+
+An interface of m memory tokens provides a learned sufficient statistic for the next step. Read-memory tokens precede each segment; write-memory tokens at its end are carried into the next segment. A small range such as m = 4 –16 is a useful design starting point, with capacity determined by the dimension of the task state. Prefix-token injection permits a nonintrusive wrapper around a pretrained Transformer, while read/write separation creates a direct differentiable path through the state interface. 6Figure 2: Dual-loop Transformer architecture with transition-centric pretraining. The outer loop advances the reduced state (qt, M t) across reasoning steps and releases step-local KV, while the inner loop repeatedly applies a shared Transformer core for Rt computation iterations. The transition training objectives shape the same shared core to support state evolution and compact cross-step memory. As an alternative, a fixed-dimensional matrix recurrence can carry state in the style of delta-rule linear attention [15–17]. With state matrix S, key k, value v, query q, decay g, and write factor β:
+
+S ← Se g , ˆv = k⊤S, ∆ = ( v − ˆv)β, S ← S + k∆⊤, o = q⊤S. (9) Memory tokens offer straightforward adaptation of existing weights; matrix states offer a compact native recurrent kernel. 
+
+5.3 Adaptive computation and termination 
+
+Simple state transitions may require one depth iteration, while difficult steps merit several. Options include fixed depth, a learned router assigning Rt from a small set, and fixed-point halting based on 
+
+ρr = ∥h(r+1) − h(r)∥2
+
+∥h(r)∥2 + δ . (10) We favor fixed-point criteria with a hard Rmax and a training distribution that samples recurrent depth. This makes computation an adjustable inference-time resource without changing parameter count. Step-level stopping uses a terminal predicate or learned pstop and an explicit maximum number of outer steps. 
+
+# 6 Training, Runtime, and Complexity 
+
+6.1 Three-stage training curriculum 
+
+The training sequence is deliberately progressive. Stage I: transition warm-up learns the basic state-action map and step boundary format from short, supervised transitions. Stage II: Markovian invariance consolidation introduces prefix perturbations, state pairing, bottleneck penalties, distilla-tion, and drift losses until the model’s behavior depends on the state rather than incidental history. 
+
+Stage III: long-chain self-rollout mixes teacher-forced and model-generated states, applies scheduled sampling, and trains the model to remain stable over many successive transitions. Each observed transition can be trained independently, removing the need to backpropagate through the full chain length. Where differentiable memory crosses several steps, truncated backpropagation 7through time (BPTT) keeps a bounded gradient window while transmitting detached memory between segments. Within the depth loop, gradients still propagate across the recurrent applications; activation checkpointing and carefully scheduled recurrence depth control memory. 
+
+6.2 Training stability as a dynamical-system problem 
+
+Repeatedly applying one stack can amplify unstable hidden-state directions. A simplified recurrence 
+
+h(r+1) = αh (r) + βe + Fθ (h(r)) (11) suggests the importance of Jacobian spectral control, residual scaling, pre-normalization, gradient clipping, step-wise input reinjection, smaller learning rates for recurrent parameters, and curricula that gradually increase loop depth. These controls prevent hidden-state collapse, spurious early fixed points, and the failure mode in which additional iterations cease improving the answer. 
+
+6.3 Inference engine 
+
+The serving stack contains a step scheduler, input constructor, recurrent core, sampler, state manager, KV block manager, and Markovian validity monitor. Three practical cache policies are available: clear and rebuild step-local KV at each boundary; store a fixed state register that survives across steps; or project an explicit dense state into a few virtual memory tokens. A hybrid implementation can compare compact and full-context paths on sampled steps and invoke a fallback when their distributions diverge. For branch search, memory tensors can be replicated and advanced in batches rather than copying unbounded historical KV. The runtime can schedule multiple branches, score successor states, retain the best candidates, and checkpoint the small state at selected steps. 
+
+6.4 Asymptotic cache and compute 
+
+Let N denote Transformer layers, H KV heads, D head dimension, b bytes per scalar, P static prompt tokens, s sink tokens, m memory tokens, Li the length of step i, and Lmax a step-length budget. Full-history and state-structured cache allocations are respectively 
+
+Mfull = 2 N HDb P +
+
+> k
+
+X
+
+> i=1
+
+Li
+
+!
+
+= O(k ¯L), (12) 
+
+MMarkov = 2 N HDb (P + s + m + Lmax ) = O(1) in k. (13) Thus the number of reasoning steps no longer determines memory allocation. With shared weights, effective computational depth increases as RtLc while parameter count remains that of the Lc-layer shared core. The design converts long-horizon memory growth into a bounded state and an adjustable computational budget. If an approximate state transition has independent step error rate ϵ, the probability that all k steps are correct follows the indicative relationship (1 − ϵ)k. State validation, occasional recomputation anchors, and branch checkpoints directly address this long-horizon error propagation. 
+
+# 7 Evaluation Protocol and Initial Feasibility Evidence 
+
+7.1 Task-specific measurements 
+
+Long-context retrieval benchmarks test an ability that the proposed architecture intentionally replaces with sufficient-state transfer. The central evaluation quantities are: • Transition fidelity: one-step accuracy and KL divergence from a full-context teacher. • State sufficiency: success when the next stage receives only the reduced state and fixed task condition. • Chain success and extrapolation: final correctness as k increases well beyond training horizons. 8Table 4: Controlled 128-step probe, 12 paired cases per task and model. Cache entries are mean measured KV tensor sizes (MiB); accuracy is number correct out of 12. Full retains all earlier transition text and State carries only the current value.                                    
+
+> Backbone Task Full KV State KV Full acc. State acc. Qwen3-8B Addition 333.54 8.16 10/12 8/12 Qwen3-8B Modulo 10 336.23 8.44 10/12 7/12 Qwen2.5-Coder-14B-Instruct Addition 447.91 14.06 12/12 12/12 Qwen2.5-Coder-14B-Instruct Modulo 10 451.50 14.44 12/12 12/12 Mistral-7B-Instruct-v0.3 Addition 296.35 7.00 11/12 12/12 Mistral-7B-Instruct-v0.3 Modulo 10 298.88 7.38 5/12 11/12
+
+• Counterfactual robustness: correct response to perturbations of the current state, indepen-dent of irrelevant prefixes. • Cache–horizon decoupling: measured KV footprint, peak memory, time per output token, and their dependence on k.• Compute efficiency: accuracy as a function of the number of inner-loop iterations. Baselines include full-context LLMs, bounded-history cache eviction, sliding-window attention, SSM or linear-attention cores, and fixed-depth specialized Transformers. Synthetic transitions, mathematical reasoning, program execution, theorem proving, and process validation should be represented jointly. 
+
+7.2 Controlled state-only inference probe 
+
+To quantify the immediate benefit of a sufficient-state interface, we conducted a controlled inference probe on three pretrained backbones. For each model, deterministic addition and modulo-10 transition tasks were evaluated at history lengths k ∈ { 1, 8, 32 , 128 }. A full-history prompt and a current-state-only prompt received identical current states and next operations. We measured actual KV tensor sizes 
+
+in a PyTorch forward pass and recorded greedy generation outcomes. This prompt-level experiment directly demonstrates the memory advantage of state transmission before architecture-specific training. Across all three backbones, state-only KV size stays essentially constant as the history grows, while the full-history baseline grows with the transcript. On Qwen2.5-Coder-14B-Instruct, the 128-step state interface reduced measured cache size by approximately 96 .9% on addition while maintaining perfect correctness in all 12 cases. The cross-backbone results establish a compelling direction: turn an already powerful state-compression interface into a native model capability through transition-centric training and Markovian invariance. Appendix H provides the complete per-model results and timing details. 
+
+# 8 Discussion and Vision 
+
+The proposed specialization makes a decisive architectural choice: long-horizon reasoning should be built around state evolution , not the mechanical accumulation of its entire textual trace. A well-designed state carries every constraint needed by the next transition, while the serving engine avoids allocating memory to redundant completed steps. In more complex workflows, the same principle naturally extends to richer state carriers and hybrid state interfaces, preserving the model’s state-first organization. State-space models compress through recurrence; our formulation adds a task-level criterion for what the recurrence must preserve. The two ideas are complementary. A promising endpoint is a hybrid in which an SSM serves the outer Markovian loop and a Transformer serves the inner depth loop. An equally compelling system-level arrangement delegates global planning and open-domain interaction to a general-purpose language model, while a specialized recurrent kernel executes long sequences of structured transitions and returns the terminal state. Neuro-symbolic verification strengthens this state-centered vision. LogicSAGE couples an 8B neural reasoner with Socratic-guided symbolic correction, demonstrating the power of specialized reasoning and explicit feedback [38]. The probabilistic soft-logic verifier ProbVeri extends this principle to 9uncertainty-bearing reasoning steps through contrastive energy-based inference [39]. Both directions complement our execution architecture: a compact successor state can be inspected by symbolic or probabilistic verification modules, and their feedback can shape the next transition without requiring an ever-growing textual history. This division of labor extends beyond mathematical CoT. It invites compact reasoning machines for symbolic computation, tool-mediated agents, theorem provers, industrial workflows, automated verification, and any domain where a well-defined state and a repeatable transition operator exist. The next research frontier is to learn adaptive sufficient-state capacity : not one fixed memory size for every problem, but a state interface that grows only when the true dimensionality of the task demands it. 
+
+# 9 Conclusion 
+
+We present a unified design for Markovian-reasoning specialized language models, connecting formal state sufficiency, structural KV-cache pruning, transition-centric pretraining, and a dual-loop recurrent Transformer. The core consequence of a fixed sufficient-state interface is decisive: cache size becomes independent of the number of completed reasoning steps, while shared recurrent weights allow computation depth to be assigned where each transition needs it. The training objective makes this behavior native; the inference engine turns it into practical step-wise state management; and the evaluation protocol measures the qualities that matter for this task family. 
+
+The guiding vision is a shift from remembering as much as possible to transmitting only what is necessary. Specialized reasoning can be long-horizon without being long-context. Sufficient-state transmission, step-parallel training, and parameter-shared recurrent computation together define a powerful alternative to the ever-growing reasoning transcript. We envision a family of specialized large language models whose reasoning horizon grows through repeated state transitions while memory remains bounded, computation remains adaptable, and every step is organized around an explicit state of the problem. 
+
+# References 
+
+[1] A. Vaswani, N. Shazeer, N. Parmar, et al. Attention Is All You Need. NeurIPS , 2017. https: //arxiv.org/abs/1706.03762. [2] J. Su, Y. Lu, S. Pan, A. Murtadha, B. Wen, and Y. Liu. RoFormer: Enhanced Transformer with Rotary Position Embedding. 2021. https://arxiv.org/abs/2104.09864. [3] G. Xiao, Y. Tian, B. Chen, S. Han, and M. Lewis. Efficient Streaming Language Models with Attention Sinks. ICLR , 2024. https://arxiv.org/abs/2309.17453. [4] Z. Zhang, Y. Sheng, T. Zhou, et al. H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models. NeurIPS , 2023. https://arxiv.org/abs/2306.14048. [5] Y. Li, Y. Huang, B. Yang, et al. SnapKV: LLM Knows What You are Looking for Before Generation. NeurIPS , 2024. https://arxiv.org/abs/2404.14469. [6] W. Kwon, Z. Li, S. Zhuang, et al. Efficient Memory Management for Large Language Model Serving with PagedAttention. SOSP , 2023. https://arxiv.org/abs/2309.06180. [7] J. W. Rae, A. Potapenko, S. M. Jayakumar, and T. P. Lillicrap. Compressive Transformers for Long-Range Sequence Modelling. ICLR , 2020. https://arxiv.org/abs/1911.05507. [8] A. Bulatov, Y. Kuratov, and M. S. Burtsev. Recurrent Memory Transformer. NeurIPS , 2022. https://arxiv.org/abs/2207.06881. [9] M. Dehghani, S. Gouws, O. Vinyals, J. Uszkoreit, and L. Kaiser. Universal Transformers. ICLR ,2019. https://arxiv.org/abs/1807.03819. [10] A. Graves. Adaptive Computation Time for Recurrent Neural Networks. 2016. https://arxiv.org/ abs/1603.08983. 10 [11] J. Geiping, S. McLeish, N. Jain, et al. Scaling up Test-Time Compute with Latent Reasoning: A Recurrent Depth Approach. 2025. https://arxiv.org/abs/2502.05171. [12] A. Gu and T. Dao. Mamba: Linear-Time Sequence Modeling with Selective State Spaces. 2023. https://arxiv.org/abs/2312.00752. [13] T. Dao and A. Gu. Transformers are SSMs: Generalized Models and Efficient Algorithms Through Structured State Space Duality. ICML , 2024. https://arxiv.org/abs/2405.21060. [14] B. Peng, E. Alcaide, Q. Anthony, et al. RWKV: Reinventing RNNs for the Transformer Era. 2023. https://arxiv.org/abs/2305.13048. [15] I. Schlag, K. Irie, and J. Schmidhuber. Linear Transformers Are Secretly Fast Weight Program-mers. ICML , 2021. https://proceedings.mlr.press/v139/schlag21a.html. [16] S. Yang, J. Kautz, and A. Hatamizadeh. Gated Delta Networks: Improving Mamba2 with Delta Rule. ICLR , 2025. https://arxiv.org/abs/2412.06464. [17] S. Yang, B. Wang, Y. Zhang, Y. Shen, and Y. Kim. Parallelizing Linear Transformers with the Delta Rule over Sequence Length. NeurIPS , 2024. https://arxiv.org/abs/2406.06484. [18] Z. Dai, Z. Yang, Y. Yang, et al. Transformer-XL: Attentive Language Models Beyond a Fixed-Length Context. ACL , 2019. https://arxiv.org/abs/1901.02860. [19] T. Dao, D. Y. Fu, S. Ermon, A. Rudra, and C. Ré. FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness. NeurIPS , 2022. https://arxiv.org/abs/2205.14135. [20] S. Ren, Q. Jia, and K. Zhu. Context Compression for Auto-regressive Transformers with Sentinel Tokens. EMNLP , 2023, pp. 12860–12867. https://aclanthology.org/2023.emnlp-main.794/. [21] P. Nawrot, A. Ła´ ncucki, M. Chochowski, D. Tarjan, and E. M. Ponti. Dynamic Memory Compression: Retrofitting LLMs for Accelerated Inference. ICML , 2024, PMLR 235:37396– 37412. https://proceedings.mlr.press/v235/nawrot24a.html. [22] X. Lu, Y. Hu, C. Liu, et al. Kwai-STaR: Transform LLMs into State-Transition Reasoners. 2024. https://arxiv.org/abs/2411.04799. [23] F. Jiao, C. Qin, Z. Liu, N. F. Chen, and S. Joty. Learning Planning-based Reasoning by Trajectories Collection and Process Reward Synthesizing. EMNLP , 2024. https://aclanthology. org/2024.emnlp-main.20/. [24] A. Giannou, S. Rajput, J.-Y. Sohn, et al. Looped Transformers as Programmable Computers. 2023. https://arxiv.org/abs/2301.13196. [25] S. Bae, Y. Kim, R. Bayat, et al. Mixture-of-Recursions: Learning Dynamic Recursive Depths for Adaptive Token-Level Computation. NeurIPS , 2025. https://arxiv.org/abs/2507.10524. [26] DeepSeek-AI. DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Lan-guage Model. 2024. https://arxiv.org/abs/2405.04434. [27] X. Xiong, S. Chen, Z. Shao, Y. Su, W. Jin, P. Luo, Z. Yang, and X. Liu. Truncate or Not? A Scaling Study of Looped Transformers with Truncated Backpropagation. 2026. https://arxiv. org/abs/2610.26030. [28] W. Yang, M. Liao, and K. Fan. Markov Chain of Thought for Efficient Mathematical Reasoning. 
+
+NAACL , 2025. https://arxiv.org/abs/2410.17635. [29] E. Cherepanov, A. Staroverov, A. K. Kovalev, and A. I. Panov. Recurrent Action Transformer with Memory. 2023. https://arxiv.org/abs/2306.09459. [30] B. Wang, C. Lan, C. Wang, and R. Pang. RATTENTION: Towards the Minimal Sliding Window Size in Local-Global Attention Models. 2025. https://arxiv.org/abs/2506.15545. [31] Y. Liu, H. Li, Y. Cheng, et al. CacheGen: KV Cache Compression and Streaming for Fast Large Language Model Serving. ACM SIGCOMM , 2024, pp. 38–56. https://doi.org/10.1145/3651890. 3672274. 11 [32] R.-J. Zhu, Z. Wang, K. Hua, et al. Scaling Latent Reasoning via Looped Language Models. 2025. https://arxiv.org/abs/2510.25741. [33] O. Press, N. A. Smith, and M. Lewis. Train Short, Test Long: Attention with Linear Biases Enables Input Length Extrapolation. ICLR , 2022. https://arxiv.org/abs/2108.12409. [34] A. Katharopoulos, A. Vyas, N. Pappas, and F. Fleuret. Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention. ICML , 2020, PMLR 119:5156–5165. https://proceedings.mlr.press/v119/katharopoulos20a.html. [35] J. Wei, X. Wang, D. Schuurmans, et al. Chain-of-Thought Prompting Elicits Reasoning in Large Language Models. NeurIPS , 2022. https://proceedings.neurips.cc/paper/2022/hash/ 9d5609613524ecf4f15af0f7b31abca4-Abstract-Conference.html. [36] DeepSeek-AI. DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning. 2025. https://arxiv.org/abs/2501.12948. [37] W. Merrill and A. Sabharwal. The Parallelism Tradeoff: Limitations of Log-Precision Trans-formers. Transactions of the Association for Computational Linguistics , 11:531–545, 2023. https://doi.org/10.1162/tacl_a_00562. [38] J. Tian, J. Yu, K. Cheng, F. Cheng, Y. He, Y. Wang, H. Wang, H. Li, W. Yang, and S. Liu. LogicSAGE: Neuro-Symbolic Reasoning with Socratic-Guided Enhancement. ICML , 2026, PMLR 306:121074–121092. https://proceedings.mlr.press/v306/tian26m.html. OpenReview: https://openreview.net/forum?id=GxSB5ZYfM4. [39] J. Yu, J. Tian, K. Cheng, Y. He, H. Li, H. Wang, Y. Wang, W. Yang, Z. Lin, and S. Liu. Mining Logic under Uncertainty: Probabilistic Soft Logic with Energy-Based Inference for Chain-of-Thought Verification. NeurIPS , 2026. https://openreview.net/forum?id=UyyA9UB5BN. 
+
+# A Detailed Cache Design and Engineering Realization 
+
+A.1 Why a standard decoder retains historical KV 
+
+In a conventional causal Transformer, the query of token t may attend to the key/value vectors of every earlier token, so the cache grows unboundedly as decoding proceeds. In a Markovian task, the two roles played by attention can be separated. The first is semantic aggregation : recovering useful information from earlier steps. The second is nonsemantic attention support : retaining stable positions that accumulate attention mass, including attention sinks. Once all task-relevant history is captured in zi, the semantic role no longer requires raw earlier-step tokens, while a fixed number of sink tokens can supply the second role. The static condition Q must be distinguished from historical steps. It may include the system directive, the original problem, and persistent rules. It remains present throughout the chain, can be prefix-cached across requests when identical, and is never removed merely because an earlier reasoning segment has been completed. The cache contract is 
+
+Ci = KV( Q) ⊕ KV(sink) ⊕ KV( zi) ⊕ KV(current step) .
+
+The cost of the fixed prompt is not a cost that grows with the number of reasoning transitions. 
+
+A.2 Training-free, training-aligned, and recurrent alternatives 
+
+Route A is a fast way to assess whether a pretrained model behaves as though the task were approximately Markovian. Route B is the direct means of making the retention rule part of the model definition. Route C is the native end-state architecture. A practical research sequence uses A to audit the assumption, B to establish aligned transitions, and C to distill the computation into a recurrent kernel. Conditional independence in the data-generating process is not automatically the attention graph of a conventional pretrained Transformer. Dropping earlier KV only at inference can change attention normalization and RoPE geometry. The training-aligned route establishes a block-causal mask and position convention common to training and decoding. 12 Table 5: Implementation routes for Markovian cache pruning.    
+
+> Route Mechanism Precision and engineering cost A: Zero-training ap-proximation Step-wise rolling of sinks, static prompt, and cur-rent state under unchanged weights Approximate; divergence probes and fallback B: Training-aligned masking Block-level causal mask, step-end state token, lo-cal position convention, SFT Exact computation graph; train-ing pipeline changes C: Architecture re-placement Fixed-size SSM or linear-attention recurrence Native bounded state; exact his-torical retrieval is not its goal
+
+A.3 The three cache regions 
+
+The static region stores the system/problem prefix and a small attention-sink set. The dynamic state region stores m memory tokens or a fixed matrix recurrence. The within-step region stores causal KV for the tokens currently being generated. A state-slot rotation occurs at every semantic step boundary: 1. Begin step i with the static region, zi−1, and an empty step-local buffer. 2. Generate the current action and reduced successor problem with ordinary causal attention 
+
+within that step .3. Extract the new sufficient state zi from designated write-memory positions. 4. Release the step-local KV and atomically replace the state region by zi.5. Restart the local positional coordinate system and proceed to step i + 1 .For a state register, each layer/head can reserve a fixed-capacity slot for m state vectors, while the current step uses a bounded ring or block buffer. This separates state overwrite from ordinary within-step causal decoding. The design avoids per-step growth in the block table.                
+
+> Algorithm: Step-wise bounded-state decoding
+> Initialize (QKV , K sink , z 0)←PrefillAndReduce( Q).
+> For each step i= 1 , . . . , k :Clear local buffer Bstep ; set local position to zero.
+> While the step boundary has not been reached: Decode with (QKV , K sink , z i−1, B step ).Advance local position and update step-local buffer. Extract ziusing the read/write memory interface. Release Bstep and replace the state register.
+> Break if Term( zi).
+
+A.4 Position, attention sinks, and serving blocks 
+
+The logical positions of tokens must not be confused with their physical cache slots. Under RoPE, an overwritten slot cannot simply inherit the slot index as its token position; such a change alters relative-position behavior. We recommend local position indices beginning at zero for each step, fixed virtual positions for the state interface, and an explicit boundary-reset rule. When using global absolute positions in an existing checkpoint, the original logical positions must instead be preserved. Attention sinks, commonly a small fixed set of four to eight tokens, can remain pinned in a ring buffer. With PagedAttention [6], the state register can be mapped to reserved physical blocks and updated at fixed offsets. The allocator then maintains a stable block budget rather than continuously appending historical step blocks. Step-local blocks are released at the semantic boundary. Block-sparse or variable-length IO-aware kernels [19] implement the attention mask while keeping computation efficient. 
+
+A.5 Checking dependency range before pruning 
+
+Four complementary probes establish the state interface: 1. Distant-prefix intervention. Inject information at an earlier step j < i − 1 and measure whether the next-step output distribution changes when the final state is fixed. KL or Jensen–Shannon distance provides a direct numerical signal. 13 2. Layer/head attention inspection. Estimate the fraction of attention mass outside a local window of width d. A per-head or per-layer analysis guides hybrid local/global configura-tions. 3. Counterfactual state intervention. Perturb si or zi and check whether the successor changes according to the transition rule. The model must use the state rather than recite a memorized trajectory. 4. Mixed-depth fallbacks. Keep a few global bypass heads or a bounded local window when a task has weak residual long-distance dependencies. This creates a smooth transition between exact and approximate state sufficiency. 
+
+A.6 Checkpoints, rollback, and branching 
+
+In-place overwrite removes raw preceding states. A search procedure that explores branches therefore maintains explicit checkpoints. Every N steps, serialize the state register and logical position metadata to CPU memory or NVMe. Restoring a branch loads the nearest checkpoint and replays the required transitions. State hashes and token/position identifiers detect branch misalignment. The footprint of one checkpoint depends on the fixed memory interface, not the full generated transcript. 
+
+A.7 Strategy selection 
+
+When a task is proven or strongly verified to be Markovian, the structural state-slot route gives the strongest memory bound. For approximately Markovian problems with uncertain distant dependen-cies, a small window combined with recurrent attention is a natural fallback. For open-domain tasks dominated by arbitrary historical retrieval, attention-score eviction and transfer compression remain valuable tools. The objective is to select a model architecture matched to the dependency structure of the workload. 
+
+# B Complete Transition-Centric Learning Recipe 
+
+B.1 How specialized pretraining differs from general language modeling 
+
+General-purpose LLM pretraining rewards prediction under arbitrary long-range token dependencies. In the specialized setting, each example teaches a conditional transition from qt to (st, q t+1 ). A short local context, often on the order of hundreds to a few thousand tokens depending on task-state complexity, replaces a long chain as the elementary sample. The objective need not require extrapolation of global positional embeddings across the entire reasoning horizon. The transition-centric model consequently places less emphasis on long-context extension techniques and more emphasis on a dedicated state compression head, state sufficiency, and robust step bound-aries. A recurrent or sliding-window backbone is appropriate when its training and inference windows agree. Mamba-style selective state models provide a natural fixed-size carrier, but being a state-space model alone does not force its hidden state to forget irrelevant history; the transition and bottleneck objectives are what impose that specific inductive bias. 
+
+B.2 Constructing state–action–next-state triplets 
+
+The data pipeline follows seven operations: 1. Split the reasoning trajectory. Map (q1, s 1: T , a ) into T independent triplets (qt, s t, q t+1 ).2. Generate reduced problems. A strong teacher produces qt+1 as a new problem whose continuation can be solved without the earlier derivation. 3. Verify independence. A separate solver receives only qt+1 and attempts the remaining task. Reject or regenerate failures. This is a substantive sufficiency check, not a string-length check. 4. Remove long-range shortcut signals. For task-focused pretraining, favor self-contained segments over arbitrary long-document concatenations that encourage the model to exploit unavailable history. 14 5. Pack samples with block-diagonal masks. Independent short samples can be packed into efficient hardware sequences, but cross-example attention must remain disabled. 6. Augment counterfactually. Perturb states and generate their correct successors, explicitly breaking spurious historical correlations. 7. Cut at natural boundaries only. Token-length truncation is not semantic reduction. Bound-aries should coincide with a new mathematical subproblem, tool-call round, tactic state, or verified state-machine transition. Program execution traces, finite automata, theorem-proving tactic states, game records, symbolic algebra, and tool usage provide procedurally generated transitions with exact labels. Small high-quality sets can be used to adapt pretrained models before scaling the specialized corpus. 
+
+B.3 Detailed objective components Transition NLL. Minimize negative log-likelihood of (st, q t+1 ) conditioned on (Q, q t). Within the step, the causal mask prevents leakage from the target reduced state into the generated action. 
+
+State bottleneck. Constrain the length or entropy of qt+1 and penalize copies of irrelevant historical text. A contrastive term can distinguish minimally sufficient states from longer, redundant alternatives. An auxiliary adversary can attempt to reconstruct older history from the state, with its success penalized subject to preservation of next-step predictive information. 
+
+Independence consistency. Train a discriminator or verifier to judge whether a proposed successor state is sufficient for solving the rest of the task. Correct and incorrect successor pairs can also support preference optimization. 
+
+Full-context teacher distillation. Match the teacher’s next-action logits using a student that receives only zi. This transfers predictive information through the bottleneck. 
+
+Drift consistency. Compare S1 → S2 → S3 with a direct one-step transition initialized from the same S2. A KL term encourages the same operator regardless of the path used to obtain the state. 
+
+Loop consistency. Compare a fixed state processed for R and R + 1 inner iterations; prevent extra computation from becoming uncontrolled stochastic resampling. 
+
+Boundary recognition. Train step-end markers, transition markers, and chain-end markers so the outer loop operates on the correct semantic units. The multi-objective construction in Eq. (8) coordinates these terms. The goal is neither an empty state nor a copied transcript: it is a representation carrying precisely the information necessary for the successor transition. 
+
+B.4 Three stages of pretraining and adaptation 
+
+The first stage retains a reduced general-language foundation, sufficient to parse natural-language descriptions of states. It uses shorter sequence lengths and does not invest in long-context extension merely to support an eventual unbounded reasoning transcript. The second stage is state-transition pretraining: synthetic Markovian tasks train the model to compress intermediate reasoning into a self-contained successor problem and predict the next transition. The third stage is supervised task adaptation using MCoT-like triplets, followed by self-distillation and longer generated trajectories. Because independent state-transition pairs can be shuffled freely, data parallelism is especially effective. Model and pipeline parallelism remain available when parameter size demands them, but context parallelism no longer carries the burden of processing one extremely long chain. The desired engineering effect is higher sample throughput and a shorter gradient path for the same number of supervised transitions. 15 Table 6: Two complementary recurrent Transformer traditions.              
+
+> Dimension Token/segment memory (RMT, RATE) Recurrent depth (MoR, Ouro) Recurrence meaning Carry state between segments Reapply one stack to hidden states State carrier Learnable memory tokens Updated hidden representations Cross-step KV Memory-token KV Cleared at step boundaries Single-step compute One stack application Multiple shared-weight applications Characteristic risk Memory capacity bottleneck Cache/position errors or loop collapse
+
+# C Detailed Dual-Loop Realization 
+
+C.1 Comparing recurrent design lines 
+
+Our recommended realization uses recurrent depth as the computational backbone and memory tokens as the explicit state interface. The outer loop advances the Markovian trajectory; the inner loop supplies the depth required to compute a difficult transition. The same shared transition operator is reused because each step represents another application of the same conditional rule. 
+
+C.2 Algorithmic skeleton                       
+
+> Algorithm: Dual-loop Transformer with adaptive depth
+> Initialize state q1, memory M1, and shared stack Fθ.
+> For t= 1 , . . . , T max :Set h(0) ←Embed([BOS] , q t, M t).
+> For r= 1 , . . . , R max :Update h(r)←Fθ(h(r−1) , e r).
+> Break on fixed-point convergence. Decode (st, q t+1 , M t+1 )from the final hidden state. Reset step-local KV; break if Term( qt+1 ).
+
+The inner loop can use learned loop embeddings or another explicit recurrence-depth coordinate. Its hidden-state updates and shared weights determine effective depth; the step loop determines the number of state transitions. Consequently, increasing reasoning horizon does not increase the number of learned parameters or retained historical KV vectors. 
+
+C.3 Memory token quantity, read/write routing, and injection 
+
+The number m of memory tokens is an explicit information bottleneck. A practical starting range is 4–8 for compact numerical states and 8–16 for structured automata, increasing to 16 –32 when sufficiency probes reveal lost constraints. Read tokens appear at segment input and write tokens at segment output. The preceding write slots become the subsequent read slots, retaining a differentiable path through a small interface. Prefix-token injection is the simplest wrapper around pretrained Transformers. At each inner iteration, reinject the original step embedding as a stabilizing signal. Two particularly important recurrent failure modes are hidden-state collapse , in which token representations become nearly identical, and 
+
+loop collapse , in which the model learns to ignore recurrence and gives the same output after one or many iterations. Sandwich normalization, careful output-projection initialization, residual scaling, lower learning rates, and intermediate supervision counter these failures. 
+
+C.4 Matrix-state alternative and numerical stability 
+
+The delta-rule recurrence in Eq. (9) corrects an existing state prediction rather than blindly accumu-lating repeated writes. To maintain numerical stability over long chains, normalize keys, control the update magnitude (for example, keep β∥k∥2 within a stable range), accumulate sensitive state statistics in FP32, and periodically rescale blocks. Memory-token and matrix-state variants offer complementary implementation paths: the former is accessible through pretrained Transformer wrappers, while the latter gives a compact inference-oriented recurrent kernel. 16 C.5 Adaptive loop depth 
+
+Three depth-control mechanisms are natural: 1. Fixed R. Choose a constant such as R = 2 or R = 4 for predictable latency and memory. 2. Fixed-point / adaptive computation time. Stop when normalized hidden-state change falls below a threshold, up to Rmax [10]. 3. Learned routing. A step-level router selects a depth from a small set (for example 
+
+{1, 2, 4, 8}), and token-level routing may stop easy tokens earlier [25]. Randomized depth sampling during training prevents one fixed iteration count from becoming hardwired into the parameters. Heavy-tailed sampling allocates most training updates to short recurrences while occasionally exposing the model to deeper computation. Training and inference must share the relevant recurrence-depth support; inference should not silently exceed the depth range that the training dynamics have learned. 
+
+# D Progressive Training and Recurrent Stability 
+
+D.1 Three training stages in detail Stage I: transition-operator warm-up. This stage establishes reliable local mapping before imposing the full Markovian bias. Use abundant single-step transition pairs and short trajectory fragments. Train with transition cross-entropy and boundary-recognition losses; keep invariance and bottleneck penalties at zero or a very small weight. Monitor single-step perplexity, exact transition success, and correct recognition of the step-end marker. The objective is to make the recurrent unit competent at the fundamental state-to-successor computation. 
+
+Stage II: consolidation of Markovian invariance. This is the central transformation from a general sequence model into a state-transition model. Introduce paired transitions whose current state is identical but whose distant history differs, randomized irrelevant prefixes, and positional perturbations. Increase history-invariance, state-alignment, information-bottleneck, and drift-consistency penalties progressively. Track the Markovian invariance rate : the fraction of matched-state pairs whose successor answers or distributions agree within tolerance. Also measure state fidelity, past-history predictability from encoded states, correct forgetting after state updates, and boundary accuracy. A practical target is invariance and fidelity above a threshold such as 95% , provided one-step transition success remains intact. A model that merely loops is not yet a Markovian reasoner; the intended inductive bias is that its future depends on explicit sufficient state rather than incidental prior text. 
+
+Stage III: long-horizon autonomous rollout. Mix ground-truth and model-generated states through scheduled sampling. Preserve transition, bottleneck, invariance, distillation, and boundary objectives while emphasizing rollout consistency. Pure teacher forcing is insufficient because the model never learns to recover from its own small transition errors. Long-horizon training must expose the operator to the states it generates in deployment. 
+
+D.2 Truncated BPTT and gradient accounting 
+
+The factorization in Eq. (2) permits independently observed transitions to be shuffled and trained in batches. Full T -step backpropagation is unnecessary for supervised one-step prediction. For differentiable state transfer over multiple outer steps, divide a trajectory into length-B windows and detach memory at each boundary; the memory transports information, while the backward graph remains bounded by B. Within each step, retain gradients through the selected R shared-weight depth applications, using activation checkpointing to control retained activations. During reinforcement-learning post-training, reconstruct memory and hidden states with the current policy parameters rather than reusing stale rollout-time tensors, maintaining consistency of the differentiated action distribution. 17 D.3 The repeated core as a dynamical system 
+
+A simplified recurrence, 
+
+hr+1 = αh r + βe + Fθ (hr ), (14) illustrates how repeated application can amplify unstable directions. A locally linearized update with spectral radius greater than one can multiply perturbations exponentially with depth. Pre-normalization, residual scaling, constraints on injection projections, gradient clipping, smaller recurrent-core learning rates, and a depth curriculum such as 2 → 4 → 8 stabilize the iteration. Intermediate supervision counters hidden-state collapse and makes additional iterations meaningful. Test explicitly for insufficient memory capacity, false convergence or loop collapse, accidental accumulation of step KV, inconsistent positional indices, and inference depth outside the training support. 
+
+# E Inference-Engine Realization 
+
+E.1 Prefill, recurrent execution, and adaptive termination 
+
+The runtime contains a loop scheduler, input constructor, shared recurrent core, sampler, state manager, KV-block manager, and Markovian validity checker. Following prompt prefill, only the fixed static condition, selected attention sinks, and current state interface survive. Static Q tokens may be reused by prefix caching. Each outer step builds input from static condition, state memory, and a bounded local workspace; executes Rt recurrent-depth updates; samples the local segment and successor; and replaces the state slot at the boundary. Termination follows the task predicate, learned stopping probability, fixed-point condition, or configured Tmax . Since parameter count is independent of recurrent depth, a serving scheduler may shift computation toward difficult steps without loading different model weights. 
+
+E.2 Three cache policies Clear-and-rebuild. At each step, reconstruct a fresh local KV allocation and release it after extracting the successor state. This provides a simple semantically transparent implementation but repeats encoding. 
+
+Fixed recurrent register. Preserve a fixed-size register containing static prefix KV and the latest state KV; reset or overwrite transient blocks. The bounded register is a practical deployment default compatible with fixed-size GPU memory pools. 
+
+Virtual-state cache. Carry a dense latent state and project it into a handful of virtual tokens before each transition. Its storage approaches a fixed constant and its effectiveness depends on trained state fidelity. A hybrid policy compares state-only and recent-segment paths on selected steps, falling back to longer context when output distributions diverge. 
+
+E.3 Parallel branching with explicit states 
+
+The current state is a small tensor, so a batch of B candidate trajectories requires a memory bank of shape [B, m, d ], not B copies of the entire old transcript. Advance candidates together, score successors, select the top K branches, and release all local KV. Checkpoints at chosen boundaries save a fixed state and positional metadata, enabling replay after a failed continuation.                               
+
+> Algorithm: Batched dual-loop state branching Input: branch states Q0, memory bank M0, depth limit Rmax .
+> For t= 0 , . . . , T max −1:Set H←Embed( Qt, M t).
+> For r= 1 , . . . , R max :Set Hold ←Hand H←Fθ(H, LoopEmb( r)) .
+> Break if Converged( H, H old ).Decode (Q′, M ′, w )and select top-Ksuccessor states. Release step-local KV and update (Qt+1 , M t+1 ).
+> Break if every branch is terminated.
+
+18 E.4 Validation and fallback 
+
+Validation hooks check step boundaries, irrelevant-prefix invariance, compressed-state fidelity against a longer-context teacher, long-horizon drift, valid termination, and GPU memory allocation. Checks can be periodic or sampled. Failure can trigger an explicit fallback from compressed state to recent-segment input, from recurrent register to full re-encoding, or to an earlier checkpoint. The key engineering requirement is that failed state sufficiency be recognized and corrected, not hidden in the next transition. 
+
+# F Complexity and Error Propagation 
+
+With N Transformer layers, H KV heads, head dimension D, and b bytes per scalar, each cached token consumes 2N HDb bytes. For static prompt length P , individual step lengths Li, s sink tokens, 
+
+m state tokens, and bounded current step Lmax :
+
+Mfull (k) = 2 N HDb P +
+
+> k
+
+X
+
+> i=1
+
+Li
+
+!
+
+, (15) 
+
+Mstructured (k) ≤ 2N HDb (P + s + m + Lmax ). (16) For a sufficient fixed-dimensional state and bounded local step, structured memory is independent of completed step count k, whereas full-history KV grows with cumulative token length. Quantization and low-rank latent KV can reduce constant factors further. Shared recurrent weights keep parameter storage at that of an Lc-layer core while offering effective depth RL c; extra iterations still consume compute. The essential benefit is asymptotic decoupling of history length and cache budget, alongside a tunable compute budget. If each independent transition succeeds with probability 1 − ϵ, exact completion over k transitions has indicative probability (1 − ϵ)k. More generally, a state-distance recurrence can be bounded as 
+
+et+1 ≤ αe t + δt, where α is transition sensitivity and δt local approximation error. Contractive transitions control drift, while expansive transitions require stronger fidelity, periodic recomputation anchors, or rollback. This motivates reporting complete-chain success and error accumulation in addition to one-step accuracy. 
+
+# G Experimental Program and Measurement Protocol 
+
+G.1 Evaluation criteria 
+
+Evaluation should measure (1) transition fidelity and KL against a full-context teacher; (2) sufficiency of the reduced state; (3) final chain-level success; (4) length extrapolation when trained on short chains and tested at k = 100 or greater; (5) correct reaction to counterfactual state changes with invariance to irrelevant prefixes; (6) self-correction after injected intermediate-state errors; (7) KV payload, peak GPU memory, and time per output token versus horizon; and (8) accuracy as a function of actual inner-loop depth. Conventional long-document retrieval benchmarks assess a different design objective. 
+
+G.2 Baselines, datasets, and ablations 
+
+Include four baseline families: full-KV general LLMs; cache-eviction and cache-compression methods such as H2O, SnapKV, and StreamingLLM; sliding-window attention, Mamba/SSM, and linear-attention state kernels; and specialized fixed-depth Transformers without the inner recurrent loop. Match backbone and evaluation conditions wherever a controlled architectural comparison is possible. Build verifiable datasets from synthetic arithmetic and symbolic rewriting, deterministic automata, pro-gram traces, and rule-based state transitions. Add reduced-state triplets derived from GSM8K/MATH-style problems, theorem-proving tactic states, industrial process checks, structured compliance tasks, and domain-specific stepwise deduction. Controlled finite-state tasks are especially valuable be-cause the true state dimension and transition kernel are known. Jointly ablate Markovian penalty weights, counterfactual-prefix perturbations, stopping policy, depth R, state size ds, hard or soft 19 masks, sink and memory-token counts, local segment length, and truncated-BPTT window. A joint state-capacity/depth sweep reveals the essential compression–computation tradeoff. Table 7: Recommended implementation roadmap, preserving the original manuscript’s five-stage validation logic. 
+
+Stage Implementation Acceptance signal 0 Audit remote historical dependence Distant history is dispensable 1 Training-free rolling KV with KL probes Bounded distribution drift 2 Block-causal mask, state tokens, multi-objective tuning Stable transition accuracy 3 Distillation into a native recurrent-state core Long-horizon extrapolation 4 Counterfactual, memory, TPOT, drift vali-dation Accuracy and resource targets met 
+
+The minimal starting sequence is two- and three-step synthetic transitions, m = 8 memory tokens and randomized R ∈ [1 , 8] , single-transition cross-entropy, extrapolation toward 50 steps, counterfactual probes, and finally replacement of the memory-token interface by a compact recurrent kernel. 
+
+# H Controlled Three-Backbone Prompt Probe 
+
+This supplementary measurement isolates the state-only inference interface . It is not the result of training the proposed dual-loop model; it measures an immediately testable consequence of replacing a long transition transcript with its current sufficient scalar state. 
+
+H.1 Setup 
+
+The pretrained backbones were Qwen3-8B, Qwen2.5-Coder-14B-Instruct, and Mistral-7B-Instruct-v0.3. Two deterministic scalar-state tasks—addition and modulo-10 arithmetic—used 12 paired cases at history lengths k ∈ { 1, 8, 32 , 128 }. Full-history prompts included the previous transition text; paired state-only prompts supplied the same current value and next operation without old text. Greedy generation produced answers. An actual forward pass measured key/value tensor element counts converted to MiB, and median generation latency was recorded in milliseconds. On these Table 8: Measured 128-step KV and generation-time comparison; 12 paired cases per row. Full and State KV are mean MiB; times are median ms. Accuracy appears in Table 4.                                           
+
+> Backbone Task Full KV State KV Factor Full ms State ms Qwen3-8B Addition 333.54 8.16 40.89 ×352.9 147.9 Qwen3-8B Modulo 10 336.23 8.44 39.85 ×382.1 75.3 Qwen2.5-Coder-14B Addition 447.91 14.06 31.85 ×533.8 154.9 Qwen2.5-Coder-14B Modulo 10 451.50 14.44 31.27 ×467.4 78.6 Mistral-7B Addition 296.35 7.00 42.34 ×1592.6 813.0 Mistral-7B Modulo 10 298.88 7.38 40.52 ×1842.4 764.5
+
+128-step inputs, state-only prompts require approximately 2.4% –3.2% of the full-history KV payload, a 31 –42 × compression factor. Table 4 reports both accuracy gains and regressions rather than selectively favorable conditions. The KV entries describe numerical tensor payload in a forward pass, not complete GPU process memory, which also includes weights, activations, and allocator reservations. Times are run medians, not cross-machine, hardware-normalized throughput. 
+
+# I Further Implications and Research Vision 
+
+The explicit Markovian structure is a purposeful specialization. Numbering conventions, long-range references, proof branches, and global visited sets need to be included in the current state whenever they are task-relevant; otherwise they cannot be recovered after history is discarded. State-plus-bounded-summary hybrids, occasional full-context anchors, and selected global bypass heads extend coverage where strict compactness is not the right abstraction. 20 SSMs place compression in a recurrent architecture; our proposal additionally locates its justification in the task dependency graph and the measurable sufficiency of a reduced state. This suggests a tightly integrated outer SSM state evolution and inner Transformer depth recurrence. A general-purpose model can plan, retrieve, and recognize Markovian subproblems; a specialized state kernel can execute repeated structured transitions; the general model can then integrate the result. Such cooperation preserves generality at the system level while specializing the high-frequency execution path. Future research priorities include adaptive memory-token capacity, native recurrent GPU kernels, process-reward and reinforcement-learning post-training, minimax and information-theoretic bounds under state-sufficiency assumptions, multi-task transition kernels with task-conditioned memory initialization, higher-order and partially observable Markov extensions, and verified interfaces with external calculators, solvers, and simulators. The larger aim is to make long-horizon reasoning a sequence of state transitions and reusable computation , rather than an ever-growing transcript. 
+
+# J Notation and Source Attribution 
+
+Table 9: Core notation.            
+
+> Symbol Meaning
+> QFixed task condition / retained prompt
+> qt, s tReduced state and action / reasoning segment at step tzt, M tCompressed state, memory tokens, or recurrent tensor
+> T, k Outer reasoning steps / chain horizon
+> Rt, R max Selected and maximum inner-depth iterations
+> m, d, d sMemory-token count, hidden width, and state size
+> P, s, L t, L max Static length, sinks, local length, local budget
+> N, H, D, b Layers, KV heads, head dimension, bytes per scalar
+> λi, ϵ Training weights and state approximation error
+
+This English manuscript translates and reorganizes the Chinese research manuscript by Haibin Tong, Liangliang Xin, Yamei Zhu, and Jiang Yu, preserving its motivation, three-part technical roadmap, design mechanisms, implementation stages, and long-term vision. The three-backbone controlled prompt probe is supplementary and distinctly labeled. 21

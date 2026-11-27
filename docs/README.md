@@ -48,17 +48,17 @@
 <section class="dpr-home-dashboard-card dpr-home-report-card">
   <div class="dpr-home-dashboard-header">
     <div>
-      <span class="dpr-home-dashboard-kicker">2026-11-26</span>
+      <span class="dpr-home-dashboard-kicker">2026-11-27</span>
       <h3 class="dpr-home-dashboard-title">今日汇总</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">共 11 篇</strong>
+    <strong class="dpr-home-dashboard-count">共 14 篇</strong>
   </div>
   <dl class="dpr-home-dashboard-stats">
     <div class="dpr-home-dashboard-stat"><dt>累计更新</dt><dd>1 次</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>8</dd></div>
-    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>3</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>精读</dt><dd>9</dd></div>
+    <div class="dpr-home-dashboard-stat"><dt>速读</dt><dd>5</dd></div>
   </dl>
-  <p class="dpr-home-dashboard-body">最近更新：2026-11-26 02:46:23 UTC<br>状态：成功</p>
+  <p class="dpr-home-dashboard-body">最近更新：2026-11-27 02:21:19 UTC<br>状态：成功</p>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-brief-card">
   <div class="dpr-home-dashboard-header">
@@ -69,9 +69,7 @@
     <strong class="dpr-home-dashboard-count">AI</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<p>今天共处理 11 篇论文（精读 8 篇、速读 3 篇），其中《On Evaluating User Simulators for Interactive Agents》与《Seldon TFM family: Seldon-Mini, Seldon and Seldon+》均获 10.0 满分。</p>
-<p>最值得看的是交互智能体用户模拟器的评测方法，以及 Seldon 系列 TFM 的模型家族设计。</p>
-<p>建议普通读者先读这两篇满分精读，再按兴趣浏览速读中“带语言化反馈的强化学习生成推荐”和“个性化模仿游戏”两篇。</p>
+<p>今日筛选14篇论文，精读9篇，聚焦循环Transformer的长上下文加速与自适应推理优化。最值得关注LoopCache与SwiftLoop，均获9.0分，分别从缓存加速和选择性精炼提升循环模型效率。普通读者可优先看这两篇的精读笔记，再按兴趣浏览速读中的角色化提示与心智理论话题。</p>
   </div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-deep-card">
@@ -80,12 +78,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">精读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">8 篇</strong>
+    <strong class="dpr-home-dashboard-count">9 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="On Evaluating User Simulators for Interactive Agents">On Evaluating User Simulators for Interactive Agents</span></li><li><span class="dpr-home-dashboard-paper-title" title="Seldon TFM family: Seldon-Mini, Seldon and Seldon+">Seldon TFM family: Seldon-Mini, Seldon and Seldon+</span></li><li><span class="dpr-home-dashboard-paper-title" title="Evaluating Persona Consistency in LLM User Simulators Without External Reference Annotations">Evaluating Persona Consistency in LLM User Simulators Without External Reference Annotations</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="LoopCache: Accelerating Long-Context Self-Speculative Decoding for Looped Transformers">LoopCache: Accelerating Long-Context Self-Speculative Decoding for Looped Transformers</span></li><li><span class="dpr-home-dashboard-paper-title" title="SwiftLoop: Selective Refinement for Adaptive Implicit Reasoning in Looped Transformers">SwiftLoop: Selective Refinement for Adaptive Implicit Reasoning in Looped Transformers</span></li><li><span class="dpr-home-dashboard-paper-title" title="Discovering Explicit Magnetic Core-Loss Equations via Symbolic Sparse Identification">Discovering Explicit Magnetic Core-Loss Equations via Symbolic Sparse Identification</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">user-sim <strong>6</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">looped-llm <strong>7</strong></span><span class="dpr-home-dashboard-tag">sr <strong>1</strong></span><span class="dpr-home-dashboard-tag">user-sim <strong>1</strong></span></div>
 </section>
 <section class="dpr-home-dashboard-card dpr-home-skim-card">
   <div class="dpr-home-dashboard-header">
@@ -93,12 +91,12 @@
       <span class="dpr-home-dashboard-kicker">今日累计</span>
       <h3 class="dpr-home-dashboard-title">速读推荐</h3>
     </div>
-    <strong class="dpr-home-dashboard-count">3 篇</strong>
+    <strong class="dpr-home-dashboard-count">5 篇</strong>
   </div>
   <div class="dpr-home-dashboard-body">
-<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="More Than a Score: Reinforcement Learning with Verbalized Feedback for Generative Recommendation">More Than a Score: Reinforcement Learning with Verbalized Feedback for Generative Recommendation</span></li><li><span class="dpr-home-dashboard-paper-title" title="Who are you? The Personal Imitation Game">Who are you? The Personal Imitation Game</span></li><li><span class="dpr-home-dashboard-paper-title" title="Joint Classification and Generation on Tabular Data: an Empirical Study">Joint Classification and Generation on Tabular Data: an Empirical Study</span></li></ul>
+<ul class="dpr-home-dashboard-paper-list"><li><span class="dpr-home-dashboard-paper-title" title="PersonaFactory: Stylistic User Prompt Augmentation with Synthetic Persona Bank">PersonaFactory: Stylistic User Prompt Augmentation with Synthetic Persona Bank</span></li><li><span class="dpr-home-dashboard-paper-title" title="Specialized Large Language Models for Markovian Reasoning: Structural Cache Compression, Transition Pretraining, and Dual-Loop Transformers">Specialized Large Language Models for Markovian Reasoning: Structural Cache Compression, Transition Pretraining, and Dual-Loop Transformers</span></li><li><span class="dpr-home-dashboard-paper-title" title="Who Attributes a Mind to Whom? Mutual Theory of Mind in Simulated User-Assistant Conversation">Who Attributes a Mind to Whom? Mutual Theory of Mind in Simulated User-Assistant Conversation</span></li></ul>
   </div>
-  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">user-sim <strong>2</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
+  <div class="dpr-home-dashboard-tags"><span class="dpr-home-dashboard-tag">user-sim <strong>3</strong></span><span class="dpr-home-dashboard-tag">looped-llm <strong>1</strong></span><span class="dpr-home-dashboard-tag">tabular-fm <strong>1</strong></span></div>
 </section>
 </div>
 

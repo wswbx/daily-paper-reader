@@ -1,0 +1,972 @@
+Title: SwiftLoop: Selective Refinement for Adaptive Implicit Reasoning in Looped Transformers
+
+URL Source: https://arxiv.org/pdf/2611.31481v1
+
+Published Time: Wed, 25 Nov 2026 01:18:31 GMT
+
+Number of Pages: 19
+
+Markdown Content:
+## SWIFT LOOP : Selective Refinement for Adaptive Implicit Reasoning in Looped Transformers 
+
+Tianyi Zhao 1, Ke Wan 1, Chen Chen 1
+
+> 1
+
+University of Virginia 
+
+{abs4dj,tbn5pj,zrh6du}@virginia.edu 
+
+Abstract 
+
+Looped Transformers advance implicit chain-of-thought reasoning through recurrent latent refinement. However, existing looped reason-ers typically employ fixed-depth recurrence, updating all latent positions at every iteration and incurring redundancy when further refine-ment is unnecessary. We introduce S WIFT -LOOP , an inference-time framework for se-lective recurrent refinement through position-wise freezing, enabling adaptive computation allocation across both recurrent depth and ac-tive width. SwiftLoop learns lightweight freez-ing policies through hindsight-guided supervi-sion derived from two complementary criteria: K/V reusability at the internal representation level and functional impact at the output level. At inference time, these policies guide adap-tive freezing based on observed hidden states. Extensive experiments demonstrate that Swift-Loop achieves favorable accuracy–computation trade-offs over fixed-loop inference and adap-tive baselines, with measured inference accel-eration. Beyond implicit reasoning, we fur-ther demonstrate its applicability to recurrent prompt prefilling in general looped models. 
+
+1 Introduction 
+
+Implicit chain-of-thought (CoT) reasoning has emerged as an efficient alternative to explicit CoT, replacing token-by-token reasoning traces with con-tinuous intermediate states (Wei et al., 2022; Deng et al., 2023, 2024). Representative approaches include Coconut (Hao et al., 2025), which em-ploys curriculum learning to progressively replace explicit reasoning steps with latent states, and CODI (Shen et al., 2025), which learns a latent reasoning pathway through self-distillation from an explicit CoT pathway. Despite substantial ef-fort, implicit reasoning methods have yet to match the performance of explicit CoT on challenging reasoning tasks (He et al., 2025; Wei et al., 2026). One direction is to increase internal computation. Looped Transformers (Dehghani et al., 2019; Geip-ing et al., 2025; Zhu et al., 2025; Saunshi et al., 2025) thus offer a natural mechanism by repeat-edly applying shared modules for recurrent internal state refinement, increasing effective computational depth while reusing model parameters. Building on this framing, Fan et al. (2026) introduce LOTUS, which iteratively refines a parallel workspace of latent slots, using token-level supervision from ex-plicit CoT steps during training, and close much of the performance gap between implicit and explicit CoT reasoning. Despite effectiveness, it employs a fixed inference strategy: every instance executes the same number of loops, and every latent slot is updated at each iteration, regardless of whether fur-ther refinement is necessary, incurring redundant computation (Figure 1a,b). This motivates adaptive computation alloca-tion (Bae et al., 2025; Wang et al., 2026; Yang and Liu, 2026; Fu et al., 2026), which remains chal-lenging along both depth and width: neither the number of loops sufficient for each instance nor the latent slots that still benefit from further updates are known in advance at inference time. Position-wise freezing offers a unified strategy for adapting both dimensions: a latent slot can cease further updates while its cached keys and values (K/V) remain ac-cessible to active positions through attention. The central challenge is thus determining when further refinements can be safely omitted. Addressing this challenge intuitively entails two perspectives: in-ternal representation level and output function level . For the former, one straightforward way is to consider K/V reusability. Inter-iteration state variation provides a natural but retrospective con-vergence signal (Yang and Liu, 2026). However, stability observed thus far may precede future K/V drift (Figure 1c). For the latter, functional impact can be characterized by how a freezing decision affects the output, which also involves relating the 1arXiv:2611.31481v1 [cs.LG] 23 Nov 2026 1 2 3 4 5 6               
+
+> Loop
+> 025% 50% 75% 100%
+> Problems solved
+> Harder problems need more loops
+> Reasoning steps k
+> ≤2 345≥6
+> 0ε2ε
+> K/V change in the last loop
+> 0
+> ε
+> 2ε
+> 3ε
+> Largest later K/V drift
+> Stable-looking latents still drift
+> 58%
+> look stable, drift later
+> 42% still changing
+> Latents need different loops
+> 0 1 2 3 4 5 6 Loops needed
+> f1150
+> Latent slot Reasoning steps  k
+> ≤2 345≥6
+> 0.01% 1% 100%
+> Functional impact Density
+> Latents that drift beyond ε
+> Drift need not imply large impact
+> 63% 37%
+> abcd
+
+Figure 1: Analysis of recurrent computation dynamics. (a) The loop depth sufficient for final predictions varies with difficulty. (b) The loop depth required by individual latent slots varies. (c) locally stable K/V may exhibit substantial future drift. (d) Substantial K/V drift need not correspond to large effects on the prediction margin. 
+
+current state to the future prediction outcome. Im-portantly, the two perspectives are distinct, as K/V drift need not imply a large functional impact on the prediction (Figure 1d). Together, they motivate hindsight-guided freezing decisions for adaptive looping that spans both levels. To this end, we propose SwiftLoop , an adaptive looping policy that enables position-wise selective freezing for adaptive computation at inference. Af-ter each loop, a lightweight predictor determines which active slots to freeze based on their observed hidden states, thereby regulating per-position effec-tive depth and per-loop active width. We investigate two alternative supervision objectives for learning this freezing policy: K/V reusability, which charac-terizes the future consistency of cached K/V; and functional impact, which estimates the effect of freezing a latent slot on the model’s final predic-tion. Beyond implicit reasoning, we further extend this selective freezing policy to recurrent prompt prefilling, broadening its scope from specialized latent slots to general context-token states. We evaluate SwiftLoop across four benchmarks using LOTUS (Fan et al., 2026), a looped model for im-plicit reasoning, at varying scales, and further ex-amine its applicability to recurrent prompt prefill-ing on two general looped models, Ouro (Zhu et al., 2025) and Huginn (Geiping et al., 2025), across three datasets. Extensive experiments demonstrate that SwiftLoop improves computational adaptivity while maintaining competitive task performance relative to fixed-loop inference. 
+
+2 Problem Formulation 
+
+Looped Models. We consider a looped Trans-former with L layers operating over N positions, represented by X = ( x1, . . . , x N ). The model performs an initial pass ( t = 0 ) followed by R
+
+recurrent iterations: 
+
+H(0) = I(X; c),
+
+H(t) = Fθ(H(t−1) ; X, c), t = 1 , . . . , R, (1) where I denotes the model-specific initialization operator, Fθ is the shared Transformer block and 
+
+c denotes optional fixed conditioning information. Let h(t) 
+
+> i
+
+denote the hidden state of position i after pass t, and κ(t) 
+
+> i,ℓ
+
+= [ K(t) 
+
+> i,ℓ
+
+; V (t) 
+
+> i,ℓ
+
+] its concatenated key-value (K/V) vectors at layer ℓ.In looped models for implicit reasoning , X
+
+comprises latent slots, recurrently refined under the conditioning of the input prompt, as in LO-TUS (Fan et al., 2026). In general looped models ,such as Ouro (Zhu et al., 2025) and Huginn (Geip-ing et al., 2025), X can represent context-token inputs whose hidden states are iteratively refined during recurrent prompt prefilling to support subse-quent decoding. 
+
+Adaptive Recurrent Computation. We study adaptive computation at the granularity of individ-ual positions, allowing different positions to receive different numbers of recurrent updates. Specifi-cally, we consider position-wise freezing, formally defined as follows. 
+
+Definition 2.1 (Position-wise Freezing) . Freezing position i after pass τi ∈ { 0, . . . , R } halts its subse-quent state updates while preserving its layer-wise K/V cache. For every u > τ i,
+
+eh(u) 
+
+> i
+
+= eh(τi) 
+
+> i
+
+, eκ(u) 
+
+> i,ℓ
+
+= eκ(τi) 
+
+> i,ℓ
+
+, ∀ℓ, (2) where e· denotes quantities under freezing. Active positions continue attending to the preserved K/V throughout subsequent iterations. A freezing schedule τ = ( τ1, . . . , τ N ) deter-mines each position’s effective recurrent depth 2di = τi and the active width wt = |A t| at itera-tion t, where At = i : τi ≥ t. The total number of recurrent position updates is 
+
+U (τ ) = 
+
+> R
+
+X
+
+> t=1
+
+|A t| =
+
+> N
+
+X
+
+> i=1
+
+τi. (3) The unfrozen schedule τ full = ( R, . . . , R ) recov-ers fixed-loop inference. We aim to learn an online freezing policy that reduces recurrent computation while preserving predictive performance. 
+
+Freezing Criteria. We consider two criteria for adaptive freezing at different levels: K/V reusabil-ity at the internal representation level, and func-tional impact at the output level. 
+
+Definition 2.2 (K/V Reusability) . For position i af-ter pass t < R , its maximum future K/V deviation along the unfrozen trajectory is 
+
+EKV  
+
+> i
+
+(t) = max  
+
+> t<u ≤R
+
+DKV  
+
+> i
+
+(t, u ), (4) where DKV  
+
+> i
+
+denotes the layer-averaged relative K/V distance. Position i is reusable if EKV  
+
+> i
+
+(t) < ϵ .
+
+Definition 2.3 (Functional Impact) . Let τ (i,t ) de-note the schedule that freezes only position i after pass t < R . Its functional impact is 
+
+I(t) 
+
+> i
+
+= |m(τ (i,t )) − m(τ full )||m(τ full )| , (5) where a and b are the top-two tokens under τ full 
+
+and m(τ ) = zτ (a) − zτ (b) denotes the logit mar-gin under schedule τ .
+
+3 Empirical Analysis of Recurrent Computation 
+
+Setup. We analyze the publicly released LOTUS-3B (Fan et al., 2026) checkpoint, a looped model for implicit reasoning fine-tuned on GSM8K-Aug (Deng et al., 2023). It refines 150 latent slots over six recurrent loops. From the GSM8K vali-dation and test sets, we select 1,648 samples with complete gold reasoning traces to analyze loop requirements. We then use correctly solved valida-tion samples for latent-level analyses. 
+
+Nonuniform Loop Requirements. We investi-gate computational requirements across both sam-ples and latent positions. We group samples from the GSM8K validation and test sets by the number of gold reasoning steps k and examine the loop depth sufficient for correct predictions. As shown in Figure 1a, easier samples, characterized by fewer gold reasoning steps, tend to require fewer loops. At the position level, we examine the earliest loop after which freezing each latent slot individually changes the final prediction margin by less than 1%. These freezing depths vary both across and within samples (Figure 1b). Together, they high-light the potential for adaptive computation alloca-tion across loop depth and active positions. 
+
+Local Convergence and Future Reusability. 
+
+From the internal representation perspective, a key consideration is whether cached K/V remain reusable throughout subsequent computation. We define a slot as reusable after loop t if its cached K/V remain within a tolerance ϵ along the re-maining unfrozen trajectory. A natural proxy for reusability is local convergence over previous loops. However, local K/V stability does not necessarily imply future reusability: 58% of slot–loop obser-vations exhibiting below-threshold inter-iteration K/V changes subsequently drift beyond ϵ = 0.45 (Figure 1c). This motivates future-oriented crite-rion of reusability beyond observed convergence. 
+
+Representation Drift and Functional Impact. 
+
+From the output perspective, we consider func-tional impact, which captures the predictive conse-quences of freezing. Using exact single-slot coun-terfactuals, we measure the relative change in the final prediction logit margin when the remaining loops are recomputed with only that slot frozen. Among slot–loop observations exhibiting substan-tial future K/V drift, 63% induce margin changes below 1% (Figure 1d). These findings highlight the distinction between input-level representational consistency and output-level functional impact as two alternative criteria for adaptive freezing. 
+
+Inferring Future Utility from Current States. 
+
+Both criteria depend on future computation unavail-able when freezing decisions are made. Current hidden states offer a natural source of predictive information, as they feed into subsequent loops. Yet their observed dynamics do not directly track predictive correctness: across 1,350 GSM8K vali-dation and test instances, hidden-state norms follow similar trajectories regardless of when predictions first become settled, increasing sharply in later loops (Figure 2). We therefore examine two sepa-rately trained lightweight MLPs that estimate K/V reusability and functional impact from current hid-3040 80               
+
+> f= 1 ( n= 425) f= 2 ( n= 338) f= 3 ( n= 289)
+> 0 1 2 3 4 5 6 040 80
+> f= 4 ( n= 165)
+> 0 1 2 3 4 5 6
+> f= 5 ( n= 95)
+> 0 1 2 3 4 5 6
+> f= 6 ( n= 38)
+> Loop |h|
+
+Figure 2: Hidden-state norm dynamics across recur-rent loops. 
+
+den states. Under five-fold cross-validation on 500 GSM8K validation samples, they achieve within-loop, out-of-fold AUCs of 0.96 and 0.78 on the 372 samples correctly solved after six loops. These results support learning hindsight-guided freezing decisions from current hidden states. 
+
+4 SWIFT LOOP 
+
+SwiftLoop instantiates the online freezing policy through lightweight state-based predictors, each supervised by one of two hindsight-derived signals: K/V reusability at the internal representation level and functional impact at the output level. At infer-ence time, the learned policy guides position-wise freezing based on observed hidden states. 
+
+4.1 Online Freezing Policy 
+
+After each eligible recurrent pass t < R , Swift-Loop selectively allocates further refinement by determining which active positions to freeze. For each i ∈ A t, we combine its current hidden state and latest recurrent update as 
+
+z(t) 
+
+> i
+
+=
+
+h
+
+h(t) 
+
+> i
+
+; h(t) 
+
+> i
+
+− h(t−1) 
+
+> i
+
+i
+
+(6) where h(t) 
+
+> i
+
+is i’s hidden state after pass t. Alightweight predictor gϕ maps z(t) 
+
+> i
+
+to a freezing score s(t) 
+
+> i
+
+, with higher scores favoring freezing over continued refinement. Given a threshold λ,the policy selects 
+
+Ft =
+
+n
+
+i ∈ A t : s(t) 
+
+> i
+
+≥ λ
+
+o
+
+,
+
+At+1 = At \ F t.
+
+(7) Each selected position is assigned τi = t, skip-ping all subsequent state and K/V updates while reusing its cached K/V from pass t for attention in later loops. The resulting schedule adaptively determines the effective depth of each position and the active width of each loop. 
+
+4.2 Hindsight-Guided Policy Learning 
+
+Both freezing criteria hinge on subsequent recur-rent computation, beyond what an online policy can observe. SwiftLoop bridges this gap through hindsight-guided learning: supervision is derived offline from full recurrent computation trajectories on calibration sets, enabling online freezing deci-sions based solely on current hidden states at infer-ence. We consider two alternative objectives, K/V reusability at the internal representation level and functional impact at the output level, each guiding a separate lightweight freezing predictor. For each objective, we define a criterion-specific freezing measure c(t) 
+
+> i
+
+and optimize the lightweight predictor gϕ on current hidden states:     
+
+> Lreg (ϕ) = 1
+> |Q|
+> P
+> (i,t )∈Q
+> 
+> gϕ(z(t)
+> i) + log( c(t)
+> i+δ)
+> 2
+> ,
+
+(8) where Q denotes the calibration position–pass pairs and δ > 0 ensures numerical stability. Higher freezing scores thus indicate smaller estimated criterion-specific measures and favor freezing over continued refinement. 
+
+K/V Reusability. We derive K/V reusability su-pervision from unfrozen R-pass reference trajec-tories obtained on the calibration set. For each position i and eligible pass t, the freezing measure is defined as the maximum K/V deviation across subsequent passes: 
+
+c(t) 
+
+> i
+
+= EKV  
+
+> i
+
+(t) = max  
+
+> t<u ≤R
+
+DKV  
+
+> i
+
+(t, u ). (9) 
+
+Functional Impact. We alternatively character-ize freezing through its effect on the model’s out-put. Let a and b denote the top two first-output tokens under the unfrozen reference run, and de-fine the logit margin under a freezing schedule τ
+
+as m(τ ) = zτ (a) − zτ (b), with a and b held fixed. Single-position counterfactual. Let τ full denote the unfrozen schedule, and τ (i,t ) the schedule that freezes only position i after pass t. The exact mar-gin change and corresponding freezing measure are 
+
+∆(t) 
+
+> i
+
+= m(τ (i,t )) − m(τ full ),c(t) 
+
+> i, exact
+
+= |∆(t) 
+
+> i
+
+|. (10) 4This directly captures the effect of an individual freezing decision, but requires a separate counter-factual rollout for each position–pass pair. Joint-path IG attribution. To obtain scalable super-vision, we attribute the output-level effect of joint freezing to individual positions using integrated gradients. For each position i, we introduce a coef-ficient αi ∈ [0 , 1] that interpolates its K/V across subsequent passes: 
+
+eκ(u) 
+
+> i,ℓ
+
+(α) = (1 − αi)κ(u) 
+
+> i,ℓ
+
+(α) + αiκ(t) 
+
+> i,ℓ
+
+, u > t, 
+
+(11) where κ(u) 
+
+> i,ℓ
+
+(α) is recomputed along the interpo-lated trajectory. Let μt(α) denote the resulting out-put margin, with α = 0 recovering the unfrozen computation. We estimate each position’s contribu-tion by integrating its margin sensitivity along the joint interpolation path α = s1:
+
+bG(t) 
+
+> i
+
+= 1
+
+K
+
+> K
+
+X
+
+> k=1
+
+∂μ t
+
+∂α i α= 2k−12K 1
+
+≈
+
+Z 10
+
+∂μ t
+
+∂α i α=s1
+
+ds. 
+
+(12) where K denotes the number of midpoint quadra-ture steps. Each step computes gradients for all positions in a single backward pass, enabling effi-cient functional-impact estimation compared with position-wise counterfactual rollouts while captur-ing interactions along the joint freezing path. The resulting freezing measure is 
+
+c(t) 
+
+> i, IG
+
+= | bG(t) 
+
+> i
+
+|. (13) Both formulations provide alternative functional-impact targets for Eq. (8), measuring the magnitude of the induced logit-margin change. 
+
+5 Experiments 
+
+5.1 Experimental Setup Models. We evaluate SwiftLoop on various looped models spanning two recurrent computation settings. For implicit reasoning , we consider three LOTUS configurations (Fan et al., 2026), each re-fining 150 latent positions over six recurrent loops. Alongside the released LOTUS-3B checkpoint, we train CODI-style LOTUS-1B and LOTUS-3B us-ing self-distillation (Shen et al., 2025) on GSM8K-Aug (Deng et al., 2023), initialized from Llama-3.2-1B-Instruct and Llama-3.2-3B-Instruct, respec-tively (Grattafiori et al., 2024). For recurrent prompt prefilling , we evaluate Ouro-1.4B (Zhu et al., 2025), which executes four recurrent steps over 24 layers, and Huginn-0125 (Geiping et al., 2025), a 3.5B model with a four-layer recurrent block iterated 32 times. 
+
+Datasets. For implicit reasoning, we evaluate on the GSM8K test set (Cobbe et al., 2021) and three out-of-distribution benchmarks: SVAMP (Patel et al., 2021), MultiArith (Roy and Roth, 2015), and GSM-Hard (Gao et al., 2023). For recur-rent prompt prefilling, we consider three bench-marks: WinoGrande (Sakaguchi et al., 2021), ARC-Challenge (Clark et al., 2018), and Hel-laSwag (Zellers et al., 2019). 
+
+Baselines. We compare against fixed-depth infer-ence and a broad range of adaptive computation methods. Fixed-depth baselines execute a uniform number of recurrent steps. Adaptive baselines in-clude FlashLoop (Yang and Liu, 2026), which allo-cates computation based on hidden-state changes; H2O (Zhang et al., 2023) and LazyLLM (Fu et al., 2024), which use attention-based importance; CALM (Schuster et al., 2022) and GCEE (Gu et al., 2026), which leverage hidden-state conver-gence; SureLock (Oba et al., 2026) and the Huginn KL exit (Geiping et al., 2025), which use output-distribution stability. More details in Appendix C. 
+
+SwiftLoop Variants. We evaluate three variants of SwiftLoop, sharing the same online freezing pol-icy and predictor architecture but differing in their supervision: K/V reusability, exact counterfactual impact, and integrated-gradient impact. 
+
+Evaluation Metrics. We report prediction accu-racy (%) and average recurrent computation. For implicit reasoning, computation is measured by the average number of loops per latent position, exclud-ing the initialization pass. For recurrent prompt pre-filling, we report the average number of recurrent steps per context token. 
+
+Implementation Details. We fit SwiftLoop pre-dictors on 500 GSM8K validation problems for LOTUS, and on task-specific training splits for Ouro and Huginn, with separate predictors for each model and task. We consider linear predictors and one-hidden-layer MLPs with 256 GELU units, optimized using AdamW with a learning rate of 
+
+10 −3 on standardized hidden-state features. Five-fold cross-validation selects the predictor architec-ture and training duration, up to six epochs. In 5Model Method GSM8K SVAMP MultiArith GSM-Hard 
+
+Acc. (%) Loops Acc. (%) Loops Acc. (%) Loops Acc. (%) Loops LOTUS-1B 
+
+> (CODI-style)
+
+Fixed (6 loops) 59.29 6.00 61.10 6.00 96.67 6.00 13.57 6.00 Fixed (3 loops) 56.63 (−2.7) 3.00 60.20 (−0.9) 3.00 97.78 (+1.1) 3.00 13.04 (−0.5) 3.00 FlashLoop 59.36 (+0.1) 5.86 61.20 (+0.1) 5.86 96.67 (0.0) 5.86 13.50 (−0.1) 5.86 H2O 58.61 (−0.7) 2.75 61.00 (−0.1) 2.75 97.22 (+0.6) 2.75 13.80 (+0.2) 2.75 LazyLLM 58.76 (−0.5) 2.95 60.80 (−0.3) 2.95 97.22 (+0.6) 2.95 13.50 (−0.1) 2.95 CALM 58.98 (−0.3) 3.81 60.40 (−0.7) 3.05 97.22 (+0.6) 3.31 13.27 (−0.3) 3.88 GCEE 58.76 (−0.5) 3.74 60.40 (−0.7) 3.27 97.22 (+0.6) 3.32 13.27 (−0.3) 3.71 SureLock 59.21 (−0.1) 5.89 61.20 (+0.1) 5.92 96.67 (0.0) 5.89 13.42 (−0.2) 5.92 Huginn KL exit 59.14 (−0.2) 5.96 61.10 (0.0) 5.98 96.67 (0.0) 5.96 13.42 (−0.2) 5.96 SwiftLoop (reusability) 58.98 (−0.3) 3.50 61.30 (+0.2) 1.84 97.78 (+1.1) 1.87 13.27 (−0.3) 3.61 SwiftLoop (impact, IG) 58.83 (−0.5) 1.80 60.10 (−1.0) 0.79 96.67 (0.0) 0.98 13.42 (−0.2) 1.52 SwiftLoop (impact, exact) 58.76 (−0.5) 1.54 59.70 (−1.4) 0.71 96.67 (0.0) 0.79 13.42 (−0.2) 1.40 LOTUS-3B 
+
+> (CODI-style)
+
+Fixed (6 loops) 70.74 6.00 75.60 6.00 99.44 6.00 16.38 6.00 Fixed (3 loops) 39.88 (−30.9) 3.00 71.80 (−3.8) 3.00 97.78 (−1.7) 3.00 9.63 (−6.7) 3.00 FlashLoop 70.51 (−0.2) 5.95 75.70 (+0.1) 5.95 99.44 (0.0) 5.95 16.45 (+0.1) 5.95 H2O 71.27 (+0.5) 5.40 75.20 (−0.4) 5.40 100.00 (+0.6) 5.40 16.60 (+0.2) 5.40 LazyLLM 71.04 (+0.3) 5.44 75.30 (−0.3) 5.44 100.00 (+0.6) 5.44 16.76 (+0.4) 5.44 CALM 70.96 (+0.2) 5.73 75.40 (−0.2) 5.24 99.44 (0.0) 5.48 16.38 (0.0) 5.79 GCEE 70.66 (−0.1) 5.69 75.80 (+0.2) 5.49 100.00 (+0.6) 5.65 16.45 (+0.1) 5.69 SureLock 70.66 (−0.1) 5.98 75.50 (−0.1) 5.99 99.44 (0.0) 5.98 16.45 (+0.1) 5.98 Huginn KL exit 70.74 (0.0) 6.00 75.40 (−0.2) 6.00 99.44 (0.0) 5.99 16.45 (+0.1) 6.00 SwiftLoop (reusability) 71.04 (+0.3) 5.65 76.00 (+0.4) 4.44 99.44 (0.0) 5.26 16.60 (+0.2) 5.77 SwiftLoop (impact, IG) 71.11 (+0.4) 5.05 75.80 (+0.2) 3.54 100.00 (+0.6) 3.97 16.38 (0.0) 5.20 SwiftLoop (impact, exact) 70.74 (0.0) 5.05 75.70 (+0.1) 3.46 98.89 (−0.6) 3.37 16.53 (+0.2) 5.46 LOTUS-3B 
+
+> (Coconut-style)
+
+Fixed (6 loops) 70.20 6.00 73.90 6.00 99.44 6.00 16.45 6.00 Fixed (3 loops) 54.59 (−15.6) 3.00 71.40 (−2.5) 3.00 98.33 (−1.1) 3.00 13.19 (−3.3) 3.00 FlashLoop 70.20 (0.0) 6.00 73.90 (0.0) 6.00 99.44 (0.0) 6.00 16.45 (0.0) 6.00 H2O 69.14 (−1.1) 5.74 72.60 (−1.3) 5.74 98.89 (−0.6) 5.74 16.07 (−0.4) 5.74 LazyLLM 69.90 (−0.3) 5.80 73.90 (0.0) 5.80 99.44 (0.0) 5.80 16.60 (+0.2) 5.80 CALM 70.20 (0.0) 5.85 73.90 (0.0) 5.44 99.44 (0.0) 5.69 16.30 (−0.2) 5.87 GCEE 68.16 (−2.0) 5.17 73.10 (−0.8) 4.91 99.44 (0.0) 4.98 16.00 (−0.5) 5.15 SureLock 69.07 (−1.1) 5.94 73.00 (−0.9) 5.95 99.44 (0.0) 5.94 16.22 (−0.2) 5.95 Huginn KL exit 69.14 (−1.1) 5.97 73.60 (−0.3) 5.97 99.44 (0.0) 5.96 16.15 (−0.3) 5.97 SwiftLoop (reusability) 69.90 (−0.3) 5.50 73.70 (−0.2) 5.04 99.44 (0.0) 5.07 16.45 (0.0) 5.65 SwiftLoop (impact, IG) 70.20 (0.0) 5.04 73.70 (−0.2) 3.63 99.44 (0.0) 3.05 16.53 (+0.1) 4.52 SwiftLoop (impact, exact) 69.98 (−0.2) 5.17 73.00 (−0.9) 3.99 99.44 (0.0) 3.83 16.45 (0.0) 5.45 
+
+Table 1: Main Results . Loops is the avg. number of loops computed per latent position. 
+
+Eq. (8), we set δ = 3 × 10 −5 for functional impact in recurrent prompt prefilling and 10 −3 otherwise. Integrated-gradient supervision uses four midpoint quadrature steps. We select freezing thresholds to minimize recurrent computation subject to at most 0.5 percentage point degradation relative to dense inference. For LOTUS, thresholds are selected on the same 500 GSM8K validation problems used for predictor fitting. For Ouro and Huginn, we use dis-joint task-specific selection sets. All thresholds are fixed before evaluation. Additional implementation and calibration details are provided in Appendix B. 
+
+5.2 Main Results on Implicit Reasoning Selective refinement improves the accu-racy–efficiency trade-off. Table 1 presents the accuracy–computation trade-offs across reasoning benchmarks, with the corresponding FLOPs comparisons shown in Figure 3. Uniformly halving recurrent depth reduces GSM8K accuracy by 2.7, 30.9, and 15.6 points across the three LOTUS models, highlighting the limitations of fixed computation budgets. In contrast, SwiftLoop achieves substantial savings through selective position-wise freezing. On CODI-style LOTUS-1B, SwiftLoop (impact, IG) achieves 58.83% accuracy with only 1.80 loops per latent, reducing recurrent computation by 70%. On the two 3B models, it preserves or slightly improves GSM8K accuracy while reducing recurrent computation. Across all 12 model–benchmark pairs, SwiftLoop requires fewer loops than every adaptive baseline, 657 58 59                                   
+
+> GSM8K acc. (%)
+> 345
+> LOTUS-1B (CODI)
+> 0.4 0.6 0.8 149 50 2
+> 0.85 0.9 0.95 168 70
+> 5
+> LOTUS-3B (CODI)
+> 0.85 0.9 0.95 168 69 70
+> 5
+> LOTUS-3B (Coconut)
+> 0.25 0.5 0.75 160 61
+> SVAMP acc. (%)
+> 345
+> LOTUS-1B (CODI)
+> 0.6 0.8 172 74 76
+> 345
+> LOTUS-3B (CODI)
+> 0.6 0.8 172 74
+> 345
+> LOTUS-3B (Coconut)
+> 0.25 0.5 0.75 196 98
+> MultiArith acc. (%)
+> 12345
+> LOTUS-1B (CODI)
+> 0.6 0.8 198 100
+> 345
+> LOTUS-3B (CODI)
+> 0.6 0.8 198 99
+> 345
+> LOTUS-3B (Coconut)
+> 0.4 0.6 0.8 112 13 14
+> GSM-Hard acc. (%)
+> 2345
+> LOTUS-1B (CODI)
+> 0.85 0.9 0.95 116 17
+> 5
+> LOTUS-3B (CODI)
+> 0.8 0.9 115 16 17
+> 45
+> LOTUS-3B (Coconut)
+
+a bc d             
+
+> FLOPs relative to Fixed (6 loops)
+> SwiftLoop: impact, IG impact, exact reusability Fixed kloops FlashLoop H2O LazyLLM CALM GCEE SureLock Huginn KL exit
+
+Figure 3: Accuracy versus FLOPs relative to Fixed (6 loops). 
+
+Method Ouro-1.4B Huginn-3.5B 
+
+Acc. Steps Acc. Steps 
+
+ARC-C 
+
+Fixed (all steps) 59.98 4.00 44.37 32.00 FlashLoop 60.24 (+0.26) 2.35 42.92 (−1.45) 19.41 Huginn KL exit 59.13 (−0.85) 3.81 42.92 (−1.45) 18.13 SwiftLoop (reusability) 59.64 (−0.34) 2.30 44.20 (−0.17) 14.07 SwiftLoop (impact, IG) 60.49 (+0.51) 2.23 43.34 (−1.02) 19.56 
+
+HellaSwag 
+
+Fixed (all steps) 74.37 4.00 67.97 32.00 FlashLoop 74.37 (0.00) 2.35 67.58 (−0.40) 19.42 Huginn KL exit 74.41 (+0.04) 3.98 67.90 (−0.07) 19.79 SwiftLoop (reusability) 74.65 (+0.28) 2.47 67.84 (−0.14) 12.36 SwiftLoop (impact, IG) 74.44 (+0.07) 2.01 67.62 (−0.36) 19.27 
+
+WinoGrande 
+
+Fixed (all steps) 70.88 4.00 63.22 32.00 FlashLoop 70.72 (−0.16) 2.36 62.98 (−0.24) 19.50 Huginn KL exit 70.88 (0.00) 3.99 62.12 (−1.10) 20.23 SwiftLoop (reusability) 69.69 (−1.18) 3.34 63.14 (−0.08) 13.99 SwiftLoop (impact, IG) 70.40 (−0.47) 2.05 62.90 (−0.32) 18.95 
+
+Table 2: Generalization to Recurrent Prompt Prefilling. 
+
+with accuracy remaining within 0.5 points of dense inference in 11 settings. At comparable FLOPs, it also outperforms fixed-loop inference by 9.1, 4.4, and 1.5 accuracy points on GSM8K across the three models, respectively. 
+
+Advantages across baselines and benchmarks. 
+
+Existing adaptive methods generally offer less fa-vorable trade-offs. FlashLoop, SureLock, and the Huginn KL exit retain nearly all recurrent com-putation, while CALM and GCEE achieve lim-ited savings on the 3B models. Attention-based methods H2O and LazyLLM are more compet-itive on LOTUS-1B, requiring 2.75–2.95 loops, but still execute 5.40–5.80 loops on the 3B mod-els. SwiftLoop’s advantages extend to out-of-distribution benchmarks. On LOTUS-1B, K/V reusability achieves 61.30% accuracy on SVAMP and 97.78% on MultiArith with fewer than two loops. On CODI-style LOTUS-3B, SwiftLoop (im-pact, IG) achieves 75.80% accuracy on SVAMP with 3.54 loops and 100% on MultiArith with 3.97 loops. These results demonstrate effective com-putation reduction across model scales, training recipes, and reasoning benchmarks. 
+
+5.3 Generalization to Recurrent Prompt Prefilling 
+
+We further evaluate SwiftLoop on recurrent prompt prefilling, applying position-wise freezing to con-text tokens in Ouro and Huginn. Table 2 shows that SwiftLoop substantially reduces recurrent compu-tation across Ouro and Huginn while largely pre-serving prediction accuracy. On Ouro-1.4B, integrated-gradient supervision achieves the most favorable accuracy–computation trade-off, requiring only 2.01–2.23 steps per con-text token. In comparison, FlashLoop requires 2.35–2.36 steps at similar accuracy, while the Hug-inn KL exit retains 3.81–3.99 of the four steps. K/V reusability is less effective on Ouro, particu-larly on WinoGrande, where it incurs a 1.18-point accuracy drop while using 3.34 steps. On Huginn-3.5B, K/V reusability provides stronger accuracy– computation trade-offs, reducing the average re-current steps from 32 to 12.36–14.07, a 56–61% reduction. Across all three benchmarks, accuracy remains within 0.17 percentage points of full recur-rence. FlashLoop and the Huginn KL exit require 18.13–20.23 steps, with accuracy losses reaching 1.45 points. Integrated-gradient supervision re-quires 18.95–19.56 steps, yielding savings com-parable to FlashLoop. These results demonstrate SwiftLoop’s applicability across recurrent archi-tectures, with representation-level K/V reusability 70 25% 50% 75% 100%                                                                      
+
+> Latent slots GSM8K SVAMP MultiArith GSM-Hard
+> 51 10 777613 76 769 9655558 9765511
+> LOTUS-1B (CODI-style)
+> 025% 50% 75% 100%
+> Latent slots
+> 15 12 20 52 624 29 11 10 19 643 18 13 19 11 12 18 58
+> LOTUS-3B (CODI-style)
+> 025% 50% 75% 100%
+> Latent slots
+> 956868 36 656640 44 977727 17 56710 55
+> LOTUS-3B (Coconut-style) abc
+> Latent slots frozen after loop (%) 012345never
+
+Figure 4: Share of latent slots frozen after each loop under SwiftLoop (impact, IG). ≤2 3 4 5 ≥6 123            
+
+> Loops per latent
+> LOTUS-1B (CODI)
+> GSM8K GSM-Hard
+> ≤2 345≥6
+> Reasoning steps k
+> 456Fixed (6 loops)
+> LOTUS-3B (CODI)
+> ≤2 345≥6 3456
+> LOTUS-3B (Coconut) abc
+
+Figure 5: Adaptive Loop Allocation across Problems. 
+
+and output-level functional impact offering com-plementary perspectives on selective refinement. 
+
+5.4 Inference-Time Adaptive Computation 
+
+SwiftLoop enables fine-grained adaptive computa-tion by dynamically adjusting the effective depth of individual positions and the active width of each recurrent loop. Figure 4 reveals heterogeneous computation allocation across models and bench-marks. LOTUS-1B freezes 51–76% of latent posi-tions immediately after initialization, while the two 3B models exhibit distinct freezing patterns across recurrent loops. This adaptivity further emerges at the problem level. Figure 5 shows that aver-age loops per latent increase consistently with ref-erence reasoning length across all three models on GSM8K and GSM-Hard. Notably, these pat-terns emerge without explicit difficulty supervision, while variations within each difficulty group indi-cate instance-specific computation allocation. To-gether, these findings demonstrate how local freez-ing decisions enable adaptive computation across both positions and samples. 
+
+5.5 Wall-Clock Speedup 
+
+We evaluate the practical inference efficiency of SwiftLoop through end-to-end wall-clock mea-surements (Table 3). For implicit reasoning, IG-supervised SwiftLoop achieves 1.76 ×, 2.26 ×, and 
+
+2.48 × speedups on LOTUS-1B across GSM8K, SVAMP, and MultiArith, respectively. On the two LOTUS-3B models, it delivers 1.07 –1.50 ×
+
+speedups across these benchmarks. SwiftLoop                                              
+
+> Implicit Reasoning GSM8K SVAMP MultiArith
+> Reus. IG Reus. IG Reus. IG LOTUS-1B (CODI) 1.33 ×1.76 ×1.93 ×2.26 ×1.93 ×2.48 ×
+> LOTUS-3B (CODI) 1.01 ×1.09 ×1.20 ×1.38 ×1.07 ×1.29 ×
+> LOTUS-3B (Coconut) 1.01 ×1.07 ×1.08 ×1.33 ×1.08 ×1.50 ×
+> Prompt Prefilling WinoGrande ARC-C HellaSwag
+> Reus. IG Reus. IG Reus. IG Ouro-1.4B 1.12 ×1.43 ×1.56 ×1.62 ×1.52 ×1.86 ×
+> Huginn-3.5B 1.82 ×1.48 ×1.46 ×1.26 ×1.47 ×1.26 ×
+
+Table 3: Measured Speedup . Wall-clock speedup of SwiftLoop relative to dense inference. 
+
+also accelerates recurrent prompt prefilling, achiev-ing 1.43 –1.86 × speedups with functional-impact supervision on Ouro and 1.46 –1.82 × with K/V reusability on Huginn. Notably, Huginn achieves 
+
+1.46 × and 1.47 × speedups on ARC-Challenge and HellaSwag, respectively, under single-context prefilling. These results demonstrate SwiftLoop’s practical inference efficiency across implicit rea-soning and recurrent prompt prefilling. 
+
+6 Related Work 
+
+Implicit Reasoning . Implicit chain-of-thought reasoning replaces explicit reasoning traces with continuous latent-state computation (Deng et al., 2023, 2024). Prior work advances implicit rea-soning through diverse strategies, including pause tokens (Goyal et al., 2024), curriculum-based latent reasoning (Hao et al., 2025), self-distillation (Shen et al., 2025), reasoning compression (Cheng and Van Durme, 2024; Xu et al., 2025), and semantic or step-level supervision (He et al., 2025; Wei et al., 2026). PCCoT (Wu et al., 2025b) explores parallel latent reasoning, while LOTUS (Fan et al., 2026) builds on a looped Transformer architecture to iter-atively refine latent slots for implicit reasoning. 
+
+Looped Transformers and Adaptive Computa-tion . Looped Transformers increase effective com-putational depth through repeated application of shared modules (Dehghani et al., 2019). Their ca-8pabilities for algorithmic and multi-step reason-ing have been extensively studied (Giannou et al., 2023; Yang et al., 2024; Saunshi et al., 2025). Re-cent recurrent-depth language models, including Huginn (Geiping et al., 2025) and Ouro (Zhu et al., 2025), further demonstrate the potential of iterative latent computation. The computational demands of recurrence have inspired efficient inference through K/V cache optimization (Wu et al., 2025a; Vendrell et al., 2026), efficient prefilling (Wan and Chen, 2026; Du et al., 2026), and accelerated decoding (Yu et al., 2026; Liu et al., 2026; Cho et al., 2026). Adaptive computation further improves recurrent efficiency by allocating computation across inputs and positions. Existing approaches learn adaptive depth through dynamic halting and token-wise rout-ing (Graves, 2016; Banino et al., 2021; Bae et al., 2025; Fu et al., 2026; Wang et al., 2026), while inference-time methods guide selective updates through attention importance, hidden-state dynam-ics, and output-distribution stability (Zhang et al., 2023; Fu et al., 2024; Schuster et al., 2022; Gu et al., 2026; Yang and Liu, 2026; Oba et al., 2026; Geiping et al., 2025). SwiftLoop learns position-wise freezing decisions through hindsight-guided supervision, considering future K/V reusability at the internal representation level and functional im-pact at the output level. 
+
+7 Conclusion 
+
+We present S WIFT LOOP , a hindsight-guided frame-work for selective refinement in looped Transform-ers. Through position-wise freezing and K/V reuse, SwiftLoop adaptively allocates computation across recurrent depth and active width. Lightweight pre-dictors learn from hindsight supervision based on representation-level K/V reusability or output-level functional impact, and guide adaptive freezing us-ing only current hidden states at inference time. Extensive experiments demonstrate favorable ac-curacy–computation trade-offs and practical infer-ence acceleration in implicit reasoning, with further generalization to recurrent prompt prefilling. 
+
+References 
+
+Anastasios N Angelopoulos, Stephen Bates, Em-manuel J Candès, Michael I Jordan, and Lihua Lei. 2025. Learn then test: Calibrating predictive algo-rithms to achieve risk control. The Annals of Applied Statistics , 19(2):1641–1662. Sangmin Bae, Yujin Kim, Reza Bayat, Sungnyun Kim, Jiyoun Ha, Tal Schuster, Adam Fisch, Hrayr Haru-tyunyan, Ziwei Ji, Aaron Courville, and Se-Young Yun. 2025. Mixture-of-recursions: Learning dy-namic recursive depths for adaptive token-level com-putation. In The Thirty-ninth Annual Conference on Neural Information Processing Systems .Andrea Banino, Jan Balaguer, and Charles Blundell. 2021. Pondernet: Learning to ponder. arXiv preprint arXiv:2107.05407 .Stella Biderman, Hailey Schoelkopf, Lintang Sutawika, Leo Gao, Jonathan Tow, Baber Abbasi, Alham Fikri Aji, Pawan Sasanka Ammanamanchi, Sidney Black, Jordan Clive, et al. 2024. Lessons from the trenches on reproducible evaluation of language models. 
+
+arXiv preprint arXiv:2405.14782 .Jeffrey Cheng and Benjamin Van Durme. 2024. Com-pressed chain of thought: Efficient reasoning through dense representations. arXiv preprint arXiv:2412.13171 .SangLyul Cho, Langqing Cui, Sehoon Kim, Dongsu Han, and Insu Han. 2026. Loopspec: Pipelined self-speculative decoding for looped transformers. arXiv preprint arXiv:2609.17184 .Peter Clark, Isaac Cowhey, Oren Etzioni, Tushar Khot, Ashish Sabharwal, Carissa Schoenick, and Oyvind Tafjord. 2018. Think you have solved question an-swering? try arc, the ai2 reasoning challenge. arXiv preprint arXiv:1803.05457 .Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Lukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, et al. 2021. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 .Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob Uszkoreit, and Lukasz Kaiser. 2019. Universal transformers. In International Conference on Learn-ing Representations .Yuntian Deng, Yejin Choi, and Stuart Shieber. 2024. From explicit cot to implicit cot: Learning to internalize cot step by step. arXiv preprint arXiv:2405.14838 .Yuntian Deng, Kiran Prasad, Roland Fernandez, Paul Smolensky, Vishrav Chaudhary, and Stuart Shieber. 2023. Implicit chain of thought reasoning via knowl-edge distillation. arXiv preprint arXiv:2311.01460 .Zhixu Du, Yuhan Cheng, Hai Li, Yiran Chen, et al. 2026. Not all loops cost the same: Phase-dependent depth for serving looped transformers. arXiv preprint arXiv:2611.07211 .Ying Fan, Anej Svete, and Kangwook Lee. 2026. Bridging the gap between latent and explicit rea-soning with looped transformers. arXiv preprint arXiv:2606.31779 .
+
+9Qichen Fu, Minsik Cho, Thomas Merth, Sachin Mehta, Mohammad Rastegari, and Mahyar Najibi. 2024. Lazyllm: Dynamic token pruning for effi-cient long context llm inference. arXiv preprint arXiv:2407.14057 .Tianyu Fu, Yichen You, Zekai Chen, Guohao Dai, Huazhong Yang, and Yu Wang. 2026. Think-at-hard: Dynamic looped transformers for improved reason-ing. In Forty-third International Conference on Ma-chine Learning .Luyu Gao, Aman Madaan, Shuyan Zhou, Uri Alon, Pengfei Liu, Yiming Yang, Jamie Callan, and Gra-ham Neubig. 2023. Pal: Program-aided language models. In International conference on machine learning , pages 10764–10799. PMLR. Jonas Geiping, Sean Michael McLeish, Neel Jain, John Kirchenbauer, Siddharth Singh, Brian R. Bartold-son, Bhavya Kailkhura, Abhinav Bhatele, and Tom Goldstein. 2025. Scaling up test-time compute with latent reasoning: A recurrent depth approach. In The Thirty-ninth Annual Conference on Neural Informa-tion Processing Systems .Jonas Geiping, Xinyu Yang, and Guinan Su. 2026. Ef-ficient parallel samplers for recurrent-depth models and their connection to diffusion language models. In Forty-third International Conference on Machine Learning .Angeliki Giannou, Shashank Rajput, Jy-yong Sohn, Kangwook Lee, Jason D Lee, and Dimitris Pa-pailiopoulos. 2023. Looped transformers as pro-grammable computers. In International Conference on Machine Learning , pages 11398–11442. PMLR. Sachin Goyal, Ziwei Ji, Ankit Singh Rawat, Aditya Kr-ishna Menon, Sanjiv Kumar, and Vaishnavh Nagara-jan. 2024. Think before you speak: Training lan-guage models with pause tokens. In The Twelfth International Conference on Learning Representa-tions .Aaron Grattafiori, Abhimanyu Dubey, Abhinav Jauhri, Abhinav Pandey, Abhishek Kadian, Ahmad Al-Dahle, Aiesha Letman, Akhil Mathur, Alan Schelten, Alex Vaughan, et al. 2024. The llama 3 herd of mod-els. arXiv preprint arXiv:2407.21783 .Alex Graves. 2016. Adaptive computation time for recurrent neural networks. arXiv preprint arXiv:1603.08983 .Jiawei Gu, Ziyue Qiao, and Xiao Luo. 2026. Detecting the semantic fixed point: A geometric framework for efficient inference. In Forty-third International Conference on Machine Learning .Shibo Hao, Sainbayar Sukhbaatar, DiJia Su, Xian Li, Zhiting Hu, Jason E Weston, and Yuandong Tian. 2025. Training large language models to reason in a continuous latent space. In Second Conference on Language Modeling .Yinhan He, Wendy Zheng, Yaochen Zhu, Zaiyi Zheng, Lin Su, Sriram Vasudevan, Qi Guo, Liangjie Hong, and Jundong Li. 2025. Semcot: Accelerating chain-of-thought reasoning through semantically-aligned implicit tokens. In The Thirty-ninth Annual Confer-ence on Neural Information Processing Systems .Weihao Liu, Huangjie Zheng, Tianrong Chen, Rohit Dilip, Richard He Bai, Yizhu Jiao, Yuyang Wang, and Ruixiang Zhang. 2026. Decoding looped trans-formers better for (almost) free. arXiv preprint arXiv:2610.02185 .Daisuke Oba, Danushka Bollegala, Masahiro Kaneko, and Naoaki Okazaki. 2026. Stopping computation for converged tokens in masked diffusion-LM decod-ing. In The Fourteenth International Conference on Learning Representations .Arkil Patel, Satwik Bhattamishra, and Navin Goyal. 2021. Are NLP models really able to solve simple math word problems? In Proceedings of the 2021 Conference of the North American Chapter of the Association for Computational Linguistics: Human Language Technologies , pages 2080–2094, Online. Association for Computational Linguistics. Subhro Roy and Dan Roth. 2015. Solving general arith-metic word problems. In Proceedings of the 2015 Conference on Empirical Methods in Natural Lan-guage Processing , pages 1743–1752, Lisbon, Portu-gal. Association for Computational Linguistics. Keisuke Sakaguchi, Ronan Le Bras, Chandra Bhagavat-ula, and Yejin Choi. 2021. Winogrande: An adver-sarial winograd schema challenge at scale. Commu-nications of the ACM , 64(9):99–106. Nikunj Saunshi, Nishanth Dikkala, Zhiyuan Li, Sanjiv Kumar, and Sashank J. Reddi. 2025. Reasoning with latent thoughts: On the power of looped transform-ers. In The Thirteenth International Conference on Learning Representations .Tal Schuster, Adam Fisch, Jai Gupta, Mostafa Dehghani, Dara Bahri, Vinh Q. Tran, Yi Tay, and Donald Met-zler. 2022. Confident adaptive language modeling. In Advances in Neural Information Processing Sys-tems .Zhenyi Shen, Hanqi Yan, Linhai Zhang, Zhanghao Hu, Yali Du, and Yulan He. 2025. CODI: Compress-ing chain-of-thought into continuous space via self-distillation. In Proceedings of the 2025 Conference on Empirical Methods in Natural Language Process-ing , pages 677–693, Suzhou, China. Association for Computational Linguistics. Victor Conchello Vendrell, Arnau Padres Masdemont, Niccolò Grillo, Jordi Ros-Giralt, Arash Behboodi, and Fabio Valerio Massoli. 2026. Memory-efficient looped transformer: Decoupling compute from mem-ory in looped language models. arXiv preprint arXiv:2605.07721 .
+
+10 Ke Wan and Chen Chen. 2026. Attention routing sta-bilizes early: Working-set inference for recurrent language models. arXiv preprint arXiv:2609.27373 .Yuxiang Wang, Kunyu Feng, Yingda Shen, Haoning Xu, Junyu Wang, and Zhizheng Wu. 2026. Recurtrace: Adaptive latent reasoning with loop-time memory. 
+
+arXiv preprint arXiv:2609.03379 .Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, brian ichter, Fei Xia, Ed H. Chi, Quoc V Le, and Denny Zhou. 2022. Chain of thought prompt-ing elicits reasoning in large language models. In 
+
+Advances in Neural Information Processing Systems .Xilin Wei, Xiaoran Liu, Yuhang Zang, Xiaoyi Dong, Yuhang Cao, Jiaqi Wang, Xipeng Qiu, and Dahua Lin. 2026. SIM-cot: Supervised implicit chain-of-thought. In The Fourteenth International Conference on Learning Representations .Bohong Wu, Mengzhao Chen, Xiang Luo, Shen Yan, Qifan Yu, Fan Xia, Tianqi Zhang, Hongrui Zhan, Zheng Zhong, Xun Zhou, et al. 2025a. Parallel loop transformer for efficient test-time computation scal-ing. arXiv preprint arXiv:2510.24824 .Haoyi Wu, Zhihao Teng, and Kewei Tu. 2025b. Parallel continuous chain-of-thought with jacobi iteration. In 
+
+Proceedings of the 2025 Conference on Empirical Methods in Natural Language Processing , pages 914– 926, Suzhou, China. Association for Computational Linguistics. Yige Xu, Xu Guo, Zhiwei Zeng, and Chunyan Miao. 2025. SoftCoT: Soft chain-of-thought for efficient reasoning with LLMs. In Proceedings of the 63rd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) , pages 23336– 23351, Vienna, Austria. Association for Computa-tional Linguistics. Liu Yang, Kangwook Lee, Robert D Nowak, and Dim-itris Papailiopoulos. 2024. Looped transformers are better at learning learning algorithms. In The Twelfth International Conference on Learning Representa-tions .Wanqi Yang and Shiwei Liu. 2026. Flashloop: Fast and memory-efficient looped transformers via lazy updates. arXiv preprint arXiv:2609.29812 .Byeongho Yu, Junhyuk So, and Eunhyeok Park. 2026. LoopCD: Loop-wise contrastive decoding for im-proving reasoning in looped language models. In 
+
+Proceedings of the 2026 Conference on Empirical Methods in Natural Language Processing , pages 31185–31199, Budapest, Hungary. Association for Computational Linguistics. Rowan Zellers, Ari Holtzman, Yonatan Bisk, Ali Farhadi, and Yejin Choi. 2019. HellaSwag: Can a ma-chine really finish your sentence? In Proceedings of the 57th Annual Meeting of the Association for Com-putational Linguistics , pages 4791–4800, Florence, Italy. Association for Computational Linguistics. Zhenyu Zhang, Ying Sheng, Tianyi Zhou, Tianlong Chen, Lianmin Zheng, Ruisi Cai, Zhao Song, Yuan-dong Tian, Christopher Re, Clark Barrett, Zhangyang Wang, and Beidi Chen. 2023. H2o: Heavy-hitter ora-cle for efficient generative inference of large language models. In Thirty-seventh Conference on Neural In-formation Processing Systems .Rui-Jie Zhu, Zixuan Wang, Kai Hua, Tianyu Zhang, Ziniu Li, Haoran Que, Boyi Wei, Zixin Wen, Fan Yin, He Xing, et al. 2025. Scaling latent reason-ing via looped language models. arXiv preprint arXiv:2510.25741 .
+
+A K/V Distance Definition 
+
+For position i, let k(ℓ) 
+
+> i
+
+(t) and v(ℓ) 
+
+> i
+
+(t) denote the key and value vectors at layer ℓ and pass t, with all K/V heads concatenated. We define z(ℓ) 
+
+> i
+
+(t) = [k(ℓ) 
+
+> i
+
+(t); v(ℓ) 
+
+> i
+
+(t)] and compute the layer-averaged relative distance as 
+
+DKV  
+
+> i
+
+(t, u ) = 1
+
+L
+
+> L
+
+X
+
+> ℓ=1
+
+∥z(ℓ) 
+
+> i
+
+(t) − z(ℓ) 
+
+> i
+
+(u)∥2
+
+max( ∥z(ℓ) 
+
+> i
+
+(u)∥2, 10 −6) .
+
+(14) Here, L denotes the recurrent layers. The nor-malization uses the K/V norm at the later pass u.Distances are measured at the K/V projection out-puts; rotary position embeddings preserve these distances across passes. The reusability target 
+
+EKV  
+
+> i
+
+(t) = max u>t DKV  
+
+> i
+
+(t, u ) is computed from unfrozen calibration trajectories. 
+
+B Experimental Details 
+
+This section provides additional details on the model configurations, evaluation benchmarks, pre-dictor fitting, and experimental protocols used in Section 5. 
+
+B.1 Models and Benchmarks LOTUS Models. We evaluate three LOTUS con-figurations (Fan et al., 2026), covering differ-ent model scales and implicit-reasoning training recipes. All three models use a recurrent workspace of 150 latent positions and perform six recurrent refinement loops following an initialization pass. The first configuration is the released LOTUS-3B checkpoint, which follows the Coconut-style post training adaptation. To assess SwiftLoop across different training recipes, we additionally train two CODI-style LOTUS models using the self-distillation approach of CODI (Shen et al., 2025) on GSM8K-Aug (Deng et al., 2023). The 1B and 3B configurations are initialized from Llama-3.2-1B-Instruct and Llama-3.2-3B-Instruct, respectively 11 (Grattafiori et al., 2024). All three configurations share the same recurrent workspace structure and freezing interface. Under full six-loop inference, CODI-style LOTUS-1B, CODI-style LOTUS-3B, and Coconut-style LOTUS-3B achieve 59.29%, 70.74%, and 70.20% accuracy on GSM8K test, respectively. 
+
+General Looped Models. We further evaluate SwiftLoop on Ouro-1.4B (Zhu et al., 2025) and Huginn-0125 (Geiping et al., 2025), which perform recurrent computation over prompt-token represen-tations. Ouro-1.4B has 24 layers and executes four recurrent steps. Huginn-0125 contains approxi-mately 3.5B parameters and applies a four-layer recurrent block for 32 steps, preceded by a two-layer prelude and followed by a two-layer coda. Unlike LOTUS, where recurrence refines latent reasoning positions, these models recurrently pro-cess context-token states. SwiftLoop applies the same position-wise freezing rule to eligible con-text positions, preserving their cached K/V for at-tention in subsequent steps. We enable adaptive freezing after two recurrent steps for Ouro and four for Huginn, following the warm-up conven-tion of FlashLoop (Yang and Liu, 2026). Huginn’s stochastic initial state is generated using a fixed seed, ensuring identical initialization across evalu-ated methods. 
+
+Implicit-Reasoning Benchmarks. We evaluate mathematical reasoning on four benchmarks: • GSM8K (Cobbe et al., 2021): 1,319 test prob-lems involving multi-step grade-school arith-metic and mathematical reasoning. • SVAMP (Patel et al., 2021): 1,000 mathe-matical word problems designed to evaluate robustness to variations in problem structure and linguistic formulation. • MultiArith (Roy and Roth, 2015): 180 multi-step arithmetic word problems. • GSM-Hard (Gao et al., 2023): 1,319 chal-lenging numerical variations of GSM8K prob-lems. GSM8K serves as the primary in-distribution benchmark, while SVAMP, MultiArith, and GSM-Hard evaluate out-of-distribution generalization. All models produce answers through greedy de-coding after recurrent computation. We extract the numerical answer and compare it with the reference answer for correctness. 
+
+Prompt-Prefilling Benchmarks. We evaluate re-current prompt prefilling on three benchmarks: • WinoGrande (Sakaguchi et al., 2021): a com-monsense reasoning benchmark requiring res-olution of ambiguous references. We use five-shot evaluation on 1,267 validation instances. • ARC-Challenge (Clark et al., 2018): multiple-choice science questions requiring nontrivial reasoning and background knowl-edge. We use 25-shot evaluation on 1,172 test instances. • HellaSwag (Zellers et al., 2019): a common-sense inference benchmark requiring selec-tion of plausible event continuations. We use ten-shot evaluation on 10,042 validation in-stances. Following the evaluation protocol of lm-evaluation-harness (Biderman et al., 2024), we score each candidate continuation by its conditional log-likelihood and select the highest-scoring candi-date. For ARC-Challenge and HellaSwag, candi-date scores are normalized by continuation length. The same prompting and scoring protocol is used across methods for each backbone and benchmark. 
+
+B.2 Implementation Details Freezing and Feature Extraction. SwiftLoop applies irreversible position-wise freezing while retaining cached K/V for attention by active po-sitions. For LOTUS, the initialization pass is in-dexed by t = 0 and the six recurrent loops by 
+
+t = 1 , . . . , 6. Freezing decisions may be made after passes t = 0 , . . . , 5. The predictor input con-catenates the current hidden state with its most recent update, as defined in Eq. (6). For the initial pass, where no preceding recurrent state is avail-able, we set the update component to zero. For recurrent prompt prefilling, freezing operates on context-token positions. Frozen positions retain their hidden states and cached K/V. The active-position set decreases monotonically over recurrent steps. 
+
+Hindsight Supervision. For each backbone, we collect reference recurrent trajectories to construct the supervision targets described in Section 4.2. 12 For K/V reusability, we use the maximum K/V deviation across subsequent recurrent passes: 
+
+c(t) 
+
+> i
+
+= EKV  
+
+> i
+
+(t) = max  
+
+> t<u ≤R
+
+DKV  
+
+> i
+
+(t, u ). (15) These targets are obtained from unfrozen reference trajectories. For exact functional impact, we freeze one position after pass t, retain full recurrence at all other positions, and recompute the resulting out-put margin. The freezing measure is the absolute change relative to the unfrozen reference margin: 
+
+c(t) 
+
+> i, exact
+
+= m(τ (i,t )) − m(τ full ) . (16) For integrated-gradient supervision, we interpolate recurrent K/V along the joint freezing path intro-duced in Section 4.2. We approximate the path integral using midpoint quadrature, with four in-tegration points for LOTUS and two for Huginn. Each point provides gradient attributions for all eli-gible positions through a shared forward–backward computation. For output-level supervision, the ref-erence margin uses the top two first-output tokens of the unfrozen computation, with their identities held fixed during evaluation. 
+
+Predictor Fitting. We fit separate freezing pre-dictors for each backbone and supervision objec-tive. For recurrent prompt prefilling, predictors are additionally fitted separately for each task. Each predictor receives the concatenated hidden-state features defined in Eq. (6). We consider a lin-ear predictor and a one-hidden-layer MLP with 256 GELU units. Input features are standardized, and both architectures are optimized using AdamW with learning rate 10 −3. We select the predictor architecture and training duration using five-fold cross-validation, partitioned by problem or docu-ment to keep observations from the same input within a single fold. Training is limited to six epochs. The selected configuration is subsequently fitted for online use. Both supervision objectives use the log-scale regression loss in Eq. (8). We set δ = 3 × 10 −5 for functional impact in recur-rent prompt prefilling, and 10 −3 otherwise. Higher predicted freezing scores correspond to smaller es-timated freezing measures. For LOTUS, predictors are fitted using 500 GSM8K validation problems. For Ouro and Hug-inn, supervision is constructed from the training split of the corresponding task, with separate pre-dictors fitted for each model–task combination. 
+
+Threshold Selection. We select the online freez-ing threshold from a candidate grid by evaluating the resulting freezing schedules. For each configu-ration, we choose the threshold minimizing average recurrent computation subject to a prescribed ac-curacy tolerance relative to dense inference. We consider 0.5-point loss , where a validation accuracy degradation of at most 0.5 percentage point is per-mitted. When no candidate satisfies the constraint, we retain the highest-accuracy configuration. For LOTUS, threshold selection uses the same 500 GSM8K validation problems used for predic-tor fitting. The selected threshold is applied un-changed to GSM8K test, SVAMP, MultiArith, and GSM-Hard. For recurrent prompt prefilling, we use task-specific selection instances disjoint from the predictor-fitting inputs. The selection sets contain 600 WinoGrande, 719 ARC-Challenge, and 600 HellaSwag training-split instances, respectively. No selection uses the final evaluation instances. All thresholds are fixed before evaluation. The chosen operating points are determined from full-policy executions, thereby reflecting the joint effect of freezing multiple positions. 
+
+Computational Resources. All methods use the same checkpoint and evaluation protocol within each model configuration. Experiments were con-ducted using NVIDIA A100 GPUs. 
+
+B.3 Training Recipe of CODI-Style LOTUS Models Configuration LOTUS-1B (CODI) LOTUS-3B (CODI)                         
+
+> Initialization Llama-3.2-1B-Instruct Llama-3.2-3B-Instruct LoRA rank / α/ dropout 128 / 32 / 0.1 Trainable parameters 90.2M 194.5M Learning rate 8×10 −43×10 −4
+> Epochs (steps) 10 (29,990) 8 (23,992) Batch / GPU 16 8Gradient accumulation 48Global batch size 128 Optimizer / schedule AdamW / cosine (3% warm-up) Weight decay / grad. clipping 0.1 / 2.0 Training time ∼45 h ∼96 h
+
+Table 4: Training configurations of CODI-style LO-TUS models. Training uses two A100 80GB GPUs with bfloat16 precision. 
+
+Architecture. We train CODI-style LOTUS-1B and LOTUS-3B from Llama-3.2-1B-Instruct and Llama-3.2-3B-Instruct, respectively, following the LOTUS architecture. Both models refine 150 la-tent slots, organized into six blocks of 25, over six recurrent loops. Each loop incorporates the preced-ing hidden states into the slot embeddings, while 13 reusing the question’s K/V cache. Training back-propagates through all seven passes (initialization and six loops), without a recurrent-depth curricu-lum. The added token embeddings remain fixed, and only LoRA adapters are optimized. 
+
+Training Objective. Following CODI, a shared-parameter model serves as both the latent student and the explicit-CoT teacher. We optimize 
+
+L = Lans + λdist Ldist + Lteacher + λread Lread ,
+
+(17) where λdist = 20 and λread = 0.05 . The student predicts the final answer after recurrent refinement, while the teacher receives explicit CoT supervision. We align their hidden states at the answer-prediction position using teacher-normalized SmoothL1 loss across embedding, Transformer, and final-normalization layers, with teacher representations detached. To integrate CODI self-distillation with parallel latent reason-ing, we additionally apply LOTUS’s token-level supervision: the final-pass slots in block b predict the tokens of reasoning step b.
+
+Data and Optimization. We train on 383,820 GSM8K-Aug problems after CODI-style filtering. Table 4 summarizes the LoRA configuration, opti-mization hyperparameters, and training schedules. Both models use AdamW with cosine decay, a global batch size of 128, and bfloat16 precision. Training uses two NVIDIA A100 80GB GPUs, tak-ing approximately 45 hours for LOTUS-1B and 96 hours for LOTUS-3B. The final checkpoints achieve 59.3% and 70.7% GSM8K accuracy, re-spectively, under full recurrence. 
+
+C Baselines 
+
+We describe the baseline methods used in our ex-periments, including their original decision criteria, adaptations to recurrent computation, and configu-ration procedures. 
+
+Common Protocol. For adaptive baselines orig-inally designed for other inference settings, we adapt their selection criteria to position-wise recur-rent computation. In LOTUS, freezing operates on latent reasoning positions. In Ouro and Hug-inn, it operates on context-token positions. Frozen positions retain their cached K/V for attention by subsequently updated positions. Unless otherwise specified, baseline configurations are fixed before evaluation. H2O and LazyLLM use the same accuracy-constrained selection rule as SwiftLoop, while methods with established calibration proce-dures or published defaults retain their respective settings. Detailed baseline configurations and cali-bration procedures are described below. 
+
+C.1 Fixed-Depth Baselines 
+
+We consider uniform recurrent computation with a fixed number of loops K across positions. For LO-TUS, K = 6 correspondes to full recurrence. For Ouro and Huginn, full recurrence comprises 4 and 32 steps, respectively, and reduced-step inference uses smaller recurrent budgets. 
+
+C.2 Adaptive Baselines FlashLoop. FlashLoop (Yang and Liu, 2026) re-duces recurrent computation by prioritizing posi-tions with the largest hidden-state changes. Its re-tention schedules are calibrated against the hidden-state reconstruction error of dense recurrence. For LOTUS, we measure the normalized recurrent up-date of each active latent: 
+
+q(t) 
+
+> i
+
+= ∥h(t) 
+
+> i
+
+− h(t−1)  
+
+> i
+
+∥2
+
+∥h(t) 
+
+> i
+
+∥2 + 10 −6 . (18) At each eligible pass, we retain the prescribed number of positions with the largest updates and freeze the remaining positions. The retained sets are nested across subsequent loops. The relative reconstruction error is 
+
+et = ∥H(t)adaptive − H(t)dense ∥F
+
+∥H(t)dense ∥F
+
+. (19) We search retention shares on a grid with 5% incre-ments, selecting the smallest shares that maintain an average reconstruction error below 5%, subject to non-increasing retention across loops. For recur-rent prompt prefilling, we use FlashLoop’s reported backbone-specific retention schedules. 
+
+H2O. H2O (Zhang et al., 2023) was originally proposed for efficient generative inference through KV-cache management. It prioritizes heavy-hitter tokens receiving high accumulated attention while retaining recent tokens. We adapt its attention-based ranking to recurrent positions, replacing cache eviction with position-wise freezing. For LOTUS, a latent’s importance score accumulates the attention received from active latent queries across recurrent passes, averaged over heads and layers. To account for causal attention asymmetry, we normalize by the number of active queries that can attend to each position. After a selected pass s,14 a fraction r of positions remains active. Half are se-lected by accumulated attention scores and half by recency, while the remaining positions are frozen. For LOTUS, we search 23 candidate configurations with 0.2 ≤ r ≤ 0.95 and s ≤ 3. Attention scores are obtained through an auxiliary eager-attention evaluation, whose overhead is excluded from the reported recurrent-loop count. 
+
+LazyLLM. LazyLLM (Fu et al., 2024) performs dynamic token pruning during long-context infer-ence, using attention-based importance to identify positions requiring further computation. We adapt its selection rule to recurrent positions while pre-serving cached K/V after freezing. For LOTUS, latent importance is measured by the attention re-ceived from the final token of the answer prompt, averaged over heads and layers. After each eligible pass t ≥ s, we freeze the fraction p of active latents with the lowest attention scores. We search 25 can-didate (p, s ) configurations, with 0.02 ≤ p ≤ 0.6
+
+and s ≤ 3, selecting the operating point on GSM8K validation. The auxiliary answer-prompt evalua-tion incurs 0.06–0.24 loop-equivalents per pass on GSM8K, depending on the backbone. 
+
+CALM. CALM (Schuster et al., 2022) enables adaptive early exit through hidden-state conver-gence. We adopt its saturation criterion, which measures the cosine similarity between consecu-tive representations. For LOTUS, latent i is frozen after pass t when 
+
+cos 
+
+
+
+h(t) 
+
+> i
+
+, h (t−1) 
+
+> i
+
+
+
+≥ λ. (20) The frozen position retains its cached K/V for sub-sequent attention. We calibrate λ using CALM’s Learn-then-Test procedure (Angelopoulos et al., 2025) on GSM8K validation, with risk tolerance 
+
+δ = 0 .02 and significance level ϵ = 0 .05 . The risk indicator is one when dense inference an-swers correctly but the adaptive configuration does not, and zero otherwise. Candidate thresholds are obtained from quantiles of reference cosine sim-ilarities. We apply fixed-sequence testing with Hoeffding–Bentkus p-values to select the most ag-gressive threshold accepted by the calibration pro-cedure. 
+
+GCEE. GCEE (Gu et al., 2026) detects conver-gence in hidden-state trajectories using both update magnitude and directional stability. We apply its criteria to individual LOTUS latent positions across recurrent passes. Let u(t) 
+
+> i
+
+= h(t) 
+
+> i
+
+− h(t−1)  
+
+> i
+
+. A posi-tion is frozen when 
+
+∥u(t) 
+
+> i
+
+∥2
+
+∥h(t) 
+
+> i
+
+∥2
+
+≤ τs,
+
+cos 
+
+
+
+u(t) 
+
+> i
+
+, u (t−1) 
+
+> i
+
+
+
+≥ τc
+
+(21) hold for two consecutive passes. The earliest possi-ble freezing decision is therefore after pass t = 3 .Following GCEE’s calibration approach, we search 
+
+τc ∈ { 0, 0.5, 0.9} and τs values derived from quan-tiles of the reference update magnitudes. We select the configuration with the fewest recurrent updates that retains at least 99% of dense validation accu-racy. 
+
+SureLock. SureLock (Oba et al., 2026) identifies converged token representations in masked diffu-sion language models through changes in their out-put distributions. For LOTUS, we apply the LM head to each latent hidden state: 
+
+p(t) 
+
+> i
+
+= softmax 
+
+
+
+LMHead( h(t) 
+
+> i
+
+)
+
+
+
+. (22) A latent is frozen when 
+
+DKL 
+
+
+
+p(t) 
+
+> i
+
+∥p(t−1) 
+
+> i
+
+
+
+≤ ϵ (23) and its prediction uncertainty lies within the lowest 20% among active positions. We use the published configuration with ϵ = 5 ×10 −3 and the 20% confi-dence gate. The auxiliary LM-head readouts incur approximately 0.27 loop-equivalents per pass on CODI-style LOTUS-1B and 0.14 on the 3B models. This overhead is excluded from the reported loop count. 
+
+Huginn KL Exit. Huginn (Geiping et al., 2025) supports adaptive recurrent computation using the KL divergence between successive output distribu-tions. We apply its early-exit criterion to recurrent positions: 
+
+DKL 
+
+
+
+p(t−1)  
+
+> i
+
+∥p(t)
+
+> i
+
+
+
+< ϵ. (24) For LOTUS, we obtain the distributions through latent-level LM-head readouts and use the pub-lished threshold ϵ = 5 × 10 −4. The same distributional-stability criterion is evaluated in re-current prompt prefilling where applicable. As with SureLock, auxiliary LM-head readouts are excluded from the reported recurrent computation metric. 15 Inactive Default Exits. We additionally evaluate the state-convergence exit of Geiping et al. (2026), which freezes a position when its normalized up-date falls below ϵ = 0 .03 , as well as GCEE under its published defaults and validation-free configura-tion. These rules do not trigger freezing on the eval-uated LOTUS configurations, yielding the same predictions and recurrent computation as dense in-ference. We therefore report the calibrated GCEE variant in the main comparison. 
+
+D Additional Analyses 
+
+D.1 Predictor Fit on Held-Out Samples LOTUS-1B (CODI) LOTUS-3B (CODI) LOTUS-3B (Coconut) Signal Reus. Impact Reus. Impact Reus. Impact Last-step K/V change 0.77 0.62 0.69 0.60 0.82 0.64 Last-step hidden-state change 0.77 0.58 0.75 0.55 0.84 0.60 SwiftLoop (reusability) 0.97 0.65 0.91 0.65 0.94 0.70 SwiftLoop (impact, IG) 0.82 0.76 0.71 0.70 0.83 0.76 SwiftLoop (impact, exact) 0.82 0.76 0.75 0.78 0.82 0.80 
+
+Table 5: Learned versus retrospective freezing sig-nals. Within-pass AUC for identifying reusable po-sitions ( EKV  
+
+> i
+
+(t) < 0.45 ) and positions with negli-gible functional impact ( I(t) 
+
+> i
+
+< 1% ), averaged over 
+
+t = 1 , . . . , 5. Learned predictors are evaluated out of fold, with functional impact assessed against exact coun-terfactual labels.                        
+
+> Reusability Impact (IG) Impact (exact) Model ρAUC ρAUC ρAUC LOTUS-1B (CODI) 0.98 0.97 0.77 0.75 0.69 0.76 LOTUS-3B (CODI) 0.94 0.91 0.63 0.68 0.77 0.75 LOTUS-3B (Coconut) 0.89 0.94 0.65 0.75 0.70 0.80
+
+Table 6: Out-of-fold predictor evaluation. Results on 500 GSM8K validation problems. ρ denotes Spearman correlation with regression targets across all position– pass pairs. AUC measures within-pass identification of reusable positions ( EKV  
+
+> i
+
+(t) < 0.45 ) or negligible exact functional impact ( I(t) 
+
+> i
+
+< 1% ), averaged over 
+
+t = 0 , . . . , 5.
+
+We evaluate SwiftLoop’s predictors using five-fold out-of-fold predictions on 500 GSM8K vali-dation problems. We report Spearman correlation with regression targets and within-pass AUC for identifying reusable positions ( EKV  
+
+> i
+
+(t) < 0.45 ) or positions with negligible functional impact ( I(t) 
+
+> i
+
+<
+
+1% ). AUC is averaged across passes, with t = 0 
+
+excluded when comparing against last-step change signals. Table 5 demonstrates the advantages of hindsight-guided learning over retrospective state-change signals. Learned reusability predictors achieve AUCs of 0.91–0.97, compared with 0.69– 0.84 for local K/V and hidden-state changes. Like-wise, learned impact predictors achieve AUCs of 0.70–0.80, compared with 0.55–0.64. These results demonstrate the value of learning future-oriented freezing criteria from current hidden states. Table 6 further demonstrates the effectiveness of learned freezing signals across LOTUS models. Reusabil-ity predictors achieve pooled Spearman correla-tions of 0.89–0.98 and within-pass AUCs of 0.91– 0.97. For output-level supervision, IG-based joint-freezing attribution provides an informative train-ing signal, achieving AUCs of 0.68–0.75 against exact single-position impact labels without requir-ing individual counterfactual rollouts. 
+
+D.2 Ablation on IG Quadrature Steps 
+
+We approximate the integrated-gradient path inte-gral in Eq. (12) using K midpoint nodes. Each node requires one forward–backward pass per re-current step, jointly attributing all positions. Ta-ble 7 examines K ∈ { 2, 3, 4} on LOTUS, with pre-dictors refitted and freezing thresholds recalibrated for each setting. The resulting attribution labels exhibit consistent rankings across quadrature reso-lutions, with within-pass Spearman correlations of 0.71–0.99 relative to K = 4 . The learned policies also maintain comparable accuracy–computation trade-offs across benchmarks. 
+
+D.3 Computation Accounting Recurrent Steps. For LOTUS, Loops denotes the average number of recurrent updates per position across 150 latent slots and the start token, excluding the initialization pass. For recurrent prompt pre-filling, Steps denotes the average recurrent-block applications per context token. 
+
+FLOPs. Figure 3 reports analytical FLOPs per problem, normalized to fixed six-loop inference, with two FLOPs per multiply–accumulate. The accounting includes question prefilling, latent ini-tialization, recurrent refinement, and eight answer decoding steps, including the LM head. Recurrent FLOPs account for projections and MLPs at active positions, as well as attention to all visible K/V, in-cluding frozen positions. Policy-specific overhead is excluded from the analytical FLOP estimates. Recurrent refinement accounts for approximately 80% of dense inference FLOPs across the LOTUS models. 
+
+Wall-Clock Latency. Table 3 reports measured end-to-end inference speedups, including predictor 16 GSM8K SVAMP MultiArith GSM-Hard Model K ρK=4 Acc. (%) Loops Acc. (%) Loops Acc. (%) Loops Acc. (%) Loops LOTUS-1B (CODI) 4 – 58.83 (−0.5) 1.80 60.10 (−1.0) 0.79 96.67 (0.0) 0.98 13.42 (−0.2) 1.52 3 0.99 58.53 (−0.8) 1.56 59.10 (−2.0) 0.70 96.11 (−0.6) 0.87 13.34 (−0.2) 1.36 2 0.97 58.98 (−0.3) 1.88 60.30 (−0.8) 0.83 96.67 (0.0) 1.02 13.34 (−0.2) 1.58 LOTUS-3B (CODI) 4 – 71.11 (+0.4) 5.05 75.80 (+0.2) 3.54 100.00 (+0.6) 3.97 16.38 (0.0) 5.20 3 0.76 70.74 (0.0) 5.37 75.50 (−0.1) 3.75 100.00 (+0.6) 4.39 16.30 (−0.1) 5.56 2 0.71 70.89 (+0.2) 5.08 75.60 (0.0) 3.64 100.00 (+0.6) 4.07 16.45 (+0.1) 5.20 LOTUS-3B (Coconut) 4 – 70.20 (0.0) 5.04 73.70 (−0.2) 3.63 99.44 (0.0) 3.05 16.53 (+0.1) 4.52 3 0.85 70.43 (+0.2) 5.20 73.70 (−0.2) 3.93 98.89 (−0.6) 3.91 16.53 (+0.1) 5.29 2 0.76 70.20 (0.0) 4.87 73.30 (−0.6) 3.49 98.89 (−0.6) 3.56 16.68 (+0.2) 4.94 
+
+Table 7: Ablation on IG quadrature steps. ρK=4 denotes the within-pass Spearman correlation of attribution labels with those obtained using K = 4 , evaluated on 500 GSM8K validation problems. We report test accuracy (with changes relative to fixed six-loop inference) and average loops per latent position.                                        
+
+> Model Data set Batch size Timed Input tokens Choices
+> LOTUS (all) GSM8K 256 256 59–60 / 133 –SVAMP 256 256 40 / 65 –MultiArith 256 180 40 / 54 –Ouro-1.4B WinoGrande 16 128 138 / 163 2ARC-C 432 992 / 1207 4HellaSwag 16 64 830 / 1053 4Huginn-3.5B WinoGrande 16 64 134 / 158 2ARC-C shared context 32 978 / 1191 4HellaSwag shared context 32 805 / 975 4
+
+Table 8: Latency measurement configurations. Batch sizes, numbers of timed test instances, and input lengths (mean / maximum, in tokens). Input lengths refer to questions for LOTUS and few-shot contexts per answer choice for recurrent prefilling. Shared context denotes single-context prefilling with K/V reuse across choices. 
+
+evaluation and freezing decisions. Further measure-ment details are provided in Appendix D.4. 
+
+D.4 Latency Measurement Setup. All experiments run on a single NVIDIA A100 80GB PCIe GPU with PyTorch 2.7.1, CUDA 12.6, and bfloat16 computation. We compare each model’s native dense Hugging Face forward against a sparse executor that updates only active positions while preserving frozen K/V for attention. Without freezing, the sparse executor achieves 0.96–1.00 ×
+
+dense inference speed, with predictor evaluation adding at most 3% overhead. 
+
+Timing Protocol. For LOTUS, timing covers the full inference pipeline, from question tokenization through prefill, latent initialization, recurrent refine-ment, and answer decoding. For Ouro and Huginn, timing covers end-to-end answer-choice scoring, excluding tokenization. Huginn reuses the prefill-ing cache of shared contexts across answer choices. We synchronize CUDA at timing boundaries and report median wall-clock latency over three rounds following warm-up. Speedups are computed from median latencies for LOTUS and median per-round ratios for prompt prefilling. Table 8 summarizes the timing configurations. 
+
+Latency Breakdown. Table 9 reports recurrent and end-to-end latency for implicit reasoning. On LOTUS-1B, SwiftLoop (impact, IG) accelerates recurrent refinement by 4.7–5.5× on SVAMP and MultiArith, yielding 2.26 –2.48 × end-to-end speedups. Table 10 further reports absolute laten-cies for recurrent prompt prefilling. On Huginn, selective refinement achieves 1.46–1.47 × accelera-tion on ARC-Challenge and HellaSwag even with single-context prefilling, demonstrating effective sparse execution on long contexts. 
+
+E Additional Baselines Comparison 
+
+E.1 Unified Baseline Calibration 
+
+Table 1 follows the published calibration proce-dures or default settings of adaptive baselines, ex-cept H2O and LazyLLM, which use SwiftLoop’s validation criterion. For a controlled comparison, we recalibrate FlashLoop, CALM, GCEE, Sure-Lock, and the Huginn KL exit on the same valida-tion samples. For each model, we select the setting that minimizes recurrent computation while pre-serving fixed-loop validation accuracy ( η ≤ 0.5), or the highest-accuracy setting if none qualifies. We search the original CALM and GCEE param-eter grids, FlashLoop reconstruction bounds of 5– 80%, and twelve thresholds for SureLock and the KL exit. Selected settings remain fixed across test benchmarks. 
+
+Selected settings. For LOTUS-1B (CODI), LOTUS-3B (CODI), and LOTUS-3B (Coconut), 17 SVAMP MultiArith Model Setting Recurrent End-to-end Recurrent End-to-end LOTUS-1B (CODI) Fixed (dense) – 25.1 – 24.5 Fixed (sparse) 19.3 25.7 19.3 25.1 SwiftLoop (reusability) 6.8 13.0 6.9 12.7 SwiftLoop (impact, IG) 3.5 11.1 4.1 9.9 LOTUS-3B (CODI) Fixed (dense) – 62.8 – 61.6 Fixed (sparse) 49.1 64.4 49.1 63.2 SwiftLoop (reusability) 37.2 52.5 43.6 57.7 SwiftLoop (impact, IG) 30.3 45.6 33.7 47.8 LOTUS-3B (Coconut) Fixed (dense) – 45.6 – 44.6 Fixed (sparse) 36.3 47.2 36.3 46.1 SwiftLoop (reusability) 31.4 42.3 31.4 41.3 SwiftLoop (impact, IG) 23.4 34.3 19.9 29.7 
+
+Table 9: Latency breakdown for implicit reasoning (ms per problem; batch size 256). Recurrent denotes the six-loop computation, including freezing decisions; end-to-end includes question prefilling, latent initialization, and answer decoding. Dense inference is timed end to end. 
+
+Model Task Dense Reus. IG Ouro-1.4B WinoGrande 27.8 24.9 19.4 ARC-C 402.1 257.1 247.7 HellaSwag 322.4 212.1 173.3 Huginn-3.5B WinoGrande 204.0 111.8 138.0 ARC-C 922.6 630.9 732.1 HellaSwag 811.9 552.1 646.6 
+
+Table 10: Absolute latency of recurrent prompt pre-filling (ms per document). Measurements cover scoring all answer choices at the batch sizes in Table 8. Shared contexts are prefixed once per document on Huginn. 
+
+respectively: FlashLoop bounds are (20 , 5, 5)% ;CALM thresholds are (0 .937 , 0.969 , 0.974) ;GCEE parameters are (0 .726 , 0.5) , (0 .566 , 0) ,and (0 .250 , 0) ; SureLock thresholds are 
+
+(10 −2, 2 × 10 −2, 2 × 10 −3); and KL-exit thresholds are (10 −2, 10 −3, 5 × 10 −4).
+
+Results. Table 11 demonstrates that SwiftLoop maintains its advantage under unified baseline cali-bration. Across all 12 model–benchmark settings, SwiftLoop achieves greater recurrent computation savings than the recalibrated adaptive baselines, while preserving competitive accuracy. These re-sults further validate the effectiveness of hindsight-guided selective refinement. 
+
+E.2 Comparison with Random Freezing 
+
+We evaluate the effectiveness of SwiftLoop’s adap-tive freezing decisions against budget-matched random freezing. For each variant, we com-pare against a budget-matched random baseline that selects active positions uniformly at random. Table 12 shows that SwiftLoop improves accu-racy over random freezing by 3.6–20.0 percentage points on LOTUS-1B across reasoning benchmarks. Consistent advantages are also observed on both LOTUS-3B configurations. These results highlight the effectiveness of learned freezing decisions in allocating recurrent computation across samples and positions. 18 GSM8K SVAMP MultiArith GSM-Hard Model Method Acc. (%) Loops Acc. (%) Loops Acc. (%) Loops Acc. (%) Loops LOTUS-1B (CODI) Fixed (6 loops) 59.29 6.00 61.10 6.00 96.67 6.00 13.57 6.00 FlashLoop 59.36 (+0.1) 4.77 61.30 (+0.2) 4.77 97.22 (+0.6) 4.77 13.57 (0.0) 4.77 CALM 59.51 (+0.2) 3.25 60.60 (−0.5) 2.68 97.22 (+0.6) 2.91 13.65 (+0.1) 3.33 GCEE 58.76 (−0.5) 3.74 60.40 (−0.7) 3.27 97.22 (+0.6) 3.32 13.27 (−0.3) 3.71 SureLock 59.06 (−0.2) 5.86 61.20 (+0.1) 5.90 96.67 (0.0) 5.86 13.50 (−0.1) 5.90 Huginn KL exit ‡ 59.29 (0.0) 5.84 61.00 (−0.1) 5.89 96.67 (0.0) 5.87 13.57 (0.0) 5.88 LOTUS-3B (CODI) Fixed (6 loops) 70.74 6.00 75.60 6.00 99.44 6.00 16.38 6.00 FlashLoop 70.51 (−0.2) 5.95 75.70 (+0.1) 5.95 99.44 (0.0) 5.95 16.45 (+0.1) 5.95 CALM 70.58 (−0.2) 5.90 75.50 (−0.1) 5.58 99.44 (0.0) 5.78 16.38 (0.0) 5.93 GCEE 70.66 (−0.1) 5.79 75.90 (+0.3) 5.45 99.44 (0.0) 5.66 16.45 (+0.1) 5.80 SureLock 70.74 (0.0) 5.96 75.50 (−0.1) 5.96 99.44 (0.0) 5.94 16.38 (0.0) 5.97 Huginn KL exit 70.66 (−0.1) 5.99 75.60 (0.0) 6.00 99.44 (0.0) 5.99 16.45 (+0.1) 5.99 LOTUS-3B (Coconut) Fixed (6 loops) 70.20 6.00 73.90 6.00 99.44 6.00 16.45 6.00 FlashLoop 70.20 (0.0) 6.00 73.90 (0.0) 6.00 99.44 (0.0) 6.00 16.45 (0.0) 6.00 CALM ‡ 70.20 (0.0) 5.85 73.90 (0.0) 5.44 99.44 (0.0) 5.69 16.30 (−0.2) 5.87 GCEE 70.20 (0.0) 5.95 73.90 (0.0) 5.78 99.44 (0.0) 5.89 16.45 (0.0) 5.96 SureLock 69.07 (−1.1) 5.96 73.30 (−0.6) 5.97 99.44 (0.0) 5.96 16.22 (−0.2) 5.96 Huginn KL exit 69.14 (−1.1) 5.97 73.60 (−0.3) 5.97 99.44 (0.0) 5.96 16.15 (−0.3) 5.97 
+
+Table 11: Adaptive baselines under unified calibration. Test accuracy (change relative to fixed six-loop inference) and average loops per latent position. Each method is calibrated on validation set to minimize recurrent computation with at most a 0.5 percentage point accuracy drop. ‡ denotes the highest-accuracy setting when no candidate satisfies the constraint. SwiftLoop, H2O, and LazyLLM results under the same criterion appear in Table 1. 
+
+GSM8K SVAMP MultiArith GSM-Hard Model Method Acc. (%) Loops Acc. (%) Loops Acc. (%) Loops Acc. (%) Loops LOTUS-1B (CODI) Fixed (6 loops) 59.29 6.00 61.10 6.00 96.67 6.00 13.57 6.00 Random (IG budget) 46.40* 1.79 55.20* 0.79 83.89* 0.98 9.40* 1.52 Random (exact budget) 45.41* 1.54 56.10* 0.68 76.67* 0.79 9.78* 1.40 LOTUS-3B (CODI) Fixed (6 loops) 70.74 6.00 75.60 6.00 99.44 6.00 16.38 6.00 Random (IG budget) 69.14* 5.07 75.00 3.52 100.00 3.98 16.07 5.21 Random (exact budget) 68.76* 5.03 74.10* 3.46 100.00 3.38 16.38 5.45 LOTUS-3B (Coconut) Fixed (6 loops) 70.20 6.00 73.90 6.00 99.44 6.00 16.45 6.00 Random (IG budget) 67.55* 5.04 69.90* 3.63 97.22 3.05 14.56* 4.52 Random (exact budget) 67.55* 5.21 69.90* 3.99 98.89 3.85 16.15 5.47 
+
+Table 12: Random freezing at matched computation budgets. Test accuracy and average loops per latent position. Random baselines match the per-pass freezing counts of SwiftLoop, while selecting positions uniformly at random. 
+
+19

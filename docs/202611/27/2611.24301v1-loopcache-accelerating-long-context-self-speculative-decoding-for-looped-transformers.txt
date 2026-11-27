@@ -1,0 +1,430 @@
+Title: LoopCache: Accelerating Long-Context Self-Speculative Decoding for Looped Transformers
+
+URL Source: https://arxiv.org/pdf/2611.24301v1
+
+Published Time: Thu, 19 Nov 2026 02:49:38 GMT
+
+Number of Pages: 12
+
+Markdown Content:
+# LoopCache: Accelerating Long-Context Self-Speculative Decoding for Looped Transformers 
+
+Zizhuo Fu Haochen Huang Shengxuan Qiu Linye Wei Ziyu Tang Runsheng Wang Meng Li ∗
+
+Peking University 
+
+Abstract 
+
+Looped Transformers achieve large effective depth with compact models by repeat-edly applying a weight-shared block across R recurrent steps, each maintaining a loop-specific key-value (KV) cache. To accelerate sequential loop execution, recent wave-style self-speculative methods like WaveFront Decoding (WFD) and LoopSpec pipeline draft and target tokens across loops in a single step. However, they face two critical limitations. First, they draft only at fixed loops and ignore intermediate prediction changes, wasting computation on stale trajectories. Sec-ond, batching tokens from different loops loads up to R× the KV cache per step, severely amplifying memory traffic in long-context scenarios. To address these challenges, we propose LoopCache, an efficient self-speculative decoding frame-work for long-context Looped Transformers. Based on the correlation between prediction switches and output confidence, LoopCache introduces confidence-guided dynamic draft updating to refine drafts in flight across all intermediate loops. Furthermore, LoopCache employs cyclic loop KV cache scheduling that rotates through loop-specific KV caches, restricting per-step KV traffic to a single loop while batching tokens at the nearest matching cycle for lossless verification. By also selectively retaining independent KV caches for a few loop-sensitive shallow layers, LoopCache improves acceptance rates with negligible overhead. Experi-ments show that LoopCache achieves average 10.25 × and 14.56 × speedup over WFD and LoopSpec. Code repository: https://github.com/zZzZ9zZ9/LoopCache. 
+
+1 Introduction Embedding Layer 1  
+
+> …
+> Layer n
+> LM Head
+> Layer 1
+> …
+> Layer n Layer 1
+> …
+> Layer n Layer 1
+> …
+> Layer n Layer 0 Layer n+1
+> Prelude R4
+> KV R4 L1
+> …
+> KV R4 Ln
+> Coda optional: absent in Ouro, present in Huginn, Raven R3
+> KV R3 L1
+> …
+> KV R3 Ln
+> R2
+> KV R2 L1
+> …
+> KV R2 Ln
+> R1
+> KV R1 L1
+> …
+> KV R1 Ln KV L0 KV Ln+1
+> Loop-specific KV Cache Recurrent Block: Shared Weight Weight KV Cache
+
+Figure 1: Architecture of looped Transformers. Looped Transformers have recently emerged as a promising architecture for scaling test-time com-pute [14, 18, 24, 28, 30, 37, 40]. By repeatedly applying a shared block of layers across multiple recurrent steps, these models refine hidden represen-tations iteratively, increasing effective depth without adding parameters. Meanwhile, modern applica-tions such as chain-of-thought reasoning [8, 26, 31] and long-horizon agents [23, 37] increasingly de-mand long-context decoding over tens of thou-sands of tokens [2, 9, 15–17, 27, 35]. However, combining recurrent depth with long contexts cre-ates a severe inference bottleneck, as every gen-erated token requires multiple sequential passes through the recurrent block while attending to a massive key-value (KV) cache. 
+
+> ∗
+
+Contact email: fuzizhuo@stu.pku.edu.cn. Corresponding author: Meng Li (meng.li@pku.edu.cn). Preprint. arXiv:2611.24301v1 [cs.CL] 18 Nov 2026 As illustrated in Fig. 1, a looped Transformer contains a recurrent block between optional prelude and coda layers. The block runs for R loops, where R denotes the recurrence depth. Although the recurrent steps share the same model weights, each step maintains its own KV cache. Under conventional autoregressive (AR) decoding, each token must complete all R recurrent steps before the next token can be processed, as shown in Fig. 2(a). Nevertheless, intermediate recurrent states can already provide useful next-token predictions, so a shallow loop can act as a natural draft model for the full-depth model. This makes looped transformers well suited to self-speculative decoding [5, 13, 22, 25, 32, 34, 38, 39]. A straightforward approach is Draft-then-Verify (DtV), shown in Fig. 2(b). DtV first generates multiple draft tokens using shallow recurrent computation, then verifies them in a batch using the remaining recurrent steps. However, drafting and verification remain separate phases, limiting their execution overlap. s1 s2 s3 s4 s5 s6 s7 s8                                               
+
+> Global Step →
+> Token
+> t3
+> t4
+> t1
+> t21x 1x 1x
+> KV Read 1x 1x 1x 1x
+> (a) Autoregressive Decoding
+> KV R1 KV R4 KV R3 KV R2 KV R1 KV R4 KV R3 KV R2
+> 1x s1 s2 s3 s4 s5 s6 s7 s8
+> Global Step →
+> KV R1 Token
+> t3
+> t4
+> (b) Draft-then-Verify
+> t1
+> t2KV R1 KV R1 KV R1 KV R4 KV R3 KV R2 KV R4 KV R3 KV R2 KV R4 KV R3 KV R2 KV R4 KV R3 KV R2
+> 1x 1x 1x
+> KV Read 1x 1x 1x 1x
+> KV R1
+> 1x
+> s9 s10 s11 s12 s13 s14 s15 s17
+> Global Step →
+> Token
+> t3
+> t4
+> (c) Wave-style (WaveFront Decoding / LoopSpec)
+> t1
+> t2s1 s2 s3 s4 s5 s6 s7 s8
+> t7
+> t8
+> t5
+> t6
+> KV R1 KV R1 KV R1 KV R1 KV R2 KV R3 KV R2 KV R4 KV R3 KV R2 KV R4 KV R3 KV R2 KV R1
+> KV R1 KV R1 KV R4 KV R3 KV R2 KV R4 KV R3 KV R2 KV R1 KV R1 KV R3 KV R2 KV R4 KV R3 KV R2 KV R1 KV R1 KV R2
+> KV R1 KV R1 KV R4 KV R3 KV R2 KV R4 KV R3 KV R2
+> s16
+> KV R1 KV R4 KV R3 KV R2
+> 4x 4x
+> KV Read 1x 4x 3x 2x 4x 1x 4x 3x 2x 4x 4x 1x 4x 3x 2x
+
+Figure 2: Token generation dataflows and per-step KV cache read overheads for a Looped Transformer ( R = 4 )under (a) AutoRegressive, (b) Draft-then-Verify, and (c) WaveFront Decoding / LoopSpec. To overcome the sequential bottle-neck of DtV, recent works such as WaveFront Decoding (WFD) [19] and LoopSpec [10] introduce wave-style pipelined self-speculative decoding. Ex-ploiting the shared weights across re-current blocks, these methods batch draft and target tokens at different re-current depths into a single global step, as shown in Fig. 2(c). This wave-style pipeline enables early verification and immediate trajectory correction com-pared to DtV, achieving higher token throughput in short-context scenarios. Despite this progress, existing wave-style methods face two critical chal-lenges. First, intermediate loops are underused. WFD and LoopSpec draft only at fixed loops, yet in a looped trans-former every loop can produce a draft token. The predicted next token may change between an early loop and an in-termediate loop. This change is ignored until the final loop verifies the token, and all later tokens built on the outdated draft are wasted. Second, wave-style batching inflates KV cache traffic. The batched tokens in one step sit at different loops, and each token reads the KV cache of its own loop. As Fig. 2(c) shows, each step reads up to R× the KV cache of AR and DtV. In long-context scenarios, this R× memory traffic amplification completely offsets the benefits of pipelined early verification. To address these challenges, we propose LoopCache, an efficient self-speculative decoding framework for long-context looped transformers. First, we observe that token predictions frequently change across recurrent loops, while predictions at later loops increasingly agree with the final token. Based on this insight, LoopCache introduces confidence-guided dynamic draft updating, which monitors intermediate loop predictions and dynamically updates draft tokens. Second, to eliminate redundant KV-cache accesses, we propose a cyclic loop KV cache scheduling strategy. Across global steps, LoopCache accesses the loop-specific KV caches in a fixed cycle (KV R 1 to KV R R), keeping the per-step KV cache access consistent with AR and DtV. To ensure lossless verification, tokens drafted under mismatched KV caches are batched at the nearest upcoming cycle with the matching loop KV cache to compute their exact target loops in parallel. Furthermore, we identify a distinct layer-wise sensitivity across recurrent loops: shallow layers exhibit much larger KV cache variations across loops than deeper layers. By selectively retaining independent KV caches only for a small number of shallow layers during specific steps, LoopCache further improves draft acceptance with negligible memory overhead. 2Our main contributions can be summarized as follows: • We analyze token switch behavior across recurrent loops and propose a confidence-guided dynamic draft updating mechanism. By flexibly leveraging predictions from all inter-mediate recurrent steps, LoopCache dynamically refines draft tokens in flight to avoid wasted computation on stale tokens. • Targeting long-context efficiency, we propose a cyclic loop KV-cache scheduling strategy which keeps per-step KV traffic consistent with AR and DtV, while batching exact verification at the nearest matching KV cycle. We further exploit layer-wise KV differences across loops by selectively decoupling shallow-layer KV caches to improve acceptance rates. • Extensive experiments across multiple Looped Transformers and long-context bench-marks demonstrate that LoopCache achieves average 10.25 × and 14.56 × speedup over WFD and LoopSpec, while delivering average 5.12 × and 2.52 × speedup compared to standard AR and DtV decoding. 
+
+2 Background 
+
+Looped Transformers Looped Transformers extend recurrent computation to standard Transformer blocks by repeatedly applying a weight-shared block for R steps [12, 18, 28, 30, 37, 40]. As illustrated in Fig. 1, current architectures mainly follow two designs: Ouro [40] repeats the entire Transformer stack, whereas Huginn [18] and Raven [28] iterate an internal recurrent block between a non-recurrent prelude and coda. Despite sharing model parameters across all recurrent steps, each loop 
+
+r ∈ { 1, . . . , R } maintains an independent KV cache KV R r because its input hidden states evolve across loops [18, 40]. 
+
+Self-Speculative Decoding Speculative decoding accelerates AR generation by using a fast draft model to propose candidate tokens and a target model to verify them in parallel, where rejection sampling guarantees an identical output distribution to the target model [25]. Self-speculative de-coding eliminates the separate draft model by reusing intermediate computations of the target model itself [5, 13, 32, 34, 38, 39]. In Looped Transformers, early loops naturally serve as draft models for the full-depth model [18, 40]. As shown in Fig. 2(b) and Fig. 2(c), while DtV serializes shallow drafting and deep verification, WFD [19] and LoopSpec [10] overlap these phases via pipelined execution, batching tokens at different recurrent depths into a single step. Specifically, WFD drafts at a predefined depth and organizes in-flight tokens into a diagonal wavefront. LoopSpec further intro-duces a primary proposal at depth d1 and a gated residual proposal at a deeper depth d2. However, this second proposal creates fallback branches that severely inflate the runtime batch size, reaching peak effective batch sizes of 176 and 191 on its two Raven models [10]. Moreover, both methods remain restricted to fixed drafting depths and access multiple loop-specific KV caches within each step. 
+
+Cross-Loop KV Sharing To reduce KV cache overhead, several works share or reuse KV states across recurrent steps. Huginn explores a bounded cyclic cache that overwrites cache slots across loops [18], while Ouro [40] and WFD [19] reuse the last-loop or averaged KV cache during de-coding. Similarly, Mixture-of-Recursions (MoR) reuses the first-loop KV states across subsequent recursions [1]. Although these lossy approaches reduce memory footprint and KV traffic, they inevitably cause accuracy degradation. Specifically, KV states in later loops are iteratively refined, so reusing unrefined first-loop KV states severely compromises model quality. Conversely, reusing the last-loop KV cache is incompatible with standard training and prefill phases, where all tokens are processed in parallel and future-loop KV states are not yet available when computing early loops. This discrepancy prevents effective training adaptation and similarly degrades inference accuracy. In contrast to lossy KV sharing, LoopCache reduces long-context KV traffic while preserving exact loop-specific verification for lossless acceleration. 
+
+3 Motivation 
+
+Observation 1: Intermediate-loop predictions enable dynamic draft refinement. Existing wave-style methods such as WFD and LoopSpec draft at fixed recurrent depths, leaving intermediate-loop predictions largely unused [10, 19]. However, every recurrent loop can produce a next-token 3s1 s2 s3 s4 s5 s6 
+
+Token 
+
+t1
+
+t2 ”world” “Hi” “Hello” “Hello” “Hello” ”earth” ”world” ”world” ”world” 
+
+s1 s2 s3 s4 s5 s6 s7 s8 
+
+Token 
+
+t1
+
+t2 ”world” “Hi” “Hello” “Hello” “Hello” ”earth” ”earth” ”earth” ”world” ”world” ”world” 
+
+       
+
+         
+
+(c) Agreement with final token (b) Token switch probability 
+
+Loop index Loop index 
+
+Global Step →(a) Fixed-depth drafting unused intermediate-loop predictions Figure 3: Intermediate-loop prediction behavior. (a) Fixed-depth drafting versus draft updating with intermediate-loop predictions. (b) Token switch probability across recurrent loops. (c) Agreement between intermediate-loop and final-loop predictions. & & & &  & &  /,*  & & & &  & &  /,*  & & & &  & &  /#%))  & & & &  & & 0")'( & & & &  & & 0")* & & & &  & &  0")%)2'( " *!"-+""!/+*0", *)."1.'")#.$.*&")- .  **++"           
+
+> 30. 30.  3(*-- #4'-+#,# #4'-. #4'-*-7+#,#   .0,#+*8'&/0' 6!0'#&1   .0,#+*8'&(+.$#+12'/1 !2!1#4*-(+.55#4'#%%'/2#-%'- 92'/1)*()#%%'/2#-%'- 9  2! " ..//'% +.$#+12'/1
+> Norm. KV reads Norm. global steps Decoding speedup over AR
+
+Context length (tokens) 
+
+(a) Normalized KV-Cache Reads and Global Steps (b) Decode Speedup across Context Lengths 
+
+Ouro-2.6B Huginn-3.5B Raven-Llama-3.2 Ouro-1.4B Raven-OLMo-2 Raven-TinyLlama 
+
+Figure 4: KV cache overhead and long-context decoding performance. (a) Total KV cache reads and global steps, normalized to AR. (b) Decoding speedup over AR across different context lengths. (a) KV Similarity Across Loops (b) Layerwise KV Variation                                         
+
+> ""# ""# )$ )$ ""# ""# )$ )$ ""# ""# )$ )$ ""# ""# )$ )$ ""# ""#  )$  )$ ""# ""#  )$  )$
+>  '$" '!! (!   ) ' "%! '$$!&)$%"!)!&(% $&)%#)%
+
+First 2 loops × 48 layers First 8 loops × 4 layers First 8 loops × 6 layers         
+
+> 
+>   
+>   
+> ,)'  0 $, , "&&  0 $, -&$% 0 $, ''(+)&*"+"'&)+')  $'  /"* 0)."+!"&),))&+$'# '$')'*"&"*+& *"%"$)"+0
+> Loop transition  𝑟  to  𝑟 + 1
+
+Layer within recurrent block Cosine distance ( 1 − 𝑠𝑖𝑚𝑖𝑙𝑎𝑟𝑖𝑡𝑦 )
+
+Ouro-2.6B Huginn-3.5B Raven-Llama-3.2 Ouro-2.6B Huginn-3.5B Raven-Llama-3.2 
+
+Figure 5: Cross-loop KV cache characteristics. (a) Pairwise cosine similarity of key and value states across recurrent loops. (b) Layerwise cosine distance of key and value states between consecutive loops. prediction, which may change as the loop depth increases. As illustrated in Fig. 3(a), a draft token may change at an intermediate loop, while subsequent speculative tokens continue along the outdated trajectory. Fig. 3(b) shows that such prediction switches occur frequently, with distinct patterns across models and recurrent depths. This variation highlights the limitations of fixed-depth drafting. Although predictions from every loop could provide additional drafts, retaining all candidate branches can increase the batch size to 2R−1 in the worst case. Such exponential growth is impractical for models with many recurrent loops. Importantly, Fig. 3(c) shows that agreement with the final prediction generally increases with loop depth, indicating that later predictions are more likely to match the final token. This motivates dynamically replacing outdated drafts rather than retaining all candidate branches. As shown on the right side of Fig. 3(a), intermediate predictions can be used to update in-flight drafts and prune their outdated speculative continuations. By guiding these updates with prediction confidence, LoopCache exploits intermediate-loop information while maintaining a single active draft trajectory to avoid excessive branching. 4Observation 2: KV cache traffic limits wave-style decoding in long contexts. WFD and LoopSpec reduce sequential execution by batching tokens at different recurrent depths, but each global step accesses multiple loop-specific KV caches [10, 19]. As shown in Fig. 4(a), despite requiring fewer global steps than AR and DtV, both methods incur substantially higher total KV cache reads. This overhead becomes increasingly critical as context length grows, since decoding becomes dominated by KV cache memory traffic. Consequently, Fig. 4(b) shows that WFD and LoopSpec suffer declining speedups as context length increases, often becoming slower than conventional AR decoding. Directly sharing KV caches between draft and target loops cannot resolve this issue without compro-mising exact computation. When a draft token is accepted, its recurrent computation must remain consistent with the target model. However, using a mismatched loop KV cache during drafting produces incorrect hidden states and KV entries. These states cannot be reused for subsequent target computation without recomputation, even if the draft token itself is accepted. Therefore, lossless acceleration requires reducing KV traffic while preserving exact loop-specific computation during verification. This motivates a cyclic KV cache access strategy that batches exact verification at the corresponding loop cycles. 
+
+Observation 3: Cross-loop KV similarity exhibits strong layer-wise differences. Although exact verification requires loop-specific KV states, the shared weights and iterative refinement of Looped Transformers suggest potential similarities across recurrent loops. Fig. 5(a) shows that the key and value states of corresponding layers exhibit high cosine similarity across loops. This suggests that reusing KV caches from other loops during drafting may preserve useful in-termediate predictions while reducing memory traffic. Combined with exact loop-specific verifi-cation, such approximate reuse offers an opportunity to improve speculative decoding efficiency without compromising correctness. However, cross-loop KV similarity varies considerably across layers. As shown in Fig. 5(b), shallow layers exhibit larger KV differences between consecutive loops, while deeper layers remain relatively stable. Thus, uniformly sharing KV caches across all layers would degrade draft quality and reduce acceptance rates. Instead, selectively maintaining independent KV caches for a few sensitive shallow layers can better preserve intermediate predictions with small memory overhead. This provides an opportunity to improve draft acceptance while retaining the efficiency of cross-loop KV reuse. 
+
+4 LoopCache 
+
+Building on the observations in Section 3, we propose LoopCache, a self-speculative decoding framework that combines dynamic draft refinement with efficient KV cache scheduling. As il-lustrated in Fig. 6, LoopCache uses confidence-guided updates to maintain a single active draft trajectory and cyclically schedules loop-specific KV caches to reduce long-context memory traffic. A separate verification path preserves exact target computation, while selective shallow-layer KV accesses further improve draft quality. 
+
+4.1 Confidence-Guided Dynamic Draft Updating 
+
+As discussed in Observation 1, existing wave-style methods draft at fixed recurrent depths, potentially wasting computation on outdated speculative trajectories [10, 19]. As shown in Fig. 3(a), intermediate-loop predictions can correct these drafts before final verification. However, unconditionally updating every changed prediction may cause repeated reversals, disrupting speculative progress. A harmful switch occurs when a replaced draft reappears at a later loop. Let zr (v) denote the logit of token v after loop r, and yr = arg max v zr (v) its prediction. For a current draft x and new candidate 
+
+s = yr̸ = x, the harmful-switch indicator is 
+
+hr (x → s) = 1 [∃ k ∈ { r + 1 , . . . , R } : yk = x] , (1) where 1[·] is the indicator function. The frequency of such reversals characterizes the harmful-switch risk. To avoid unnecessary switches, LoopCache measures update confidence using the new-old logit gap: 
+
+∆zr = zr (s) − zr (x) = log pr (s)
+
+pr (x) , (2) 5s9 s10 s11 s12 s13 s14                 
+
+> Token
+> t3
+> t4world Hi Hello Hello earth world world world
+> s9 s10 s11 s12 s13 s14 s15 s16
+> Token
+> t3
+> t4world Hey Hello Hello Siri earth world world world
+> Hi world
+> Hey
+
+(b) Confidence-guided draft updating      
+
+> Always update
+> Δz = z( Hello )
+> −z( Hi )≥τ
+> Update draft
+> Δz = z( Hey )
+> −z( Hello ) < τ
+> Retain draft
+
+(a) LoopCache – Cyclic loop KV scheduling Global Step →            
+
+> Token
+> s1
+> KV R1
+> 1x s2
+> KV R2
+> 1x s3
+> KV R3
+> 1x s4
+> KV R4
+> 1x s5
+> KV R1
+> 1x s6
+> KV R2
+> 1x s7
+> KV R3
+> 1x s8
+> KV R4
+> 1x s9
+> KV R1
+> 1x s10
+> KV R2
+> 1x s11
+> KV R3
+> 1x s12
+> KV R4
+> 1x s13
+> KV R1
+> 1x s14
+> KV R2
+> 1x s15
+> KV R3
+> 1x s16
+> KV R4
+> 1x s17
+> KV R1
+> 1x
+> t1
+> t2
+> t3
+> t4
+> t5
+> t6
+> t7
+> t8
+> KV Read
+> R1 R2 R3 R4
+> recompute
+> R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R4
+
+……      
+
+> Δz≥τ
+> One shared long-prefix KV per step
+> s8: final correction of t2s10: update t3, restart t4 in (b)
+> s15 batch in (c) 1×shared long-prefix read per step; limited extra shallow-layer reads in (c)
+> Spec Branch KV Branch Aligned
+> Spec = KV
+> R1 R1
+> R1
+> R2 R2
+> R2
+> R3 R3
+> R3
+> R4 R4
+> R4
+
+(c) Selective Shallow-Layer KV Decoupling                                                                       
+
+> Example: c = 3; Spec L1–L2 use own KV when |c −d| ≥1
+> Token / path dL1 L2 L3…Ln
+> t4KV R3 KV R3 KV R3
+> t5Spec R4 KV R4 KV R4
+> t5KV R3 KV R3 KV R3
+> t6Aligned R3 KV R3 KV R3
+> t7Spec R2 KV R2 KV R2
+> t8Spec R1 KV R1 KV R1
+> KV R3 shared across all 6 states
+> R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R1 R2 R1 R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R4 R1 R2 R3 R1 R1
+> when recurrent depth align
+> R1
+
+Figure 6: Overview of LoopCache. (a) Cyclic loop KV scheduling with concurrent speculative and exact verification paths. (b) Confidence-guided dynamic draft updating versus unconditional updating. (c) Selective shallow-layer KV decoupling for the batch at s15 in (a). where pr denotes the softmax probability distribution. This gap measures how strongly the current loop favors the new candidate over the existing draft. Fig. 7 shows that harmful-switch probability decreases consistently as the logit gap increases across models. Harmful-switch risk vs. update confidence 
+
+> New-old logit gap New-old logit gap
+> Harmful-switch probability
+
+Figure 7: Relationship between harmful-switch prob-ability and the new-old logit gap ∆z across different Looped Transformers. Based on this correlation, LoopCache up-dates the draft only when ∆zr ≥ τ , where 
+
+τ ≥ 0 is a configurable confidence threshold. Once triggered, the new candidate replaces the current draft, and all speculative de-scendants conditioned on the previous can-didate are pruned. Otherwise, the exist-ing trajectory is retained. Fig. 6(b) illus-trates how this confidence-guided mecha-nism avoids repeated reversals compared with unconditional updating, preserving speculative progress without introducing additional candidate branches. 
+
+4.2 Cyclic Loop KV Cache Scheduling 
+
+Wave-style decoding overlaps drafting and verification but requires concurrent access to multiple loop-specific KV caches, causing substantial memory traffic in long contexts [10, 19]. To retain pipelined execution without this overhead, LoopCache exploits cross-loop KV similarity for speculative computation while preserving exact loop-specific KV accesses for verification. 
+
+Cyclic KV Scheduling. Instead of accessing different loop KV caches within the same global step, LoopCache fixes the accessed cache according to a cyclic schedule. For global decoding step g ≥ 1,the selected KV loop ID is 
+
+c(g) = 1 + (( g − 1) mod R), (3) where R is the total recurrence depth. Thus, the global steps repeatedly access KV R 1 → KV R 2 →· · · → KV R R. All active token states in each step share the same long-prefix KV cache KV R c(g),reducing the number of distinct full-prefix KV accesses from up to R to one per step. To support this schedule while maintaining exact decoding, LoopCache organizes token computation into two concurrent paths, as shown in Fig. 6(a). 
+
+Spec Branch. The speculative path advances in-flight tokens through their respective recurrent loops while using the KV cache selected by the current global step. Let d denote a token’s current recurrent loop ID. Even when d̸ = c(g), the token uses KV R c(g) to compute its intermediate state and predict subsequent tokens. Although this computation is approximate, the high similarity of KV 6states across loops allows it to provide useful draft predictions. The Spec Branch therefore retains the early drafting capability of wave-style decoding while sharing long-prefix KV accesses across tokens. 
+
+KV Branch. To ensure exact verification, each surviving speculative token is recomputed through the correct loop-specific KV caches. The KV Branch starts at the nearest upcoming complete KV cycle and advances through loops 1 to R in order, using the corresponding KV cache at each loop. This recomputation restores the exact hidden states and KV entries under the candidate prefix, even when the Spec Branch predicts the correct token. The KV Branch provides exact target logits for greedy decoding and rejection sampling. If a candidate is rejected, its dependent speculative states are discarded, and decoding resumes from the corrected token. Intermediate predictions from both branches can trigger confidence-guided draft updates, while the KV Branch determines the committed output. When the two branches have matching recurrent depths, their computations are identical and can be merged into a single path, denoted as Aligned in Fig. 6(a). This avoids redundant computation while preserving exact target verification. 
+
+4.3 Selective Shallow-Layer KV Decoupling 
+
+Although cyclic KV sharing reduces memory traffic, using a mismatched loop cache can degrade draft predictions, especially when the draft loop differs substantially from the current KV loop. As observed in Fig. 5(b), shallow layers exhibit larger cross-loop KV differences than deeper layers. To address this imbalance, LoopCache selectively restores loop-specific KV accesses for a few shallow layers in the Spec Branch. Let L denote the number of physical layers in the recurrent block, and let KV ℓ,r denote the valid prefix KV cache of physical layer ℓ at loop r. Given a selected shallow-layer set S ⊆ { 1, . . . , L } and a loop-ID difference threshold δ ≥ 1, the KV cache used by the Spec Branch is 
+
+KV Spec  
+
+> ℓ
+
+(d, c ) = 
+
+KV ℓ,d , ℓ ∈ S , |d − c| ≥ δ, 
+
+KV ℓ,c , otherwise , (4) where d is the draft’s recurrent loop ID and c = c(g) is the globally scheduled KV loop ID. As illustrated in Fig. 6(c), selecting the first two physical layers with S = {1, 2} and δ = 1 allows mismatched drafts to access their own loop-specific KV caches in these layers. All remaining layers continue sharing the current cyclic KV cache. This selective decoupling improves draft quality with only a small number of additional shallow-layer KV reads. The KV Branch always uses the correct loop-specific caches, preserving exact verification. 
+
+5 Experiments 
+
+5.1 Experimental Setup Models and Hardware We evaluate LoopCache on six Looped Transformers, including Ouro-1.4B, Ouro-2.6B, Huginn-3.5B, and three Raven variants based on Llama-3.2, OLMo-2, and TinyLlama [18, 28, 40]. Table 1 summarizes their configurations and per-loop KV cache footprints at 32K. All experiments use eight NVIDIA A100 GPUs, with context parallelism for longer contexts. Table 1: Model configurations and per-loop KV cache sizes at 32K.                   
+
+> Model Metric Ouro 1.4B Ouro 2.6B Huginn 3.5B Raven Llama-3.2 Raven OLMo Raven TinyLlama Params (B) 1.40 2.60 3.50 1.38 1.35 0.84 Loops 4432 32 32 32 KV (GiB) 6.00 12.00 2.58 0.375 1.50 0.25
+
+Baselines and Benchmarks We compare LoopCache against AR, DtV, DFlash, WFD, and LoopSpec [7, 10, 19, 25]. For DFlash, we train a block diffusion drafter using multiple datasets [3, 6, 11, 20, 33, 36]. Training supports sequence lengths up to 128K, with an effec-tive batch size of 32 and a block size of 16. We evaluate context lengths from 4K to 128K on 74 8 16 32 64 128                                                                          
+
+> 0123LongBench
+> 4816 32 64 128
+> RULER
+> 4816 32 64 128
+> LongReason
+> 4816 32 64 128
+> 0123LongBench
+> 4816 32 64 128
+> RULER
+> 4816 32 64 128
+> LongReason
+> 4816 32 64 128
+> 0246
+> LongBench
+> 4816 32 64 128
+> RULER
+> 4816 32 64 128
+> LongReason
+> 4816 32 64 128
+> 036912 LongBench
+> 4816 32 64 128
+> RULER
+> 4816 32 64 128
+> LongReason
+> 4816 32 64 128
+> 036912 LongBench
+> 4816 32 64 128
+> RULER
+> 4816 32 64 128
+> LongReason
+> 4816 32 64 128
+> 036912 LongBench
+> 4816 32 64 128
+> RULER
+> 4816 32 64 128
+> LongReason
+
+Ouro-1.4B Ouro-2.6B Huginn-3.5B Raven-Llama-3.2 Raven-OLMo-2 Raven-TinyLlama 
+
+> Speedup over AR
+
+Sequence length (k tokens)      
+
+> AR (1x) DtV DFlash WFD LoopSpec LoopCache
+
+Figure 8: Decoding speedup across six Looped Transformers, three long-context benchmarks, and sequence lengths from 4K to 128K. LongBench v1/v2 [2, 4], RULER [21], and LongReason [26]. For contexts beyond the native window, we apply YaRN for context extension [29]. 
+
+5.2 Main Results End-to-End Decoding Speedup Fig. 8 presents the decoding speedup across different models, benchmarks, and context lengths. On average, LoopCache achieves 10.25 × and 14.56 × speedup over WFD and LoopSpec, respectively, and 5.12 × and 2.52 × over AR and DtV. These results demonstrate the effectiveness of LoopCache across diverse models and long-context workloads.    .+(       .!#''       / '%&   )-'  +-   *. ' % '!-"$-($ ', - %,"  (())    
+
+Figure 9: Acceptance rates of different methods across models. ('" '# ('" +(' ('" '# ('" +(' ('" '# ('" +('    (*&%$0  )* !$/* + -*(  -"$''   . '%&  (*&%$0    ,  (())        
+
+> Ouro-2.6B Huginn-3.5B Raven-Llama-3.2
+
+Figure 10: AR-normalized KV cache reads and TPF. 
+
+Acceptance Rate Fig. 9 compares the acceptance rates of different methods. LoopCache maintains consistently high acceptance rates across different sequence lengths. Although LoopCache uses approximate cross-loop KV states in most Spec Branch layers, confidence-guided dynamic draft updating corrects outdated predictions, while selective shallow-layer KV decoupling preserves critical loop-specific information. Together, these mechanisms enable LoopCache to achieve higher acceptance rates than existing methods. 
+
+KV Cache Traffic and Token Parallelism We measure total KV cache reads and tokens per forward (TPF), where TPF is defined as the number of committed output tokens divided by the total number of loop forwards (global steps). Fig. 10 reports both metrics normalized to AR. While WFD and LoopSpec achieve high TPF, they incur substantial KV cache reads by accessing multiple loop-specific caches within each global step. In contrast, LoopCache reads only one full-prefix loop-specific KV cache per global step, with limited additional shallow-layer accesses, substantially reducing memory traffic while maintaining high TPF. 8                      
+
+> 
+> 
+> 
+> 
+> 
+> 
+> !
+> 
+> !
+> 
+> !"
+> !%!  &" $#( ' $ #  !!  
+
+Figure 11: Decoding speedup at 4K across batch sizes from 1 to 32. 
+
+Batch-Size Scaling Fig. 11 shows the decoding speedup at a 4K context length with batch sizes rang-ing from 1 to 32 across models. Existing wave-style methods suffer from reduced speedups as the batch size increases, since KV cache traffic becomes increasingly dominant. By limiting KV cache accesses, LoopCache maintains better performance across batch sizes.       /%%$3/ &)6%$ 30.  30.      9.-&)$%-#%2(0%1(.+$8 /%%$3/ &)6%$ 03-%$12!2%1 2.*%- -$%/%-$%-21(!++.5+!7%01  !2).2.  +!7%01 !3,3+!2)4%.,/.-%-2!)-1 ".-&)$%-#%(0%1(.+$%-1)2)4)27 #%-%&)21!-$.121.&(!++.5 %#.3/+)-'       .-'%-#(  .-'%!1.-03-%$12!2%1 2.*%-,%!- 30.  30.  /%%$3/ .*%-1/%0&.05!0$ ),%/%0&.05!0$       /%%$3/ &)6%$ 30.  30.      9.-&)$%-#%2(0%1(.+$8 /%%$3/ &)6%$ 03-%$12!2%1 2.*%- -$%/%-$%-21(!++.5+!7%01  !2).2.  +!7%01 !3,3+!2)4%.,/.-%-2!)-1 ".-&)$%-#%(0%1(.+$%-1)2)4)27 #%-%&)21!-$.121.&(!++.5 %#.3/+)-'       .-'%-#(  .-'%!1.-03-%$12!2%1 2.*%-,%!- 30.  30.  /%%$3/ .*%-1/%0&.05!0$ ),%/%0&.05!0$                           
+
+> (a) Cumulative component gains (b) Confidence threshold sensitivity (c) Benefits and costs of shallow KV decoupling
+>       /%%$3/ &)6%$ 30.  30.  9.-&)$%-#%2(0%1(.+$8 /%%$3/ &)6%$ 03-%$12!2%1 2.*%--$%/%-$%-21(!++.5+!7%01  !2).2.  +!7%01 !3,3+!2)4%.,/.-%-2!)-1 ".-&)$%-#%(0%1(.+$%-1)2)4)27 #%-%&)21!-$.121.&(!++.5 %#.3/+)-'       .-'%-#(  .-'%!1.-03-%$12!2%1 2.*%-,%!- 30.  30.  /%%$3/ .*%-1/%0&.05!0$ ),%/%0&.05!0$
+
+Figure 12: Ablation study of LoopCache. (a) Component contributions. (b) Confi-dence threshold. (c) Number of decoupled shallow layers. 
+
+5.3 Ablation Study 
+
+Fig. 12 evaluates the key design choices in LoopCache. 
+
+Component Contributions Fig. 12(a) shows the cumulative speedup gains of the three components, normalized to the fixed-proposal baseline WFD. M1 denotes confidence-guided draft updating, M2 denotes cyclic loop KV scheduling, and M3 denotes selective shallow-layer KV decoupling. Each component contributes additional gains, with the complete design achieving the best performance. 
+
+Confidence Threshold Fig. 12(b) evaluates the impact of the confidence threshold τ . Pruned states per token measures the number of live speculative token states invalidated by draft replacement or verification rejection, normalized by the number of committed decoding tokens. We select τ = 0 .125 ,which provides the best overall trade-off between speedup and speculative state pruning. 
+
+Shallow-Layer KV Decoupling Fig. 12(c) evaluates different numbers of decoupled shallow layers in terms of speedup, TPF, and time per forward, which denotes the latency of one loop forward. All metrics are normalized to the setting without shallow-layer decoupling. Selecting the first two physical layers as shallow layers preserves high TPF while limiting additional KV accesses and forward latency, achieving the best overall speedup. Accordingly, we set S = {1, 2} and the loop-ID difference threshold to δ = 1 .
+
+6 Conclusion 
+
+We presented LoopCache, an efficient self-speculative decoding framework for long-context Looped Transformers. By exploiting intermediate-loop predictions, confidence-guided dynamic draft up-dating corrects outdated drafts early and avoids unnecessary speculative computation. Cyclic loop KV scheduling substantially reduces memory traffic by sharing loop-specific KV accesses while preserving exact target verification. Selective shallow-layer KV decoupling further improves draft acceptance with minimal additional overhead. Extensive experiments demonstrate that LoopCache achieves average speedups of 5.12 × and 2.52 × over AR and DtV, and 10.25 × and 14.56 × over WFD [19] and LoopSpec [10], respectively. These results highlight the effectiveness of LoopCache in enabling fast and lossless long-context decoding for Looped Transformers. 9References 
+
+[1] S. Bae, Y. Kim, R. Bayat, S. Kim, J. Ha, T. Schuster, A. Fisch, H. Harutyunyan, Z. Ji, A. C. Courville, and S. Yun. Mixture-of-recursions: Learning dynamic recursive depths for adaptive token-level computation. ArXiv , abs/2507.10524, 2025. [2] Y. Bai, X. Lv, J.-J. Zhang, H. Lyu, J. Tang, Z. Huang, Z.-X. Du, X. Liu, A.-H. Zeng, L. Hou, Y.-X. Dong, J. Tang, and J.-Z. Li. Longbench: A bilingual, multitask benchmark for long context understanding. ArXiv , abs/2308.14508, 2023. [3] Y. Bai, X. Lv, J. Zhang, Y. He, J. Qi, L. Hou, J. Tang, Y. Dong, and J.-Z. Li. Longalign: A recipe for long context alignment of large language models. In Conference on Empirical Methods in Natural Language Processing , 2024. [4] Y. Bai, S. Tu, J.-J. Zhang, H. Peng, X. Wang, X. Lv, S.-L. Cao, J. Xu, L. Hou, Y.-X. Dong, J. Tang, and J.-Z. Li. Longbench v2: Towards deeper understanding and reasoning on realistic long-context multitasks. ArXiv , abs/2412.15204, 2024. [5] J. Bang, E. Cho, R. Hwang, J.-W. Chung, and M. Rhu. Specmoe: A fast and efficient mixture-of-experts inference via self-assisted speculative decoding. Proceedings of the 63rd ACM/IEEE Design Automation Conference , 2026. [6] S. Chaudhary. Code alpaca: An instruction-following llama model for code generation. https: //github.com/sahil280114/codealpaca , 2023. [7] J. Chen, Y. Liang, and Z. Liu. Dflash: Block diffusion for flash speculative decoding. ArXiv ,abs/2602.06036, 2026. [8] Q. Chen, L.-B. Qin, J.-H. Liu, D.-Y. Peng, J.-N. Guan, P. Wang, M.-K. Hu, Y.-H. Zhou, T. Gao, and W.-X. Che. Towards reasoning era: A survey of long chain-of-thought for reasoning large language models. ArXiv , abs/2503.09567, 2025. [9] R.-Z. Chen, Z. Wang, B. Cao, T. Wu, S.-Z. Zheng, X.-H. Li, X.-C. Wei, S.-G. Yan, M. Li, and Y. Liang. Arkvale: Efficient generative llm inference with recallable key-value eviction. 
+
+Advances in Neural Information Processing Systems 37 , 2024. [10] S. Cho, L.-Q. Cui, S. Kim, D.-S. Han, and I. Han. Loopspec: Pipelined self-speculative decoding for looped transformers. 2026. [11] K. Cobbe, V. Kosaraju, M. Bavarian, M. Chen, H. Jun, L. Kaiser, M. Plappert, J. Tworek, J. Hilton, R. Nakano, C. Hesse, and J. D. Schulman. Training verifiers to solve math word problems. ArXiv , abs/2110.14168, 2021. [12] M. Dehghani, S. Gouws, O. Vinyals, J. Uszkoreit, and L. Kaiser. Universal transformers. ArXiv ,abs/1807.03819, 2018. [13] M. Elhoushi, A. Shrivastava, D. Liskovich, B. Hosmer, B. Wasti, L. Lai, A. Mahmoud, B. Acun, S. Agarwal, A. Roman, A. A. Aly, B. Chen, and C.-J. Wu. Layerskip: Enabling early exit inference and self-speculative decoding. In Annual Meeting of the Association for Computational Linguistics , 2024. [14] T. Fu, Y.-C. You, Z.-K. Chen, G.-H. Dai, H.-Z. Yang, and Y. Wang. Think-at-hard: Dynamic looped transformers for improved reasoning. 2025. [15] Z.-Z. Fu, X.-T. Guo, W.-X. Zeng, S.-Z. Zhong, Y.-D. Zhang, P.-Y. Chen, R.-S. Wang, L. Ye, and M. Li. H2eal: Hybrid-bonding architecture with hybrid sparse attention for efficient long-context llm inference. 2025 IEEE/ACM International Conference On Computer Aided Design (ICCAD) , pages 1–9, 2025. [16] Z.-Z. Fu, R.-S. Wang, and M. Li. Scaling parameter and context in attention: Native sparse attention from mixture-of-head. 2026. [17] Z.-Z. Fu, W.-X. Zeng, R.-S. Wang, and M. Li. Attention sink forges native moe in attention layers: Sink-aware training to address head collapse. ArXiv , abs/2602.01203, 2026. 10 [18] J. Geiping, S. McLeish, N. Jain, J. Kirchenbauer, S. Singh, B. R. Bartoldson, B. Kailkhura, A. Bhatele, and T. Goldstein. Scaling up test-time compute with latent reasoning: A recurrent depth approach. ArXiv , abs/2502.05171, 2025. [19] H. Ha and J.-J. Kim. Wavefront decoding: Parallelized self-speculative decoding for looped language models. 2026. [20] D. Hendrycks, C. Burns, S. Kadavath, A. Arora, S. Basart, E. Tang, D. X. Song, and J. Steinhardt. Measuring mathematical problem solving with the math dataset. ArXiv , abs/2103.03874, 2021. [21] C.-P. Hsieh, S. Sun, S. Kriman, S. Acharya, D. Rekesh, F. Jia, Y. Zhang, and B. Ginsburg. Ruler: What’s the real context size of your long-context language models? ArXiv , abs/2404.06654, 2024. [22] H.-C. Huang, S.-X. Qiu, and M. Li. S2-moe: Enabling efficient self-speculative decoding for mixture-of-experts on edge devices. ArXiv , abs/2608.15018, 2026. [23] W.-C. Huang, W.-Z. Zhang, Y. Liang, Y.-C. Bei, Y.-K. Chen, T. Feng, X.-Y. Pan, Z. Tan, Y. Wang, T.-X. Wei, S. Wu, R.-Y. Xu, L. Yang, R. Yang, W. Yang, C.-Y. Yeh, H.-R. Zhang, H. Zhang, S.-Q. Zhu, H. P. Zou, W.-J. Zhao, S. Wang, W.-J. Xu, Z.-X. Ke, Z. Hui, D.-W. Li, Y.-Z. Wu, L.-Z. He, C. Wang, X. Xu, B.-X. Huang, J.-T. Tan, S. Heinecke, H. Wang, C.-M. Xiong, A. Metwally, J. Yan, C.-Y. Lee, H. Zeng, Y. Xia, X.-M. Wei, A. Payani, Y. Wang, H.-T. Ma, W.-Y. Wang, C.-G. Wang, Y. Zhang, X. E. Wang, Y.-F. Zhang, J.-C. You, H.-H. Tong, X. Luo, X. Liu, Y.-Z. Sun, W. Wang, J. McAuley, J. Zou, J.-W. Han, P. S. Yu, and K. Shu. A survey of agent memory in the second half: Towards self-evolving and long-horizon agents. 
+
+Trans. Mach. Learn. Res. , 2026, 2026. [24] H. Kim, J. Lee, S. Cho, D.-S. Han, I. Han, and S. Kim. Residualquant: Kv cache quantization for looped transformers with 2-bit residuals. 2026. [25] Y. Leviathan, M. Kalman, and Y. Matias. Fast inference from transformers via speculative decoding. In International Conference on Machine Learning , 2022. [26] Z. Ling, K. Liu, K. Yan, Y. Yang, W. Lin, T.-H. Fan, L. Shen, Z.-Y. Du, and J.-C. Chen. Longreason: A synthetic long-context reasoning benchmark via context expansion. ArXiv ,abs/2501.15089, 2025. [27] G.-D. Liu, C.-W. Li, J.-R. Zhao, C. Zhang, and M.-Y. Guo. Clusterkv: Manipulating llm kv cache in semantic space for recallable compression. 2025 62nd ACM/IEEE Design Automation Conference (DAC) , pages 1–7, 2024. [28] S. McLeish, A. Li, J. Kirchenbauer, D. S. Kalra, B. R. Bartoldson, B. Kailkhura, A. Schwarzschild, J. Geiping, T. Goldstein, and M. Goldblum. Teaching pretrained language models to think deeper with retrofitted recurrence. ArXiv , abs/2511.07384, 2025. [29] B.-W. Peng, J. Quesnelle, H. Fan, and E. Shippole. Yarn: Efficient context window extension of large language models. ArXiv , abs/2309.00071, 2023. [30] H. Prairie, Z. Novack, T. Berg-Kirkpatrick, and D. Y. Fu. Parcae: Scaling laws for stable looped language models. ArXiv , abs/2604.12946, 2026. [31] S. Qiu, S.-Y. Guo, Z.-Y. Song, Y.-B. Sun, Z.-Y. Cai, J.-S. Wei, T.-Y. Luo, Y. Yin, H. Zhang, Y. Hu, C.-Y. Wang, C. Tang, H.-T. C. Chang, Q. Liu, Z.-H. Zhou, T.-Y. Zhang, J.-T. Zhang, Z. Liu, M.-H. Li, Y. Zhang, B. Jing, X. Yin, Y.-T. Ren, Z.-Z. Fu, J.-M. Ji, W.-K. Wang, X. Tian, A. Lv, L.-C. Man, J.-X. Li, F. Tao, Q.-H. Sun, Z. Liang, Y.-S. Mu, Z.-X. Li, J.-J. Zhang, S.-T. Zhang, X. Li, X. Xia, J.-W. Lin, Z. Shen, J.-H. Chen, Q. Xiong, B.-R. Wang, F.-Y. Wang, Z. Ni, B. Zhang, F. Cui, C. Shao, Q.-H. Cao, M. Luo, Y.-D. Yang, M.-H. Zhang, and H.-X. Zhu. Phybench: Holistic evaluation of physical perception and reasoning in large language models. 
+
+ArXiv , abs/2504.16074, 2025. [32] R. Sadhukhan, J. Chen, Z.-M. Chen, V. Tiwari, R.-H. Lai, J. Shi, I. E.-H. Yen, A. May, T. Chen, and B.-D. Chen. Magicdec: Breaking the latency-throughput tradeoff for long context generation with speculative decoding. ArXiv , abs/2408.11049, 2024. 11 [33] M. Suzgun, N. Scales, N. Schärli, S. Gehrmann, Y. Tay, H. W. Chung, A. Chowdhery, Q. V. Le, E. H. Chi, D. Zhou, and J. Wei. Challenging big-bench tasks and whether chain-of-thought can solve them. In Annual Meeting of the Association for Computational Linguistics , 2022. [34] R. Tiwari, H.-C. Xi, A. Tomar, C. R. C. Hooper, S. Kim, M. Horton, M. Najibi, M. W. Mahoney, K. Keutzer, and A. Gholami. Quantspec: Self-speculative decoding with hierarchical quantized kv cache. ArXiv , abs/2502.10424, 2025. [35] J.-M. Xu, J.-Y. Pan, H.-Z. Wang, Y.-K. Zhou, J.-C. Ye, Y. Wang, and G.-H. Dai. Specontext: Enabling efficient long-context reasoning with speculative context sparsity in llms. Proceedings of the 31st ACM International Conference on Architectural Support for Programming Languages and Operating Systems, Volume 2 , 2025. [36] P. Xu, W. Ping, X. Wu, C.-J. Xu, Z.-H. Liu, M. Shoeybi, and B. C. Catanzaro. Chatqa 2: Bridging the gap to proprietary llms in long context and rag capabilities. ArXiv , abs/2407.14482, 2024. [37] C. Yang, C.-R. Huang, F. Lan, H. Chen, H. Zhou, H.-T. Song, J.-Q. Cao, J.-Y. Zhu, J. Niu, K. Wang, L. Huang, Q.-L. Liang, R. Le, R.-X. Feng, S. Sun, T. Gu, T. Zhang, T.-Y. Luo, Y. Song, Y. Xing, Y.-T. Wen, Z. Xu, Z. Chen, and Z.-Q. Li. Nanbeige4.2-3b: Unlocking agentic capabilities in a compact model. ArXiv , abs/2607.22083, 2026. [38] J. Zhang, J. Wang, H. Li, L. Shou, K. Chen, G. Chen, and S. Mehrotra. Draft& verify: Lossless large language model acceleration via self-speculative decoding. In Proceedings of the 62nd Annual Meeting of the Association for Computational Linguistics (Volume 1: Long Papers) ,pages 11263–11282, 2024. [39] Y.-L. Zhao, J. Tang, K. Zhu, Z. Ye, C.-C. Chang, C.-F. Lin, J. Park, G. Xiao, M. S. Abdelfattah, M. Gao, B. Kasikci, S. Han, and I. Stoica. Accelerating large-scale reasoning model inference with sparse self-speculative decoding. ArXiv , abs/2512.01278, 2025. [40] R.-J. Zhu, Z.-X. Wang, K. Hua, T.-Y. Zhang, Z.-N. Li, H. Que, B. Wei, Z. Wen, F. Yin, H. Xing, L. Li, J.-J. Shi, K. Ma, S. Li, T. Kergan, A. K. Smith, X. Qu, M.-D. Hui, B.-H. Wu, Q.-Y. Min, H. Huang, X. Zhou, W. Ye, J.-H. Liu, J. Yang, Y. Shi, C.-H. Lin, E. Zhao, T.-L. Cai, G. Zhang, W. Huang, Y. Bengio, and J. K. Eshraghian. Scaling latent reasoning via looped language models. ArXiv , abs/2510.25741, 2025. 12

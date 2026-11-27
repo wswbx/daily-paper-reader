@@ -1,0 +1,1502 @@
+Title: Late Entry in Looped Language Models
+
+URL Source: https://arxiv.org/pdf/2611.24576v1
+
+Published Time: Thu, 19 Nov 2026 03:17:14 GMT
+
+Number of Pages: 32
+
+Markdown Content:
+# Late Entry in Looped Language Models 
+
+Ziqi Jin 1, Jiaxi Li 2, Weiwen Xu 3,†, Aixin Sun 1,†
+
+Project: xalp.net/late-entry · Code: github.com/Xalp/LateComer · Models: hf.co/Xalphinions 
+
+Abstract 
+
+Looped language models deepen reasoning at a compact parameter count by iterating a shared layer stack 𝑇 times per token, turning recurrence depth directly into sequential decoding latency. Conventional early-exit decoding halts after initial passes without cache completion, truncating cached key-value states of past tokens to shallow depth. We study the opposite strategy, late entry ,where new tokens skip initial passes and enter directly into the final 𝐾 < 𝑇 passes over a deep context cache. Once lightweight fine-tuning resolves hidden-state norm mismatch at the entry boundary, deep cached context substitutes for skipped token-local passes, allowing late entry to outperform matched early exit across model families and pass budgets. To turn this asymmetry into wall-clock speedups without stalling to build deep caches, candidate blocks verify through only the final 𝐾 passes on the critical path while previously committed tokens complete passes 1 → 𝑇 alongside subsequent steps at zero extra serial calls . Projecting these finished 𝑇 -pass wake states inside the existing output GEMM ( Wake verification , governed by logit-margin tolerance 𝜏 ∈ [ 0, ∞] ) unifies greedy-exact 
+
+𝑇 -pass decoding (𝜏 = 0, matching 𝐾 = 𝑇 block decoding within bf16 reduction order), margin-gated verification ( 𝜏 > 0), and non-rollback lossy late entry ( 𝜏 = ∞) inside a single static CUDA graph. On Ouro-2.6B ( 𝑇 = 4), 𝐾 = 2 Wake reaches 5.2 × greedy-exact speedup at 𝜏 = 0 ( +26% over 𝐾 = 4 block decoding on GSM8K) and 6.8 × at 𝜏 = ∞ (+16.9 points over trained early exit at matched speed). Scaling test-time recurrence across 𝑇 ∈ { 8, 16 , 32 , 64 } on Huginn-3.5B cuts 𝐾 = 𝑇 /4 rollbacks 21.5 ×
+
+with depth, driving greedy-exact ( 𝜏 = 0) speedups to 6.1 × (𝑇 = 32) and 8.4 × (𝑇 = 64, +153% over 
+
+𝐾 = 64 block) and 𝜏 = ∞ speedups to 10.6 to 12.5 ×.pass 1                     
+
+> pass 2
+> pass 3
+> pass 4
+> input
+> embed.
+> (a) Full depth
+> Sam has clips
+> K/V
+> next token
+> context new
+> (b) Early exit
+> Sam has clips
+> next token
+> shallow K/V
+> P2-P4 unused
+> (c) Late entry
+> Sam has clips
+> skipped enter
+> at P4
+> deep K/V
+> next token
+> (d) Greedy-exact Wake & lossy frontier
+> Ouro-2.6B (T = 4 passes, GSM8K)
+> Full block (K = 4)
+> T = 4 block baseline (.867) 4.1×
+> Wake K = 2 ( τ= 0/.15)
+> greedy-exact · +26–34% vs K=4 5.2–5.5×
+> Late entry K = 2 ( τ=∞)
+> lossy (+65% vs K=4 · +16.9 EE) 6.8×
+> Huginn-3.5B (T = 32 →64, GSM8K)
+> Full block (K = T)
+> T = 32 / 64 block baseline 3.4×
+> Exact Wake ( τ= 0)
+> greedy-exact (+82–153% vs K=T) 6.1–8.4×
+> Late entry ( τ=∞)
+> lossy (+217% · 12.5× MBPP) 9.9–10.6×
+
+Figure 1. Early exit vs. late entry in looped language models. (a) Full depth ( ): runs all 𝑇 = 4 passes. 
+
+(b) Early exit ( ): halts after pass 1, truncating context KV caches to shallow depth. (c) Late entry ( ): 
+
+skips passes 1 to 3 on the new token ( clips ) and enters pass 4 over a full-depth context cache completed in parallel (Section 3). (d) Unified Wake and late-entry frontier (GSM8K, 𝐵 = 8, single H100): reusing completed 𝑇 -pass wake states lifts throughput beyond the 𝐾 = 𝑇 block baseline with greedy-exact fidelity at 𝜏 = 0 ( 5.2 ×, +26% on Ouro-2.6B; 6.1 to 8.4 ×, +82% to +153% on Huginn-3.5B across 𝑇 = 32 → 64) and reaches 6.8 × and 10.6 × (12.5 × on MBPP) at 𝜏 = ∞.
+
+> 1
+
+Nanyang Technological University. 
+
+> 2
+
+Singapore University of Technology and Design. 
+
+> 3
+
+The Chinese University of Hong Kong. 
+
+> †
+
+Co-corresponding authors: Weiwen Xu ( weiwen.xuu@gmail.com ) and Aixin Sun ( axsun@ntu.edu.sg ). 
+
+1arXiv:2611.24576v1 [cs.CL] 18 Nov 2026 Late Entry in Looped Language Models Preprint 
+
+## 1 Introduction 
+
+Looped language models scale test-time compute without increasing model size by passing each token repeatedly through a shared Transformer stack for 𝑇 recurrent passes (Dehghani et al., 2019; Geiping et al., 2025; Zhu et al., 2025). During autoregressive decoding, however, running all 𝑇 passes per generated token turns recurrence depth directly into sequential latency. When each new token is restricted to 𝐾 < 𝑇 
+
+serial passes, which passes should it execute? As shown in Figure 1, conventional early exit without cache completion (Schuster et al., 2022) runs the first 𝐾 passes and halts (Figure 1b), leaving past key-value (KV) caches truncated at shallow depth 𝐾 so all future tokens attend to immature context states. We explore the opposite choice, late entry , which skips initial passes and feeds each new token’s embedding directly into the final 𝐾 passes over a deep context KV cache (Figure 1c). At first glance, skipping initial passes seems destined to fail: on off-the-shelf Ouro-1.4B and Ouro-2.6B (𝑇 = 4) (Zhu et al., 2025), feeding raw embeddings into a late pass breaks predictions immediately because late passes expect normalized hidden states from earlier passes. Once lightweight fine-tuning aligns late passes to accept raw embeddings, however, a clear asymmetry emerges between token depth and context depth: one final pass over a four-pass context matches full-depth predictions more closely than two initial passes over a two-pass context ( +10 + accuracy points in sequential decoding). Under identical training data, hyperparameters, and steps, spending 𝐾 serial passes at the end of the recurrence consistently outperforms spending them at the beginning across both Ouro scales ( 𝑇 = 4; Section 2) and 32-pass middle-recurrent Huginn-3.5B ( 𝑇 = 32; Section 4.4), showing that deep cached context retains much of the benefit of recurrent depth. Turning this finding into wall-clock speedups requires building deep context states without stalling genera-tion. In late-entry block decoding paired with Wake verification (Section 3), parameter-free candidate blocks (Liu et al., 2026a; Jin et al., 2026) execute only the final 𝐾 passes on the critical path to emit a 
+
+tentatively accepted frontier and provisional KV states, while earlier tentative tokens complete true passes 1 through 𝑇 as piggybacked batch rows at zero extra serial calls (using spare per-call batch capacity in memory-bound decoding rather than reducing FLOPs). Because that wake finishes exact causal 𝑇 -pass states 
+
+𝐿 = ⌈𝑇 /𝐾 ⌉ steps later, projecting them inside the same output GEMM ( Wake verification , Section 3.4) promotes matching tokens into a permanently verified 𝑇 -pass prefix and rolls back rare mismatches, unifying greedy-exact ( 𝜏 = 0), margin-gated (0 < 𝜏 < ∞), and lossy ( 𝜏 = ∞) decoding in one CUDA graph. 
+
+Key Takeaway 
+
+In looped language models, deep cached context substitutes for token-local early passes. Whereas existing looped speculative decoders (Ha and Kim, 2026; Cho et al., 2026; Li et al., 2026; Liu et al., 2026c) accelerate drafting via shallow initial passes while keeping full 𝑇 -pass verification on every accepted token, Late Entry + Wake Verification compresses critical-path verification itself to the final 𝐾 < 𝑇 passes over a pipelined full-depth cache and reuses completed 1 → 𝑇 wake states in the same output GEMM to preserve 𝑇 -pass greedy equivalence ( 𝜏 = 0) or trade controlled margin tolerance ( 𝜏 > 0) for higher throughput. Our study is organized around three concrete contributions: • Pass-allocation asymmetry and error localization. Across Ouro-1.4B, Ouro-2.6B ( 𝑇 = 4), and Huginn-3.5B ( 𝑇 = 32), adapted late entry consistently outperforms matched early exit; fp32 interventions trace this gain to pass-coherent context (𝐾, 𝑉 ) pairs and show that 𝐾 < 𝑇 discrepancies concentrate inside the 6% uncertain tail (Section 2).  
+
+> 2Late Entry in Looped Language Models Preprint
+
+• Unified Late Entry + Wake Verification pipeline. We pair 𝐾 -pass critical-path block verification with cross-step 1 → 𝑇 cache completion and same-GEMM Wake verification, proving exact 𝑇 -pass greedy equivalence and finite-step termination at 𝜏 = 0 while spanning margin-gated ( 𝜏 > 0) and lossy (𝜏 = ∞) regimes in one engine (Proposition 1; Sections 3 and 3.4). • Scaling across benchmarks, recurrence depths, and hardware load. Across 21 ,403 examples on Ouro-2.6B ( 𝑇 = 4) and 𝑇 ∈ { 8, 16 , 32 , 64 } (36 → 260 effective layers) on Huginn-3.5B, Wake verification delivers 5.2 × to 8.4 × greedy-exact ( 𝜏 = 0) speedups and up to 12.5 × lossy ( 𝜏 = ∞) speedups as 𝐾 = 𝑇 /4rollbacks drop 21 .5× with depth, while an 𝐿 𝑝 Roofline law calibrated strictly on 𝐾 = 4 predicts unseen 
+
+𝐾 < 4 multi-request throughput across 𝐶 ∈ [ 1, 32 ] at 8.3% MAPE (Sections 4 and 4.7). 
+
+## 2 Early Exit vs. Late Entry: Where Should Passes Be Spent? 
+
+Before building an inference system, we isolate a central pass-allocation question under idealized context conditions: when each new token is limited to 𝐾 < 𝑇 serial passes, is it better to spend them on the initial passes or on the final passes? We study this question on Ouro-1.4B (24 Transformer layers) and Ouro-2.6B (48 Transformer layers), two pretrained looped language models that iterate a shared layer stack for 𝑇 = 4passes with pass-specific KV caches and untied input-output embeddings (Zhu et al., 2025). For clarity, Sections 2 and 3 develop our analysis and pipeline on 𝑇 = 4 Ouro before Section 4.4 scales both to 32-pass middle-recurrent Huginn-3.5B ( 𝑇 = 32). In free autoregressive generation, a single altered prediction changes every subsequent token, confounding single-step accuracy with trajectory drift. To measure per-token prediction quality cleanly, we first evaluate 
+
+teacher-forced agreement (Appendix A). We generate reference completions greedily at full depth ( 𝑇 = 4), replay the exact same token prefixes under a reduced-pass configuration, and record the fraction of positions whose greedy next-token prediction matches full depth. 
+
+2.1 Making Late Entry Feasible 
+
+What happens if we apply late entry directly to an off-the-shelf looped language model without any adaptation? We test the most extreme case on released Ouro-1.4B and Ouro-2.6B: preceding context tokens retain their full four-pass KV caches, while the current token skips passes 1 to 3 and feeds its raw token embedding directly into pass 4 ( 𝐾 = 1). As shown in the first row of Table 1, prediction agreement with full depth drops to .552 on Ouro-1.4B and .751 on Ouro-2.6B, well below simply truncating the entire model to pass 1 ( .938 and .949). Inspecting internal activations reveals why raw late entry fails: pass 1 expects raw token embeddings (median ℓ2 norm 0 .76), whereas pass 4 expects layer-normalized hidden states emitted by pass 3 (norms 37 to 51). To test whether this failure reflects an input representation mismatch rather than missing early-pass computation, we fit a closed-form linear projection from raw token embeddings to pass-4 inputs on held-out states while keeping all model weights frozen. This linear probe alone raises agreement to .816 on Ouro-1.4B and .919 on Ouro-2.6B (Table 1), recovering 60% and 70% of the gap to the diagnostic oracle that supplies the true pass-3 state ( .991 and .992). Still, frozen input adapters on an unadapted model plateau at or below one-pass truncation ( ≤ .949; extended adapter diagnostics in Appendix C). To align late passes with raw embeddings directly, we fine-tune Ouro on Dolci-Instruct-SFT (Team Olmo, 2025) in two one-epoch stages (Appendix A): Stage 1 runs standard full-depth instruction SFT, and Stage 2 exposes half of the training segments directly to raw token embeddings at pass 𝑇 − 𝐾 + 1 ( 𝐾 ∼ Uniform {1, 2, 3}) over a full-depth prefix cache (jointly formatted for parallel 
+
+> 3
+
+Late Entry in Looped Language Models Preprint 
+
+Table 1. Diagnosing raw late-entry failure on off-the-shelf purely looped checkpoints. Each row reports GSM8K teacher-forced next-token agreement with full-depth ( 𝑇 = 4) decoding across 78 ,693 token positions on Ouro-1.4B and 70 ,101 positions on Ouro-2.6B. In the top three rows, the current token executes only pass 4 ( 𝐾 = 1) over a four-pass context cache; the bottom row runs pass 1 only for both token and context. A closed-form linear map recovers 60% to 70% of the gap to the pass-3 oracle without changing a single model weight. Input state supplied to pass 4 ( 𝐾 = 1 over four-pass context) Released Ouro-1.4B Released Ouro-2.6B Raw token embedding (unadapted late entry) .552 .751 Closed-form linear projection of the token embedding .816 .919 True pass-3 hidden state (diagnostic oracle ceiling) .991 .992 
+
+Reference: 1-pass early exit (pass 1 only for all tokens) .938 .949 (a) Why one adapted late pass suffices               
+
+> Deep prefix KV stores multi-pass reasoning; new token queries it
+> Shallow context: K = 2, D = 2 .954
+> P1 P2 P3 P4
+> unrefined prefix KV
+> shallow
+> 2 passes
+> on token xi
+> Deep context: K = 1, D = 4 .962
+> P1 P2 P3 P4 aligned Q
+> P1–P3 skipped
+> 4-pass context KV deep KV
+> 1 pass
+> from e(xi)
+> (b) Teacher-forced agreement
+> Ouro-2.6B on GSM8K (70,101 positions)
+> Shallow cache (D = 2) Deep cache (D = 4)
+> .92 .94 .96 .98 1.00
+> agreement with full depth (T = 4)
+> K = 1 .945 .962
+> K = 2 .954 .984
+> K = 3 n/a (K > D)
+> .992
+> 1 pass > 2 passes
+> (.962 vs. .954)
+> (c) Free decoding (K = 2)
+> 1 token/step · deep cache completed
+> .50 .60 .70 .80 .90
+> end-to-end task accuracy
+> .749 .853
+> +10.4 pts
+> GSM8K
+> .588 .708
+> +12.0 pts
+> IFEval
+
+Figure 2. Why a single adapted late pass suffices: deep context KV substitutes for token-local passes on fine-tuned Ouro-2.6B. (a) Mechanism: under shallow early exit ( 𝐾 = 2, 𝐷 = 2, ), token 𝑥 𝑖 executes two passes but attends only to unrefined two-pass prefix caches; under adapted late entry ( 𝐾 = 1, 𝐷 = 4, ), multi-pass contextual reasoning is already stored in the four-pass prefix cache, allowing a single aligned pass 4 to query deep context states directly from 𝑒 (𝑥 𝑖 ). (b) Teacher-forced decoupling: varying current-token passes 𝐾 (executing passes 𝐷 − 𝐾 + 1, . . . , 𝐷 ) and context depth 𝐷 ∈ { 2, 4} on GSM8K ( 𝐾 = 𝐷 = 4 is 1 .000 by definition) reveals that one pass over deep context ( .962 ) beats two passes over shallow context ( .954 ). (c) Free decoding: in single-token greedy generation at 𝐾 = 2, completing four-pass context caches lifts task accuracy by +10.4 points on GSM8K and +12.0 points on IFEval. 
+
+block decoding in Section 3.2; full recipe in Appendix A). Ablations in Appendix B confirm that late-entry pass exposure itself resolves the mismatch: Stage 2 lifts plain-embedding late-entry agreement to .962 
+
+on Ouro-2.6B, compared with .699 after Stage 1 alone and .738 under identical Stage-2 training without late-entry exposure. With the input mismatch removed, we can now test whether deep context compensates for skipped token passes. 
+
+2.2 Deep Context Compensates for Skipped Token Passes 
+
+Why can a single late pass predict so accurately once the model is adapted? As illustrated in Figure 2a, passes 1 through 𝑇 progressively refine prefix representations and store multi-pass contextual reasoning inside the deep KV cache C (𝑇 )
+
+<𝑖 . Once Stage 2 aligns pass 𝑇 to form valid attention queries directly from a raw token embedding 𝑒 (𝑥 𝑖 ), the new token can read out that distilled four-pass context in a single pass rather than re-deriving depth locally, whereas early exit forces every attention head to read immature prefix states (concurrently, Li et al. (2026) show in a training-free drafting setting that pairing shallow initial-pass 
+
+4Late Entry in Looped Language Models Preprint (a) Late queries require pass-coherent (K, V)           
+
+> .00 .25 .50 .75 1.00
+> Pass-1 K + Pass-4 V
+> cross-pass mismatch → 100% EOS .000
+> Pass-4 K + Pass-1 V
+> aligned query, shallow values .296
+> Unadapted K = 1
+> di ff use query (linear CKA .312) .751
+> Adapted K = 1 (ours)
+> coherent P4 (K,V) · CKA .961 .962
+> Adapted K = 2 (ours)
+> coherent P3–P4 (K,V) · 1.000 @≥.95 .984
+> agreement with T = 4 full depth (GSM8K)
+> (b) Discrepancies localize to 6% uncertain tail
+> .40
+> .60
+> .80
+> 1.00
+> <.50
+> (6%)
+> .50–.80
+> (14%)
+> .80–.95
+> (12%)
+> ≥.95
+> (68%)
+> Wake target zone
+> (6% uncertain tokens)
+> Adapted K=2 (1.000 @≥.95) Adapted K=2 (1.000 @≥.95)
+> Adapted K=1 Adapted K=1 1-pass early exit 1-pass early exit
+> Unadapted K=1 Unadapted K=1
+> full-depth top-1 con fi dence bin (share of positions)
+
+Figure 3. Pass-coherent (𝐾, 𝑉 ) addressing and confidence localization on Ouro-2.6B (fp32 probes across 30 ,736 GSM8K positions). (a) Cross-pass (𝐾, 𝑉 ) interventions: swapping keys and values across passes collapses agreement to .000 (Pass-1 𝐾 + Pass-4 𝑉 ) or .296 (Pass-4 𝐾 + Pass-1 𝑉 ), whereas Stage-2 alignment reaches linear CKA .961 with true pass-4 states and .962 ( 𝐾 = 1) to .984 ( 𝐾 = 2) agreement over coherent deep (𝐾, 𝑉 ) caches. 
+
+(b) Confidence-binned agreement: adapted late entry reaches 1.000 (𝐾 = 2) and .998 ( 𝐾 = 1) on the 68% of confident tokens ( 𝑝 max ≥ .95), isolating residual discrepancies to the 6% uncertain tail ( 𝑝 max < .50) targeted by Wake verification. 
+
+queries with full-depth prefix values improves draft predictions). To test this mechanism quantitatively on fine-tuned Ouro-2.6B, we independently vary two quantities under teacher forcing: the cached context depth 𝐷 ∈ { 2, 4}, where all preceding tokens run passes 1 , . . . , 𝐷 to populate the pass-aligned KV cache, and the current-token pass budget 𝐾 ≤ 𝐷 , where the current token enters at pass 𝐷 − 𝐾 + 1 and executes passes 𝐷 − 𝐾 + 1, . . . , 𝐷 . Under this definition, (𝐾 = 2, 𝐷 = 2) runs passes 1 and 2 on both token and context (standard two-pass early exit), whereas (𝐾 = 1, 𝐷 = 2) enters directly at pass 2 over a two-pass context. Figure 2b isolates each factor in turn. First, holding the current token’s budget fixed at 𝐾 = 2 passes, deepening the context cache from 𝐷 = 2 to 𝐷 = 4 raises agreement from .954 to .984. Second, holding a full-depth context fixed at 𝐷 = 4, reducing the current token from 𝐾 = 3 ( .992) to 𝐾 = 2 ( .984) and even 
+
+𝐾 = 1 ( .962) retains high agreement. Together, these two effects produce a clear cross-diagonal reversal: running just 𝐾 = 1 pass over a four-pass context ( .962 ) outperforms running 𝐾 = 2 passes over a two-pass context ( .954 ). Fine-tuned Ouro-1.4B exhibits the same reversal, reaching .948 at (𝐾 = 1, 𝐷 = 4) versus .922 at (𝐾 = 2, 𝐷 = 2) with non-overlapping bootstrap confidence intervals. Small per-step differences compound substantially over free-running generation (Figure 2c). To isolate the end-to-end impact of context depth without block drafting, we run diagnostic one-token-at-a-time greedy decoding at 𝐾 = 2 passes per token. Truncating every token and its cache to the first two passes ( 𝐷 = 2) scores .749 on GSM8K and .588 on IFEval. Running the final two passes per token while synchronously completing each emitted token’s four-pass cache before the next step ( 𝐷 = 4) lifts accuracy to .853 (+10.4 points) on GSM8K and .708 (+12.0 points) on IFEval. 
+
+Why late passes work and where errors remain. Inspecting internal attention and hidden-state geometry in fp32 across 30 ,736 GSM8K and 53 ,184 IFEval positions (Figure 3; full attention-entropy, sink-mass, and distance metrics in Appendix C) reveals two structural properties. First, Stage-2 exposure aligns 
+
+𝐾 = 1 hidden states directly onto the pass-4 manifold ( linear CKA .961 vs. .273 to .365 unadapted), and cross-pass KV interventions confirm that late queries require coherent same-pass (𝐾, 𝑉 ) pairs rather than deep values alone: pairing pass-1 keys with pass-4 values collapses predictions to <|endoftext|> at 100% of positions ( .000 agreement), while pairing pass-4 keys with pass-1 values drops agreement to .296 (Figure 3a; tokens more than 64 positions back supply 53% of IFEval’s total context-depth gain). Second, 
+
+5Late Entry in Looped Language Models Preprint                                                                                      
+
+> Table 2. Same-checkpoint comparison of First 𝐾 versus Last 𝐾 passes across scales and tasks. Entries report teacher-forced next-token agreement with full-depth ( 𝑇 =4) decoding on identical Stage-2 checkpoints (70 ,101 GSM8K positions on Ouro-2.6B; 28 ,939 GSM8K and 61 ,723 IFEval positions on Ouro-1.4B). “First 𝐾 ” ( ) runs passes 1 , . . . , 𝐾 over a depth-𝐾 context; “Last 𝐾 ” ( ) runs passes 𝑇 −𝐾 +1, . . . ,𝑇 over a four-pass ( 𝐷 =4) context.
+> Ouro-2.6B (48 layers, 𝑇 =4) Ouro-1.4B (24 layers, 𝑇 =4) GSM8K IFEval GSM8K IFEval Passes / token First 𝐾 Last 𝐾 First 𝐾 Last 𝐾 First 𝐾 Last 𝐾 First 𝐾 Last 𝐾 𝐾 =1 ( vs. ).898 .962 .757 .887 .842 .948 .743 .884
+> 𝐾 =2 ( vs. ).954 .984 .866 .943 .922 .976 .839 .941
+> 𝐾 =3 ( vs. ).982 .992 .949 .969 .967 .990 .938 .968
+
+stratifying positions by full-depth top-1 confidence 𝑝 max (Figure 3b) shows that on the 68% of GSM8K tokens where full depth is confident ( 𝑝 max ≥ .95), adapted late entry already agrees at .998 (𝐾 = 1) and 
+
+1.000 (𝐾 = 2), confining the remaining 1 .6% discrepancy at 𝐾 = 2 to the 6% uncertain tail ( 𝑝 max < .50, .827 agreement). This concentration motivates both halves of Section 3: completing exact 1 → 𝑇 context caches in a cross-step pipeline so generation never stalls (Section 3.3), and reusing those finished wake states to catch rare uncertain-tail slips without slowing down the other 98% + of tokens (Section 3.4). 
+
+2.3 Late Entry vs. Early Exit Across Scales and Matched Fine-Tuning 
+
+We first compare early-exit and late-entry pass placements on the exact same Stage-2 checkpoints across all reduced budgets 𝐾 ∈ { 1, 2, 3}, both model sizes, and both GSM8K and IFEval. Table 2 compares truncating to the initial 𝐾 passes ( First 𝐾 , depth-𝐾 context) against entering for the final 𝐾 passes ( Last 𝐾 , four-pass context). Across all 12 cells, spending passes at the end beats spending them at the beginning on identical weights, with margins of +6.4 to +14 .1 points at 𝐾 = 1. Note that each agreement score is measured against that checkpoint’s own full-depth output: although unadapted Ouro-2.6B showed .949 one-pass self-agreement in Table 1 versus .898 here, the unadapted base model achieves only .729 full-depth GSM8K accuracy ( .442 on IFEval; Appendix B), lower than even two-pass truncated decoding on our adapted model (.747 and .597). Because Table 2 evaluates checkpoints exposed to late-entry blocks during Stage 2, we next test whether giving early exit its own dedicated Stage-2 training closes the gap. Starting from the exact same Stage-1 checkpoint with identical data order, optimization steps, and random seed, we train a matched early-exit model whose reduced-budget blocks execute the first 𝐾 passes instead of the last 𝐾 (Appendix A). Dedicated early-exit training raises 𝐾 = 1 truncation agreement on Ouro-2.6B from .898 to .925 on GSM8K and from 
+
+.757 to .798 on IFEval (while unexposed late entry stays at .755 and .619), yet it still trails trained late entry by wide margins ( .962 vs. .925 on GSM8K and .887 vs. .798 on IFEval), confirming across both identical weights and matched fine-tuning that cached context depth outweighs token-local early passes. 
+
+## 3 Late-Entry Decoding 
+
+While Section 2 assumed idealized full-depth context states, a practical decoder must construct those states for newly generated tokens without stalling generation. Late-entry decoding achieves this by maintaining  
+
+> 6Late Entry in Looped Language Models Preprint
+
+deep context with a short pipeline lag across decoding steps. For a concrete mental model at 𝑇 = 4 and 
+
+𝐾 = 2 (previewed in Figure 5), each decoding step performs three coordinated actions: 1. Tentative late-pass verification: new candidate tokens skip passes 1 and 2 and execute only passes 3 and 4 ( 𝐾 = 2 serial calls) to emit a tentatively accepted token group. 2. Provisional KV exposure: newly accepted tokens temporarily populate slots 3 and 4 with provisional KV states computed from their embeddings so the next step can proceed immediately without stalling. 3. Pipelined cache completion and Wake verification: over the next two decoding steps, those tentative tokens ride along inside ongoing forward calls to compute true passes 1 → 2 and 3 → 4 at 
+
+zero extra serial calls , overwriting provisional KV entries and verifying finished 𝑇 -pass states inside the same output GEMM to advance a permanently verified 𝑇 -pass prefix. We formalize looped pass mechanics in Section 3.1, describe within-step block verification in Section 3.2, detail cross-step cache completion in Section 3.3, and unify greedy-exact and lossy decoding via Wake verification in Section 3.4 (hardware Roofline and concurrency scaling follow in Section 4.7). 
+
+3.1 Looped Forward Pass and Late-Entry Formulation 
+
+Given a prefix 𝑥 ≤𝑖 = (𝑥 1, . . . , 𝑥 𝑖 ), let 𝑒 (𝑥 𝑖 ) ∈ R𝑑 denote the input embedding of token 𝑥 𝑖 , and let F denote the shared stack of Transformer layers iterated across passes 𝑘 ∈ { 1, . . . ,𝑇 }. At pass 𝑘 , F maps the preceding normalized hidden state ˜ℎ(𝑘 −1) 
+
+> 𝑖
+
+(initialized at ˜ℎ(0) 
+
+> 𝑖
+
+= 𝑒 (𝑥 𝑖 )) over the pass-aligned KV cache C (𝑘 ) 
+
+> <𝑖
+
+of earlier positions < 𝑖 :
+
+ℎ(𝑘 ) 
+
+> 𝑖
+
+= F
+
+ ˜ℎ(𝑘 −1) 
+
+> 𝑖
+
+; C (𝑘 )
+
+> <𝑖
+
+
+
+, ˜ℎ(𝑘 ) 
+
+> 𝑖
+
+= Norm 
+
+
+
+ℎ(𝑘 )
+
+> 𝑖
+
+
+
+, (1) where Norm (·) denotes layer normalization. When a token executes a contiguous range of 𝐾 passes 
+
+{𝑎, . . . , 𝑏 } ⊆ { 1, . . . ,𝑇 }, the model’s output readout maps the executed states ˜ℎ(𝑎 ) 
+
+> 𝑖
+
+, . . . , ˜ℎ(𝑏 ) 
+
+> 𝑖
+
+through the unembedding projection 𝑊 out to next-token probabilities 𝑝 𝑎 :𝑏 (𝑥 𝑖 +1 | 𝑥 ≤𝑖 ) without requiring hidden states from skipped passes (via a pass-invariant stick-breaking gate normalized over {𝑎, . . . , 𝑏 } on Ouro, Ap-pendix A, Equation (4); or directly through a non-recurrent Coda on middle-recurrent Huginn, Section 4.4). Conventional early exit runs {1, . . . , 𝐾 } ( ) and leaves C (𝑘 ) 
+
+> <𝑖
+
+empty for 𝑘 > 𝐾 . Late entry instead runs the final 𝐾 passes {𝑇 − 𝐾 + 1, . . . ,𝑇 } ( ) of Equation (1), feeding 𝑒 (𝑥 𝑖 ) directly into pass 𝑇 − 𝐾 + 1 while attending to context caches C (𝑘 ) 
+
+> <𝑖
+
+for 𝑘 ∈ { 𝑇 − 𝐾 + 1, . . . ,𝑇 }.Notice why pairing early exit with background cache completion does not yield a distinct competitive baseline. Under Equation (1)’s pass-aligned routing, passes 1 , . . . , 𝐾 read only C (1) 
+
+> <𝑖
+
+, . . . , C (𝐾 ) 
+
+> <𝑖
+
+and never attend to C (>𝐾 ) 
+
+> <𝑖
+
+, so completing passes 𝐾 + 1 → 𝑇 in the background leaves Ouro’s 𝐾 -pass early-exit predictions bit-for-bit unchanged (on middle-recurrent Huginn, where only the 2-layer Coda reads Ccoda  
+
+> <𝑖
+
+,supplying an oracle 32-pass cache lifts 8-pass early exit only from .263 to .288 vs. .396 for late entry; Appendix H, Table 15). Conversely, rewiring those 𝐾 passes to query deep caches C (𝑇 −𝐾 +1...𝑇 ) 
+
+> <𝑖
+
+instead of 
+
+C (1...𝐾 ) 
+
+> <𝑖
+
+collapses algebraically into late entry itself because all recurrent passes share identical weights F
+
+(including Ouro’s pass-invariant exit gate), and forfeiting true C (1...𝐾 ) 
+
+> 𝑖
+
+states on the critical path means background completion must still compute all 1 → 𝑇 passes. 
+
+3.2 Late-Pass Block Verification 
+
+To emit multiple tokens per step and amortize cache completion cleanly, we use an existing parameter-free mask-placeholder block decoder (Liu et al., 2026a; Jin et al., 2026) as our execution vehicle. We retain its 
+
+> 7
+
+Late Entry in Looped Language Models Preprint Context  (full P1–P4 KV)  Late-entry block  (runs P3, P4 only · B = 2)                   
+
+> 4-slot KV beside each token
+> (bottom P1 →top P4)
+> reads P3, P4
+> context KV
+> →red →balls
+> Sam has 3red apples
+> and
+> 2
+> Step outcome: Sam has 3red balls and 2
+> accepted bonus next step's proposals
+> reused directly (no extra call)
+
+Figure 4. Inside a single late-entry block step (𝑇 = 4, 𝐾 = 2, block size 𝐵 = 2). The last committed anchor token (“ 3”) and 𝐵 = 2 candidate proposals (“ red ”, “ apples ”) each append a branch of 𝐵 = 2 mask placeholders, forming 
+
+(1 + 𝐵 )2 = 9 parallel rows that enter directly at pass 3. Prefix verification accepts “ red ” ( ✓), replaces the rejected proposal with bonus token “ balls ” ( ×), and reuses the placeholder predictions behind “ red ” (“ and ”, “ 2”) as draft proposals to be verified from anchor “ balls ” in the next step. 
+
+single-call parallel verification and lookahead layout unchanged, modifying only which recurrent passes execute on the critical path (passes 𝑇 − 𝐾 + 1, . . . ,𝑇 instead of 1 , . . . ,𝑇 ) and how committed KV caches are completed afterward. Figure 4 illustrates one step for 𝑇 = 4, 𝐾 = 2, and block size 𝐵 = 2. Let 𝑥 0 denote the last committed anchor token (“ 3”) and let ˆ 𝑥 1, . . . , ˆ𝑥 𝐵 denote 𝐵 candidate tokens proposed for the upcoming positions (“ red ”, “apples ”). To draft the next step’s proposals inside the same forward calls, we append a branch of 𝐵 mask-initialized placeholders behind 𝑥 0 and behind each candidate ˆ 𝑥 𝑚 , forming (1 + 𝐵 )2 parallel rows in total. A structured causal mask restricts candidate ˆ 𝑥 𝑚 to attend only to 𝑥 0 and ˆ 𝑥 1: 𝑚 so verification never leaks future tokens, while the 𝑗 -th placeholder behind ˆ 𝑥 𝑚 attends to that prefix plus its 𝑗 − 1 preceding sibling placeholders to look 𝑗 positions ahead. All (1 + 𝐵 )2 rows enter directly at pass 𝑇 − 𝐾 + 1 and execute only the final 𝐾 passes ( 𝐾 serial forward calls). After pass 𝑇 , we evaluate the greedy late-entry prediction 𝑥 ∗ 
+
+> 𝑚
+
+= arg max 𝑝 𝑇 −𝐾 +1: 𝑇 (· | 𝑥 0, ˆ𝑥 <𝑚 ) at each position. Let 𝑐 ∈ { 0, . . . , 𝐵 } be the length of the longest matching prefix where ˆ 𝑥 1: 𝑐 = 𝑥 ∗ 
+
+> 1: 𝑐
+
+. We tentatively accept those 𝑐 proposals plus one bonus token 𝑥 ∗ 
+
+> 𝑐 +1
+
+(“ balls ” in Figure 4), advancing the tentatively accepted frontier by 1 + 𝑐 tokens, and read the next step’s 𝐵 draft proposals directly from the placeholder branch behind accepted position 𝑐 with zero separate drafting calls . Because that placeholder branch was evaluated alongside ˆ 𝑥 𝑐 +1 rather than the newly realized bonus token 𝑥 ∗
+
+> 𝑐 +1
+
+, its outputs serve strictly as approximate draft candidates; the next step sets 𝑥 ∗ 
+
+> 𝑐 +1
+
+as the new anchor 𝑥 0 and verifies those proposals from scratch. 
+
+3.3 Pipelined Cache Completion and Cost Profile 
+
+When 1 + 𝑐 tentatively accepted tokens advance the frontier after running only passes 𝑇 − 𝐾 + 1, . . . ,𝑇 ,their KV cache slots for passes 1 , . . . ,𝑇 − 𝐾 are still empty, and slots 𝑇 − 𝐾 + 1, . . . ,𝑇 hold provisional keys and values computed from raw embeddings (P3 ∗, P4 ∗ in Figure 5). Pausing generation to recompute passes 1 → 𝑇 serially would add 𝑇 extra serial calls per step and erase the latency savings of late entry. 
+
+8Late Entry in Looped Language Models Preprint Step 1                              
+
+> 2 serial calls · 1 group in batch
+> Call 1Call 2
+> Step 2
+> 2 serial calls · 2 groups batched in parallel
+> Call 1Call 2
+> Step 3
+> 2 serial calls · 3 groups batched in parallel
+> Call 1Call 2
+> Group A
+> committed in Step 1
+> Late entry →commit A
+> runs P3* runs P4*
+> Catch-up (1/2)
+> runs P1 runs P2
+> Catch-up (2/2) · full
+> runs P3 runs P4
+> Group B
+> committed in Step 2 not proposed yet
+> Late entry →commit B
+> runs P3* runs P4*
+> Catch-up (1/2)
+> runs P1 runs P2
+> Group C
+> committed in Step 3 not proposed yet not proposed yet
+> Late entry →commit C
+> runs P3* runs P4*
+> unwritten pass provisional KV ( P3*, P4* from embed.) true KV ( P1 →P4 catch-up; zero extra serial calls)
+
+Figure 5. Multi-step pipeline of late-entry decoding (𝑇 = 4, 𝐾 = 2). Each step executes 𝐾 = 2 serial forward calls. Tentatively accepted token group A (1 + 𝑐 ≤ 1 + 𝐵 tokens) runs late-entry passes 3 and 4 in Step 1 (writing provisional KV states P3 ∗, P4 ∗), and then recomputes true passes 1 → 4 as parallel batch rows inside the 𝐾 = 2 calls of Step 2 (passes 1 , 2) and Step 3 (passes 3 , 4), adding zero extra serial forward calls .
+
+Instead, we complete full-depth KV caches via cross-step pipelining (Figure 5). Here, asynchronous refers to delayed cache completion across decoding steps inside the same GPU forward calls, rather than a separate background CUDA stream. Because a looped language model shares identical layer weights F across all passes, in-flight tentative token groups and the active (1 + 𝐵 )2-row candidate block can execute different pass indices side by side as parallel batch rows inside the same 𝐾 forward calls, each attending to its own pass-aligned cache. Each tentative group advances through true passes 1 → 𝑇 at 𝐾 passes per step, finishing within 𝐿 = ⌈𝑇 /𝐾 ⌉ steps (2 steps at 𝑇 = 4, 𝐾 = 2, scaling to 4 steps at 𝑇 = 32 , 𝐾 = 8 in Section 4.4; when 
+
+𝐾 = 𝑇 , zero catch-up rows are scheduled). Crucially, this schedule preserves exact causal KV dependencies. Because tentative groups enter the wake queue in chronological order and advance 𝐾 passes per step, whenever a group recomputes pass 𝑘 , every earlier group has already written its exact pass-𝑘 KV states during a prior step. In Step 3 of Figure 5, for example, Group B computes passes 1 and 2 while attending to Group A’s true pass-1 and pass-2 caches completed in Step 2. Meanwhile, active candidate blocks briefly read provisional KV entries (P3 ∗, P4 ∗) for the one or two most recent groups until true pass-𝑘 states overwrite them. Why does appending these catch-up rows add minimal wall-clock latency? It is important to distinguish serial calls from arithmetic work: zero extra serial calls does not mean zero extra FLOPs, because tentatively accepted tokens execute 𝐾 verification passes plus 𝑇 wake passes. In single-sequence (batch-1) decoding, however, GPU latency is memory-bandwidth bound rather than compute bound: once layer weights F are streamed from memory for a forward call, extra token rows incur little marginal latency (on Ouro-2.6B on an NVIDIA H100 GPU, forwarding 32 parallel tokens takes only 9% longer than forwarding 1 token). At 
+
+𝑇 = 4, 𝐵 = 8, and 𝐾 = 2, the active block has (1 + 8)2 = 81 rows while at most two groups of ≤ 9 tokens catch up simultaneously, adding at most 18 rows ( 18% of a 99-row batch ; all reported speeds include this work). Higher request concurrency gradually saturates compute under a fixed large 𝐵 unless 𝐵 is reduced alongside load (analyzed via our H100 Roofline law in Section 4.7 and Appendix I). Finally, cache-completion ablations in Appendix F verify both halves of this design: reading provisional KV states for one or two steps costs zero measurable accuracy compared with synchronous before-next-step repair ( 𝑝 = .28 to .77), whereas omitting cache completion altogether drops GSM8K accuracy at 𝐾 = 2 by 4.1 points (.839 → .798; Section 4.4 and Appendix H examine how multi-stage lag scales at 𝑇 = 32). 
+
+9Late Entry in Looped Language Models Preprint Step 1 · Tentative Late Entry (K = 2)                                   
+
+> Veri fi ed (< u):
+> 2+3
+> Tentative [u, v):
+> "=" "6"
+> Critical path (2 serial calls):
+> Runs only P3, P4 → emits ["=", "6"] immediately
+> (on u = "=", P3–P4 slipped: ŷ = "6" vs. true "5")
+> • Writes provisional P3*, P4* so Step 2 never stalls
+> • Enqueues Group A = ["=", "6"] in wake (0/4)
+> Step 2 · Advance + Wake P1→P2
+> Sequence in fl ight:
+> 2+3"=" "6" "." "The"
+> Frontier rows (81 rows): run P3, P4
+> Tentatively emits [".", " The"] at full speed
+> Piggybacked wake (+2 rows): run P1, P2
+> Group A ["=", "6"] runs exact P1, P2 in same calls
+> Step 3 · Wake Finishes P3→P4 & Checks
+> Same single lm_head GEMM (zero extra layer calls):
+> Group A fi nishes P3–P4; on "=": y* ="5" ≠ŷ="6" (Δz = 2.4)
+> If Δz > τ (always at τ = 0, greedy-exact):
+> Truncate tentative tail ["6", ".", " The"] → commit "5"
+> veri fi ed (< u+1): "2 +3=" + anchor "5" & resume
+> If Δz ≤ τ (always at τ = ∞, non-rollback lossy):
+> Keep tentative tokens without rollback for peak speed
+> Permanently veri fi ed T-pass pre fi xTentatively accepted K-pass frontier (in wake) • On >98% of tokens y* =ŷ: Wake advances pre fi x with zero rollback
+
+Figure 6. Worked 3-step walkthrough of Wake verification and rollback (𝑇 = 4, 𝐾 = 2). Step 1: over permanently verified prefix "2 + 3" (< 𝑢 ), passes 3 and 4 tentatively accept Group A = ["=" , "6" ] at [𝑢, 𝑣 ), slipping on position 𝑢 = "=" ( ˆ 𝑦 𝑢 = "6" instead of "5" ). Step 2: the frontier tentatively emits ["." , " The" ] while Group A computes exact passes 1 and 2 inside the same forward calls. Step 3: Group A finishes passes 3 and 4 and projects inside the same single lm_head GEMM ; detecting 𝑦 ∗
+
+𝑢 = "5" ≠ "6" (Δ𝑧 = 2.4), 𝜏 = 0 truncates the tentative tail beyond 
+
+𝑢 , retains exact KV states on "2 + 3 =" (≤ 𝑢 ), commits "5" at 𝑢 + 1, and resumes. 
+
+3.4 Wake Verification: Unifying Exact and Lossy Late Entry 
+
+Look closely at what pipelined cache completion in Section 3.3 already computes. At any step, generation partitions into a permanently verified 𝑇 -pass prefix (< 𝑢 , holding exact 1 → 𝑇 KV states) followed by at most 𝐿 = ⌈𝑇 /𝐾 ⌉ in-flight groups along the tentatively accepted frontier . Whenever the oldest tentative group [𝑢, 𝑣 ) (𝑣 − 𝑢 ≤ 1 + 𝐵 ) finishes pass 𝑇 at the back of the wake, every earlier position < 𝑢 
+
+already holds its exact 1 → 𝑇 KV cache and positions 𝑖 ∈ [ 𝑢, 𝑣 ) have just executed exact causal passes 1 → 𝑇 . Hence the finished wake hidden states ˜ℎ(1...𝑇 )
+
+𝑖 (or Coda states Fcoda (Norm (𝑠 (𝑇 )
+
+𝑖 )) on Huginn) are 
+
+mathematically identical to sequential 𝑇 -pass forward states. Whereas basic lossy late entry discards those states after writing KV caches, Wake verification projects them through 𝑊 out inside the exact same single output GEMM as the (1 + 𝐵 )2 active block rows (90 to 99 rows vs. 81 at 𝐵 = 8, adding zero Transformer layer calls, zero extra kernel launches, and zero extra CUDA graphs ). Figure 6 walks through a concrete rollback at 𝑇 = 4, 𝐾 = 2. Suppose prefix "2 + 3" (< 𝑢 ) is permanently verified. In Step 1 , critical-path passes 3 and 4 tentatively accept Group A = ["=" , "6" ] at positions [𝑢, 𝑢 + 2),where querying from 𝑢 = "=" without passes 1 and 2 slipped and guessed ˆ 𝑦 𝑢 = "6" . In Step 2 , the frontier advances at full speed with ["." , " The" ] while Group A piggybacks on the same calls to compute exact passes 1 and 2. In Step 3 , Group A finishes passes 3 and 4 (writing exact 1 → 4 KV states on "=" ) and projects inside the shared lm_head GEMM, revealing exact 𝑦 ∗
+
+𝑢 = "5" ≠ ˆ𝑦 𝑢 = "6" with logit gap Δ𝑧 = 2.4. On 
+
+> 98% of positions where 𝑦 ∗
+
+𝑖 = ˆ𝑦 𝑖 , Group A simply joins the permanently verified prefix with zero rollback; when a mismatch exceeds tolerance 𝜏 , Wake truncates the tentative tail beyond 𝑢 and commits exact token 
+
+"5" at 𝑢 + 1. Formally, let 𝑧 (𝑖 )
+
+1: 𝑇 ∈ R| V | denote the exact 𝑇 -pass logit vector at wake position 𝑖 ∈ [𝑢, 𝑣 ), let 𝑦 ∗
+
+𝑖 =
+
+arg max 𝑦 𝑧 (𝑖 )
+
+1: 𝑇 (𝑦 ) be the true 𝑇 -pass greedy next token, and let ˆ 𝑦 𝑖 = 𝑥 𝑖 +1 be the token tentatively ac-cepted on the 𝐾 -pass path. Parameterized by logit-margin tolerance 𝜏 ≥ 0, Wake verification triggers a rollback at the earliest index 𝑖 ∗ ∈ [ 𝑢, 𝑣 ) satisfying 
+
+𝑦 ∗
+
+𝑖 ∗ ≠ ˆ𝑦 𝑖 ∗ and 𝑧 (𝑖 ∗ )
+
+1: 𝑇 
+
+ 𝑦 ∗
+
+𝑖 ∗
+
+ − 𝑧 (𝑖 ∗ )
+
+1: 𝑇 ( ˆ𝑦 𝑖 ∗ ) > 𝜏 . (2) When Equation (2) fires, the decoder truncates the tentative frontier beyond 𝑖 ∗, commits exact 𝑇 -pass token 
+
+𝑦 ∗
+
+𝑖 ∗ at position 𝑖 ∗ + 1 (retaining all exact KV caches ≤ 𝑖 ∗ already written by the wake), resets the wake queue to 𝑖 ∗ + 1, and resumes tentative 𝐾 -pass decoding from anchor 𝑦 ∗
+
+𝑖 ∗ . When the tentative frontier emits <eos> 
+
+or hits the token limit while wake groups remain in flight, the decoder runs ≤ 𝐿 wake-drain steps before halting so premature stop tokens are verified as well. 
+
+10 Late Entry in Looped Language Models Preprint 
+
+Proposition 1: Exactness and Termination of 𝜏 = 0 Wake Verification 
+
+In exact arithmetic, Wake verification at 𝜏 = 0 with EOS wake drain produces bit-for-bit identical token sequences to sequential 𝑇 -pass greedy decoding for any 1 ≤ 𝐾 ≤ 𝑇 and 𝐵 ≥ 0, and terminates in at most 𝑁 max + 𝐿 verified steps: 1. Inductive prefix exactness: By induction on completed wake groups, every position < 𝑢 equals the sequential 𝑇 -pass greedy prefix and holds exact 1 → 𝑇 KV states. Causal masking within [𝑢, 𝑣 )
+
+ensures 𝑦 ∗ 
+
+> 𝑢
+
+is exact; if ˆ 𝑦 𝑖 = 𝑦 ∗ 
+
+> 𝑖
+
+for all 𝑖 < 𝑚 , then 𝑦 ∗ 
+
+> 𝑚
+
+is likewise exact. Hence either the entire group 
+
+[𝑢, 𝑣 ) matches sequential 𝑇 -pass decoding, or rollback fires at the exact first mismatch 𝑖 ∗ ∈ [ 𝑢, 𝑣 )
+
+and replaces ˆ 𝑦 𝑖 ∗ with the exact token 𝑦 ∗ 
+
+> 𝑖 ∗
+
+.2. Strict progress: Every rollback advances the permanently verified 𝑇 -pass prefix from 𝑢 to 𝑖 ∗ + 1 ≥
+
+𝑢 + 1 > 𝑢 , ruling out livelock, while wake drain verifies the final ≤ 𝐿 groups before termination (verified across 258 /258 adversarial fp64 tests spanning divisible and non-divisible 𝑇 /𝐾 and premature-<eos> sequences). Varying 𝜏 along a single continuous knob unifies three regimes inside one engine: (i) 𝜏 = 0 (Exact Wake) 
+
+guarantees 𝑇 -pass greedy equivalence in exact arithmetic (and matches 𝐾 = 𝑇 block decoding within bf16 
+
+kernel reduction order at 0 .007% to 0 .09% token discrepancy, below the 0 .25% to 0 .33% sequential bf16 
+
+floor; Appendix E) while running the critical path at 𝐾 < 𝑇 serial passes whenever tentative guesses agree (> 98% of positions; Section 2.2); (ii) 0 < 𝜏 < ∞ (Margin-Gated Wake) ignores benign near-tie bf16 
+
+or phrasing flips ( Δ𝑧 ≤ 𝜏 ) while rolling back confident reasoning deviations ( Δ𝑧 > 𝜏 ); and (iii) 𝜏 = ∞
+
+recovers non-rollback lossy late entry. Finally, because Wake verification and late entry modify only which passes verify a block, they factorize cleanly from how candidate tokens are drafted : pairing the identical verifier with a second parameter-free 4 /3/2-gram context suffix drafter (Fu et al., 2024; Leviathan et al., 2023) alongside trained mask-placeholder proposals directly tests whether the throughput multiplier from 
+
+𝐾 < 𝑇 holds across distinct acceptance regimes at zero extra batch rows or model parameters. 
+
+## 4 Experiments 
+
+We organize our evaluation around four progressive questions: 1. Pure pass-placement gain without rollback ( 𝜏 = ∞, Sections 4.1 to 4.4): Before activating Wake rollbacks, how much speedup and accuracy does non-rollback late entry achieve on its own across six benchmarks (21 ,403 items) on Ouro-2.6B ( 𝑇 = 4), against matched trained early exit and full-depth (𝑇 = 4) speculative decoders, and on 32-pass middle-recurrent Huginn-3.5B ( 𝑇 = 32)? 2. Recovering greedy-exact fidelity ( 𝜏 ∈ [ 0, ∞] , Section 4.5): When Wake verification reuses finished 1 → 𝑇 wake states inside the same output GEMM, how fast are greedy-exact ( 𝜏 = 0) and margin-gated (𝜏 > 0) decoding across models and candidate drafters? 3. Scaling with recurrence depth ( 𝑇 ∈ { 8, 16 , 32 , 64 }, Section 4.6): Holding Huginn-3.5B weights fixed, how do Wake rollback rates and speedups scale as test-time loop depth grows from 36 to 260 effective layers? 4. Hardware Roofline and multi-request serving ( 𝐶 ∈ [ 1, 32 ], Section 4.7): Why do wake rows stay nearly free at batch 1, and how does throughput scale as concurrent load saturates GPU compute? Unless noted in Section 4.7, all runs use standard single-sequence inference (batch size 1, greedy decoding,  
+
+> bf16
+
+precision, single NVIDIA H100 80GB GPU) across the full test sets of six benchmarks totaling 21 ,403 
+
+> 11
+
+Late Entry in Looped Language Models Preprint GSM8K  speedup vs. full depth                      
+
+> .82
+> .84
+> .86
+> .88
+> 0100 200 300 400 500
+> 1× 3× 5× 7×
+> decode tokens / s
+> accuracy
+> K=4
+> K=3
+> K=2
+> K=4
+> K=3
+> K=2
+> to K=1 (539–544 tok/s, .63) ↘
+> full depth
+> LoopSpec
+> IFEval speedup vs. full depth
+> .68
+> .70
+> .72
+> .74
+> 0100 200 300
+> 1× 2× 3× 4×
+> decode tokens / s
+> accuracy
+> K=4
+> K=3
+> K=2
+> K=4
+> K=3
+> K=2
+> to K=1 (385 tok/s, .63–.65) ↘
+> full depth
+> full-depth decoding late entry, B = 8 late entry, B = 4 LoopSpec (lossless ref.) K = 4 / full-depth band
+
+Figure 7. Accuracy-throughput frontier of late-entry decoding on Ouro-2.6B across the full GSM8K ( 𝑛 = 1,319) and IFEval ( 𝑛 = 541) test sets for pass budgets 𝐾 ∈ { 2, 3, 4} and block sizes 𝐵 ∈ { 4, 8} (𝐾 = 1 appears in Figure 8 and Appendix D). LoopSpec marks its fastest released lossless ( 𝑇 = 4) reference point on GSM8K. 
+
+examples: GSM8K (1 ,319 math word problems; Cobbe et al., 2021), IFEval (541 strict instruction-following prompts; Zhou et al., 2023), MATH500 (500 competition math problems; Hendrycks et al., 2021; Lightman et al., 2024), MBPP (500 Python synthesis tasks; Austin et al., 2021), BBH (6 ,511 multi-step reasoning problems; Suzgun et al., 2023), and MMLU-Pro (12 ,032 ten-choice questions; Wang et al., 2024), scored via 
+
+lm-evaluation-harness (Gao et al., 2023) with gold-verified MATH500 and MBPP extractors (Appendix G). Accuracy differences use two-sided paired sign tests. In every single-engine table (Tables 3, 6, 7, and 8), speedups and accuracy gaps are paired against full-depth sequential decoding measured inside the same job on the same GPU (minor sequential reference differences such as .873 at 63 .4 tokens/s in Table 3 vs. .868 at 62 .3 tokens/s in Table 7 reflect 6 /1,319 bf16 reduction-order ties across engine harnesses; Appendix E); in the cross-engine comparison of Table 5, all methods are normalized by the fastest sequential engine across the three codebases (62 .4 to 67 .2 tokens/s; Appendix G) so no external baseline is penalized by harness overhead. 
+
+4.1 Accuracy and Throughput Across Six Benchmarks 
+
+Our total speedup combines two distinct mechanisms: lossless parallel block decoding reduces the number of sequential decoding steps while still executing all 𝑇 = 4 passes per step (captured by our 𝐾 = 4 block baseline), whereas lossy late entry further cuts the number of serial recurrent passes per step ( 𝐾 = 3 and 
+
+𝐾 = 2) at a controlled accuracy trade-off. Figure 7 plots the accuracy-throughput frontiers on GSM8K and IFEval across 𝐾 ∈ { 2, 3, 4} and block sizes 𝐵 ∈ { 4, 8} (full grid in Appendix D). In Figure 7, the 𝐾 = 4 points serve as our lossless full-depth block reference (minor accuracy differences from sequential decoding arise from bf16 reduction order; Appendix E), and LoopSpec marks an external lossless speculative reference point on GSM8K ahead of our six-benchmark boundary analysis in Section 4.3. Table 3 reports both total speedups over sequential decoding and incremental throughput gains over 𝐾 = 4 block decoding at 𝐵 = 8. At 𝐾 = 4, every candidate block executes all four passes starting from pass 1 without skipping. Block decoding alone already accelerates generation by 2 .16 × on IFEval and up to 4 .05 × and 4 .06 × on GSM8K and MATH500, with zero statistically significant accuracy shift on any task (0 .01% token discrepancy vs. a 0.27% bf16 floor on GSM8K; Appendix E). 
+
+12 Late Entry in Looped Language Models Preprint                                                                                                   
+
+> Table 3. Full-dataset accuracy and throughput on Ouro-2.6B ( 𝑇 =4) across six benchmarks at block size
+> 𝐵 =8 (21 ,403 total items, single H100 GPU). “Full depth” is sequential 𝑇 =4 accuracy. “Gap” is accuracy minus full-depth sequential accuracy in percentage points ( †marks paired sign-test 𝑝 <.05). “Speedup” divides decode tokens/s by same-job full-depth sequential tokens/s, while (+X%) isolates the incremental throughput from late entry
+> over 𝐾 =4 block decoding. Full depth 𝐾 =4 (full) 𝐾 =3 (late entry) 𝐾 =2 (late entry) Benchmark 𝑛 Acc. Gap Speedup Gap Speedup (vs. 𝐾 =4) Gap Speedup (vs. 𝐾 =4) GSM8K 1,319 .873 −0.6 4.05 ×−2.2 †5.09 ×(+26%) −3.4 †6.73 ×(+66%)
+> IFEval 541 .732 +0.7 2.16 ×+0.2 2.82 ×(+31%) −3.3 †3.78 ×(+75%)
+> MATH500 500 .532 −0.6 4.06 ×+0.4 4.99 ×(+23%) −4.0 †6.49 ×(+60%)
+> MBPP 500 .616 +1.0 3.65 ×+0.2 4.48 ×(+23%) −1.4 5.80 ×(+59%)
+> BBH 6,511 .577 0.0 3.30 ×−1.3 †4.30 ×(+30%) −2.8 †6.16 ×(+87%)
+> MMLU-Pro 12,032 .504 +0.1 3.49 ×−0.3 4.45 ×(+28%) −1.6 †5.91 ×(+69%)
+
+Reducing the critical path to 𝐾 = 3 isolates the incremental contribution of late entry on top of this block decoder. Skipping pass 1 boosts throughput by an additional 23% to 31% across all six benchmarks (reaching 
+
+2.82 to 5.09 × total speedup, or 322 .5 tokens/s vs. 63 .4 tokens/s on GSM8K), while accuracy changes by at most 0 .4 points on four of the six tasks (IFEval, MATH500, MBPP, and MMLU-Pro) and trades 1 .3 points on BBH and 2 .2 points on GSM8K. Skipping half the passes at 𝐾 = 2 raises block throughput by 59% to 87% over 𝐾 = 4 ( 3.78 to 6.73 × total speedup; 426 .7 tokens/s on GSM8K) with bounded accuracy drops of 1 .4 to 4 .0 points. Dropping further to 𝐾 = 1, however, triggers a steep accuracy decline ( .629 at 544 .0 tokens/s on GSM8K) because a single pass both drafts and verifies its own proposals without cross-pass refinement. Thus, 𝐾 = 3 (near-full-depth quality) and 𝐾 = 2 (high throughput) define the practical operating regime of late-entry decoding. 
+
+4.2 Controlled Comparison Against Early Exit 
+
+Does the late-entry advantage from Section 2 carry over to end-to-end block decoding through the identical 
+
+𝐵 = 8 engine? We test this at two levels: first on identical model weights to isolate execution strategy alone, and second across matched fine-tuned checkpoints to evaluate each paradigm with dedicated Stage-2 adaptation. On identical weights, we take our adapted Ouro-2.6B checkpoint and compare running its first 𝐾 passes (early-exit truncation) against running its last 𝐾 passes with pipelined cache completion (late entry). At 
+
+𝐾 = 2, truncating this checkpoint gives the highest early-exit accuracy we measure on any model ( .747 at 412 tokens/s on GSM8K and .597 on IFEval). Even on these exact same weights, late entry at 𝐾 = 2outperforms early-exit truncation by +9.2 points on GSM8K ( .839 vs. .747) and +10.2 points on IFEval (.699 vs. .597), and leads by +1.7 and +3.3 points at 𝐾 = 3. Next, Table 4 and Figure 8 compare our late-entry checkpoint against the matched trained early-exit checkpoint across 𝐾 ∈ { 1, 2, 3, 4}. Notice first at 𝐾 = 4 that forcing shallow passes to emit final predictions during Stage 2 lowers the early-exit model’s full-depth ceiling on GSM8K ( .822 vs. .867). Even relative to each checkpoint’s own 𝐾 = 4 ceiling, dropping from 𝐾 = 4 to 𝐾 = 2 costs late entry only 2 .8 points on GSM8K (4 .0 on IFEval) compared with 15 .2 points for trained early exit (13 .5 on IFEval; additional adaptive-exit controls in Appendix G). Across all eight cells, trained late entry dominates the overlapping speed range, leading by +16.9 accuracy points at matched speed around 430 tokens/s on GSM8K ( .839 vs. 
+
+.669 at 𝐾 = 2) and by +4.3 points around 180 tokens/s on IFEval ( .734 vs. .691 at 𝐾 = 3). 
+
+> 13
+
+Late Entry in Looped Language Models Preprint 
+
+Table 4. End-to-end comparison of trained early exit and late entry on Ouro-2.6B under matched Stage-2 fine-tuning, decoded through the identical 𝐵 = 8 block engine on full test sets ( † marks paired sign-test 𝑝 < .05; gaps computed prior to rounding). At 𝐾 < 4, early exit runs passes 1 , . . . , 𝐾 over a depth-𝐾 cache, whereas late entry runs passes 𝑇 − 𝐾 + 1, . . . ,𝑇 with pipelined full-depth cache completion. 
+
+Early exit, trained Late entry, trained 
+
+Passes / token Acc. tok/s Acc. tok/s Gap (pts) Sign-test 𝑝 
+
+GSM8K (1,319 test problems) 
+
+𝐾 = 1 ( vs. ) .330 657 .629 544 +29.9 † 4.4 × 10 −77 
+
+𝐾 = 2 ( vs. ) .669 431 .839 427 +16.9 † 2.7 × 10 −35 
+
+𝐾 = 3 ( vs. ) .785 314 .851 323 +6.5 † 8.3 × 10 −8
+
+𝐾 = 4 (full depth) .822 246 .867 257 +4.5 † 2.2 × 10 −5
+
+IFEval (541 test prompts) 
+
+𝐾 = 1 ( vs. ) .442 561 .645 386 +20.3 † 5.3 × 10 −16 
+
+𝐾 = 2 ( vs. ) .586 286 .699 239 +11.3 † 2.9 × 10 −7
+
+𝐾 = 3 ( vs. ) .691 183 .734 178 +4.3 † .023 
+
+𝐾 = 4 (full depth) .721 138 .739 137 +1.8 .34 GSM8K            
+
+> .30
+> .45
+> .60
+> .75
+> .90
+> 0200 400 600
+> decode tokens / s
+> accuracy
+> K=4
+> K=3
+> K=2
+> K=1
+> K=4 K=3 K=2
+> K=1
+> +16.9
+> full depth
+> IFEval
+> .40
+> .50
+> .60
+> .70
+> .80
+> 0200 400 600
+> decode tokens / s
+> accuracy
+> K=4
+> K=3
+> K=2
+> K=1
+> K=4 K=3
+> K=2
+> K=1
+> +1.8
+> +4.3
+> full depth
+> full-depth decoding late entry, trained early exit, trained
+
+Figure 8. Accuracy versus decode throughput for trained late entry and trained early exit on Ouro-2.6B at 
+
+𝐵 = 8 (plotting Table 4). Vertical calipers mark matched-throughput operating points ( +16.9 points at ∼430 tokens/s on GSM8K; +4.3 and +1.8 points on IFEval). 
+
+4.3 Comparison with Full-Depth ( 𝑇 = 4) Speculative Decoders 
+
+To situate non-rollback late entry ( 𝐾 < 𝑇 , 𝜏 = ∞) relative to methods that verify every token through all 
+
+𝑇 = 4 passes, we evaluate two speculative decoders tailored to looped language models across the full test sets of all six benchmarks (21 ,403 examples in total): LoopSpec (official implementation, fastest released configuration; Cho et al., 2026) and LoopAhead (best of three reproduced training arms; Liu et al., 2026c). Because LoopSpec, LoopAhead, and our 𝐾 = 4 block baseline verify every drafted token through all 𝑇 = 4passes, they map out the throughput reachable under full-depth critical-path verification. On each task, every method’s decode tokens/s is normalized by the fastest measured full-depth sequential decoder across all three engines (62 .4 to 67 .2 tokens/s; protocol details in Appendix G). Table 5 separates full-depth verification from critical-path pass reduction. Within full-depth 𝑇 = 4
+
+verification , LoopSpec (2 .34 to 2 .86 ×), LoopAhead (2 .44 to 3 .25 ×), and our 𝐾 = 4 block baseline (2 .12 to 
+
+14 Late Entry in Looped Language Models Preprint 
+
+Table 5. Full-depth ( 𝑇 = 4) speculative decoders versus non-rollback ( 𝜏 = ∞) late entry on Ouro-2.6B across all six benchmarks (21 ,403 total items, single H100 GPU). Speedups divide each method’s decode tokens/s by the fastest measured full-depth sequential decoder on that benchmark. LoopSpec, LoopAhead, and our 𝐾 = 4 block baseline run full-depth 𝑇 = 4 verification; 𝐾 = 3 and 𝐾 = 2 ( 𝜏 = ∞) trade bounded accuracy shifts (small numbers report full-set accuracy, with full-depth sequential accuracy beside each denominator) for higher throughput, while Section 4.5 activates 𝜏 = 0 Wake to surpass 𝐾 = 4 with greedy-exact fidelity. 
+
+Lossless 𝑇 = 4 verification Lossy late entry (ours) 
+
+Benchmark Full depth (tok/s) LoopSpec LoopAhead Ours 𝐾 = 4 𝐾 = 3 𝐾 = 2GSM8K 67.2 (.873) 2.84 × 2.94 × 3.82 × .867 4.80 × .851 6.35 × .839 
+
+IFEval 64.7 (.732) 2.34 × 2.67 × 2.12 × .739 2.75 × .734 3.68 × .699 
+
+MATH500 62.7 (.532) 2.85 × 2.59 × 4.11 × .526 5.07 × .536 6.63 × .492 
+
+MBPP 65.1 (.616) 2.86 × 2.90 × 3.64 × .626 4.51 × .618 5.95 × .602 
+
+BBH 65.2 (.577) 2.62 × 3.25 × 3.29 × .577 4.35 × .564 6.33 × .549 
+
+MMLU-Pro 62.4 (.504) 2.75 × 2.44 × 3.56 × .504 4.56 × .501 6.12 × .488 
+
+4.11 ×) map out the speed range reachable when every step executes all four passes (with 𝐾 = 4 leading on five tasks and trailing on IFEval). Reducing critical-path verification to 𝐾 < 4 under non-rollback late entry (𝜏 = ∞) reaches 2.75 to 5.07 × at 𝐾 = 3 ( ≤ 0.4-point accuracy change on four tasks; 1 .3 and 2 .2 points on BBH and GSM8K) and 3.68 to 6.63 × at 𝐾 = 2 (1 .4 to 4 .0-point trade-offs). Moreover, full-𝑇 critical-path verification is not the ceiling of greedy-exact decoding: as Section 4.5 demonstrates next, activating Exact Wake ( 𝜏 = 0) at 𝐾 = 2 also surpasses 𝐾 = 4 block throughput (reaching 5 .20 × on GSM8K and 5 .23 × on MATH500) while preserving greedy-exact 𝑇 -pass predictions. 
+
+4.4 Scaling to Deep Middle-Recurrence: Huginn-3.5B ( 𝑇 = 32 )
+
+To test whether late entry generalizes beyond shallow four-pass recurrence and Ouro’s stick-breaking readout, we evaluate Huginn-3.5B (huginn-0125 ; Geiping et al., 2025), a middle-recurrent architecture comprising a 2-layer non-recurrent Prelude , a 4-layer Core block iterated 𝑇 = 32 times via a learned input-injection adapter, and a 2-layer Coda (132 effective Transformer layers per token, with only 8 unique parameter layers). Under late entry at budget 𝐾 < 32, each candidate block executes the 2-layer Prelude once, skips the initial 32 −𝐾 Core passes to enter directly at pass 32 −𝐾 +1 from Huginn’s standard initialized latent state ( 𝑠 (32 −𝐾 ) 
+
+> 𝑖
+
+= 𝑠 (0) 
+
+> 𝑖
+
+, drawn from a fixed-seed truncated Gaussian) over a 32-pass context cache, and exits through the 2-layer Coda; previously committed tokens complete true Core passes 1 → 32 and Coda across ⌈32 /𝐾 ⌉ subsequent steps without recomputing Prelude KV states (Appendix H, Equation (5)). Following our Ouro protocol, we run one epoch of full-depth Stage-1 SFT on Dolci-Instruct-SFT followed by matched 7 ,406-step Stage-2 block fine-tuning ( 𝐾 ∈ { 2, 4, 6, 8, 12 , 16 , 24 }) for both late entry and a dedicated early-exit control, and benchmark all sequential, late-entry, synchronous, and early-exit decoders inside a unified CUDA-graphed paged FlashAttention-3 engine so wall-clock comparisons are free of dispatch overhead (Appendix H). We evaluate the four benchmarks in our suite on which the 8-layer huginn-0125 
+
+base model exhibits non-trivial capability (GSM8K, IFEval, BBH, and MBPP; 8 ,871 test items), omitting ten-choice MMLU-Pro and competition-level MATH500 where the base model lacks task capability and scores near chance. Notably, because Prelude already maps raw embeddings into normalized contextual anchors 𝑢 𝑖 and re-injects 𝑢 𝑖 at every Core step, Huginn provides a natural architectural validation of Section 2.1’s norm-mismatch diagnosis: even on the early-exit-trained checkpoint (which never saw late entry in Stage 2), 𝐾 = 8 late entry beats that checkpoint’s own trained 𝐾 = 8 early exit on GSM8K ( .327 vs. 
+
+15 Late Entry in Looped Language Models Preprint (a) Teacher-Forced Probe  Huginn-3.5B (T = 32)                     
+
+> .70
+> .78
+> .86
+> .94
+> 1.00
+> 24812 16 24 32
+> 4 late (.954) > 8 early (.944)
+> serial core passes K per token
+> agreement with full depth
+> .710
+> .841
+> .894
+> .954
+> .986
+> +18.4 pts
+> +11.4 pts
+> (b) GSM8K (B = 8)
+> .26
+> .30
+> .34
+> .38
+> .42
+> 050 100 150 200
+> speedup vs. full depth
+> 1× 3× 5× 7× 9× 11×
+> decode tokens / s
+> accuracy (n = 1,319)
+> K=32
+> K=16
+> K=12
+> K=8
+> K=32 K=16 (5.8×)
+> K=12 (7.3×)
+> K=8 (9.1×)
+> +9.7 pts at ~220 tok/s
+> full depth 2-stg (9.9×)
+> full depth (T = 32) late entry, trained ( fi nal K) 2-stage partial cache (K = 8) early exit, trained (initial K)
+
+Figure 9. Generalization to 32-pass middle-recurrent Huginn-3.5B (𝑇 = 32, matched 7 ,406-step Stage-2 checkpoints). (a) Teacher-forced probe: across all pass budgets 𝐾 < 32 on GSM8K, late entry over a 32-pass context outperforms trained early exit, with 4 late passes ( .954 ) exceeding 8 trained early-exit passes ( .944 ). (b) End-to-end GSM8K accuracy-throughput frontier ( 𝐵 = 8, 𝑛 = 1,319 ): inside our unified CUDA-graphed paged FlashAttention-3 engine, late entry outperforms trained early exit over a broad range of practical operating points, reaching 5.84 ×
+
+(126 .8 tokens/s, .405 ) at 𝐾 = 16, 7.27 × (157 .8 tokens/s, .395 ) at 𝐾 = 12, 9.13 × (198 .1 tokens/s, .354 ) at four-stage 
+
+𝐾 = 8, and 9.93 × (215 .5 tokens/s, .369 ) under a two-stage partial-cache 𝐾 = 8 variant ( +9.7 points over trained early exit at ∼ 220 tokens/s). 
+
+Table 6. Full-dataset accuracy and throughput on Huginn-3.5B ( 𝑇 = 32 ) across all four capability-active benchmarks at block size 𝐵 = 8 (8 ,871 total items, single H100 GPU, unified CUDA-graphed paged FlashAttention-3 engine; definitions match Table 3). Full depth ( 𝑇 =32) 𝐾 = 32 (full block) 𝐾 = 16 (late entry) 𝐾 = 8 (late entry) Benchmark 𝑛 Acc. tok/s Gap Speedup Gap Speedup (vs. 𝐾 =32) Gap Speedup (vs. 𝐾 =32) GSM8K 1,319 .393 21.7 +0.4 3.37 × +1.1 5.84 × (+74%) −3.9 † 9.13 × (+171%) 
+
+IFEval 541 .551 21.6 0.0 2.93 × +1.5 5.24 × (+79%) −0.9 8.96 × (+206%) 
+
+BBH 6,511 .283 22.6 +0.2 3.79 × +0.3 6.65 × (+75%) −1.0 † 10.86 × (+186%) 
+
+MBPP 500 .234 22.4 +0.2 4.46 × −0.2 7.76 × (+74%) −0.6 12.41 × (+178%) 
+
+.271, 𝑝 = 2.2 × 10 −6), before dedicated late-entry training aligns Core to 𝑠 (32 −𝐾 ) 
+
+> 𝑖
+
+= 𝑠 (0) 
+
+> 𝑖
+
+and lifts accuracy to 
+
+.354 .Figure 9 and Table 6 confirm that all three properties observed at 𝑇 = 4 strengthen at 𝑇 = 32. First, under teacher forcing (Figure 9a), just 𝐾 = 4 final Core passes (1 /8 of the recurrence) reach .954 agreement with full 32-pass predictions, surpassing 8 trained early-exit passes ( .944 ), while single-token 𝐾 = 8 late entry matches 32-pass GSM8K accuracy with zero degradation ( .396 vs. .396, +13 .3 points over 8-pass truncation; Appendix H, Table 15). Second, whereas at 𝑇 = 4 parallel block verification supplies the larger share of total speedup, scaling to 𝑇 = 32 (21 .6 to 22 .6 tokens/s sequential) inverts this balance so late entry drives the majority of wall-clock gain (Table 6): halving Core depth to 𝐾 = 16 adds +74% to +79% over 𝐾 = 32 block decoding ( 5.24 to 7.76 × total) with zero statistically significant accuracy drop on any task ( 𝐾 = 12 reaches 6 .44 to 9 .75 × within 0 .6 points; Appendix H), and cutting to 𝐾 = 8 adds +171% to +206% (8.96 to 12.41 × total, up to 278 .3 tokens/s on MBPP) with no significant drop on IFEval or MBPP. 
+
+16 Late Entry in Looped Language Models Preprint (a) Ouro-2.6B (T = 4): Wake spectrum                       
+
+> speedup vs. sequential
+> 3× 4× 5× 6× 7× 8×
+> .83
+> .85
+> .87
+> .89
+> 200 300 400 500
+> ← K = T block wall
+> K=4 K=4
+> K=4+Suf K=4+Suf K=3 τ=0 K=3 τ=0
+> K=3 lossy K=3 lossy
+> K=2 τ=0 K=2 τ=0
+> τ=.15 τ=.15
+> τ=.30 τ=.30
+> K=2 lossy K=2 lossy
+> K=2+Suf K=2+Suf
+> decode throughput (tokens/s, single H100)
+> GSM8K accuracy (n = 1,319)
+> (b) Huginn-3.5B (T = 32): Wake spectrum
+> speedup vs. sequential
+> 3× 5× 7× 9× 11×
+> .35
+> .37
+> .39
+> .41
+> 75 125 175 225
+> ← K = T block wall
+> K=32 K=32
+> +Suf +Suf K=16 τ=0 K=16 τ=0 K=16 K=16
+> K=8 τ=0 K=8 τ=0
+> K=8 τ=.25 K=8 τ=.25
+> K=8 lossy K=8 lossy
+> K=8+Suf K=8+Suf
+> decode throughput (tokens/s, single H100)
+> GSM8K accuracy (n = 1,319)
+> K = T block Exact Wake (τ = 0, greedy-exact) Margin Wake (τ > 0) Lossy Late (τ = ∞) + Su ffi x Draft
+
+Figure 10. Unified Wake verification spectrum ( 𝜏 ∈ [ 0, ∞] ) and drafter factorization on GSM8K ( 𝑛 =
+
+1,319 , 𝐵 = 8). (a) Ouro-2.6B ( 𝑇 = 4): 𝜏 = 0 Exact Wake at 𝐾 = 2 lifts throughput +26% beyond the 𝐾 = 4 block baseline (4 .13 × → 5.20 ×) with identical .867 accuracy and 0 .007% committed-token discrepancy, while margin gating (𝜏 ∈ [ 0.15 , 0.30 ]) reaches 5.52 to 5.77 × (+34% to +40% ) at .877 to .864 accuracy before connecting smoothly to 𝜏 = ∞
+
+(6 .82 ×). (b) Huginn-3.5B ( 𝑇 = 32 ): 𝜏 = 0 Exact Wake eliminates four-stage 𝐾 = 8 lag completely, reaching 5.21 ×
+
+(+56% ) at 𝐾 = 16, 6.09 × (+82% ) at 𝐾 = 8, and 7.15 × (+114% ) at 𝜏 = 0.25 with zero accuracy drop. 
+
+Across matched wall-clock speeds, late entry consistently dominates trained early exit (Figure 9b; full grid in Table 16): on GSM8K, 𝐾 = 12 late entry ( .395 at 157 .8 tokens/s) is both faster and more accurate than 16-pass early exit ( .372 at 140 .3 tokens/s), while 𝐾 = 8 leads 8-pass early exit by +8.3 points (𝑝 = 3.1 × 10 −10 ), and on IFEval late entry leads by +4.8 points around 225 tokens/s ( 𝑝 = .029). The sole non-rollback trade-off at 
+
+𝐾 = 8 on GSM8K ( −3.9 points) stems from four-stage pipeline lag leaving three recent blocks provisional: shrinking the lag via a two-stage partial-cache variant (17 → 32) recovers half the gap at 9.93 × (+9.7 points over 8-pass early exit; Table 17), while activating Exact Wake ( 𝜏 = 0) in Section 4.5 eliminates this lag completely .
+
+4.5 Unifying Lossless and Lossy Decoding via Wake Verification 
+
+Sections 4.1 to 4.4 established non-rollback late entry ( 𝜏 = ∞) as a high-speed lossy regime, leaving small accuracy trade-offs at aggressive compression ( −2.7 to −4.0 points at 𝐾 = 2 on Ouro math tasks, and −3.9points under four-stage lag at 𝐾 = 8 on Huginn GSM8K). We now evaluate Wake verification (Section 3.4), which projects the finished 1 → 𝑇 cache-completion wake states inside the same output GEMM to sweep 
+
+𝜏 ∈ [ 0, ∞] at zero extra layer calls. Figure 10 and Table 7 report full-dataset accuracy, decode throughput, rollback rates per 100 emitted tokens ( rb ), and teacher-forced fidelity audits across Ouro-2.6B ( 𝑇 = 4) and Huginn-3.5B ( 𝑇 = 32). Table 7 highlights three findings. First, at 𝜏 = 0, Wake verification accelerates decoding beyond the 𝐾 = 𝑇 
+
+block baseline while preserving greedy-exact 𝑇 -pass fidelity: on Ouro-2.6B, 𝐾 = 2 Exact Wake matches 
+
+𝐾 = 4 block accuracy to four decimal places across tasks (with committed-token audit discrepancies of 0.007% to 0 .09%, below the 0 .25% to 0 .33% sequential bf16 floor) while adding +22% to +28% incremental throughput over 𝐾 = 4 ( 5.20 × on GSM8K, outpacing even non-rollback lossy 𝐾 = 3 at 5 .18 ×, and 5.23 × on MATH500). On Huginn-3.5B ( 𝑇 = 32), because late-entry predictions already agree on > 98% of positions, rollbacks stay sparse (0 .25 to 2 .22 per 100 tokens), lifting 𝜏 = 0 greedy-exact speedups to 4.85 to 6.64 × (+49% to +66% over 𝐾 = 32 block) at 𝐾 = 16 ( 𝐾 = 12 reaches 5 .87 ×, +75%) and 6.09 to 7.69 × (+72% to +122% over 
+
+17 Late Entry in Looped Language Models Preprint 
+
+Table 7. Wake verification spectrum ( 𝜏 ∈ [ 0, ∞] ) across Ouro-2.6B ( 𝑇 = 4) and Huginn-3.5B ( 𝑇 = 32 ) at block size 𝐵 = 8 (full test sets, single H100 GPU). “rb” denotes Wake rollbacks per 100 emitted tokens; (+X%) 
+
+measures incremental throughput over same-job 𝐾 = 𝑇 full-depth block decoding ( † marks paired sign-test 𝑝 < .05 vs. sequential 𝑇 -pass decoding). Seq. 𝑇 𝐾 = 𝑇 Block Exact Wake ( 𝜏 = 0, greedy-exact) Margin Wake ( 𝜏 > 0) Lossy ( 𝜏 = ∞)Benchmark Budget Acc. (tok/s) Acc. Spd. Acc. rb Spd. (vs. 𝐾 =𝑇 ) Acc. (𝜏 ) rb Spd. (vs. 𝐾 =𝑇 ) Acc. / Spd.                                                                                                                                                                                                                
+
+> Ouro-2.6B ( 𝑇 =4passes; teacher-forced 𝜏 =0audit diff: 0.007% GSM8K, 0.09% MATH500, 0.025% MBPP)
+> GSM8K 𝐾 =3.868 (62.3) .867 4.13 ×.867 1.14 4.19 ×(+2%) .870 (.25) 0.29 4.55 ×(+10%) .853 / 5.18 ×
+> GSM8K 𝐾 =2.868 (62.3) .867 4.13 ×.867 2.02 5.20 ×(+26%) .877 (.15) 1.26 5.52 ×(+34%) .842 †/ 6.82 ×
+> MATH500 𝐾 =2.532 (62.7) .526 4.08 ×.526 2.11 5.23 ×(+28%) .548 (.30) 0.96 5.83 ×(+43%) .492 †/ 6.61 ×
+> IFEval 𝐾 =2.732 (63.8) .739 2.15 ×.739 5.98 2.66 ×(+24%) .719 (.15) 4.08 2.94 ×(+36%) .699 †/ 3.76 ×
+> MBPP 𝐾 =2.616 (63.4) .626 3.79 ×.626 2.00 4.61 ×(+22%) .618 (.30) 0.70 5.13 ×(+35%) .602 / 6.20 ×
+> Huginn-3.5B ( 𝑇 =32 Core passes; unified CUDA-graphed paged FlashAttention-3 engine)
+> GSM8K 𝐾 =16 .391 (21.9) .394 3.35 ×.396 0.48 5.21 ×(+56%) .404 (.25) 0.05 5.42 ×(+62%) .399 / 5.80 ×
+> GSM8K 𝐾 =8.391 (21.9) .394 3.35 ×.392 2.22 6.09 ×(+82%) .397 (.25) 0.88 7.15 ×(+114%) .353 †/ 9.13 ×
+> IFEval 𝐾 =16 .560 (21.5) .547 2.91 ×.547 0.37 4.85 ×(+66%) .560 (.25) 0.02 5.10 ×(+75%) .562 / 5.21 ×
+> IFEval 𝐾 =8.560 (21.5) .547 2.91 ×.556 2.03 6.46 ×(+122%) .543 (.25) 0.59 7.59 ×(+161%) .542 / 8.85 ×
+> MBPP 𝐾 =16 .234 (21.9) .236 4.47 ×.236 0.25 6.64 ×(+49%) .234 (.25) 0.03 6.79 ×(+52%) .232 / 7.80 ×
+> MBPP 𝐾 =8.234 (21.9) .236 4.47 ×.236 1.41 7.69 ×(+72%) .236 (.25) 0.56 8.93 ×(+100%) .228 / 12.50 ×
+
+𝐾 = 32 block) at 𝐾 = 8, completely eliminating four-stage 𝐾 = 8 GSM8K lag ( .353 → .392). Second, margin gating ( 𝜏 ∈ [ 0.15 , 0.30 ]) filters benign near-tie flips ( Δ𝑧 ≤ 𝜏 ), cutting rollbacks 2 × to 16 × and sustaining full accuracy at 5.52 to 5.83 × on Ouro GSM8K and MATH500 ( 5.77 × at 𝜏 = 0.30 and 6.02 × at 𝜏 = 0.60 on GSM8K, 𝑝 ≥ .30) and at 5.10 to 6.79 × (𝐾 = 16) and 7.15 to 8.93 × (𝐾 = 8) on Huginn. Third, testing our second parameter-free 4 /3/2-gram context-suffix drafter alongside trained mask placeholders confirms the drafter-verifier factorization analyzed in Section 4.7 (Figure 10, violet curves): although unconditional short-ngram override slightly lowers raw block acceptance on math and code relative to trained 48-layer placeholder lookahead (3 .93 vs. 5 .02 tokens/step on Ouro GSM8K; 4 .49 vs. 5 .34 on Huginn MBPP; while matching or slightly outpacing it on Ouro IFEval at 2 .68 × vs. 2 .66 ×), the multiplicative speedup gain from 
+
+𝐾 < 𝑇 Wake verification holds or strengthens across both drafters (1 .37 × at 𝜏 = 0 and 1 .48 × at 𝜏 = 0.25 vs. 1.26 × and 1 .40 × on Ouro GSM8K; 1 .89 × vs. 1 .72 × on Huginn MBPP; 2 .25 × vs. 2 .22 × on Huginn IFEval). 
+
+4.6 Intra-Model Recurrence Depth Scaling ( 𝑇 ∈ { 8, 16 , 32 , 64 })
+
+Comparing Ouro-2.6B ( 𝑇 = 4) and Huginn-3.5B ( 𝑇 = 32) leaves recurrence depth 𝑇 partially confounded with model family and readout architecture. Because Huginn’s recurrent Core shares weights across iterations and generalizes to arbitrary test-time loop counts (Geiping et al., 2025), we isolate 𝑇 directly by evaluating the exact same Huginn-3.5B checkpoint across four recurrence depths 𝑇 ∈ { 8, 16 , 32 , 64 }
+
+(36 , 68 , 132 , and 260 effective Transformer layers per token) on full GSM8K ( 𝑛 = 1,319) inside the identical CUDA-graphed engine. Figure 11 and Table 8 reveal a clean depth-scaling law. As test-time recurrence doubles from 𝑇 = 8 → 16 →
+
+32 → 64, sequential GSM8K accuracy rises monotonically ( .267 → .382 → .391 → .397) while sequential throughput halves at each step (78 .6 → 11 .1 tokens/s). Across all four depths, full-depth 𝐾 = 𝑇 block speedup saturates flatly between 2 .86 × and 3 .35 × because block acceptance (1 + E[𝑐 ] ≈ 3.9) is bounded by single-step predictability rather than 𝑇 . By contrast, late entry scales strongly with 𝑇 : consistent with progressive late-pass stabilization as recurrence deepens (Geiping et al., 2025), 𝜏 = 0 rollbacks per 100 emitted tokens fall 21.5 × across 𝑇 = 8 → 64 at both 𝐾 = 𝑇 /2 (5 .56 → 1.85 → 0.48 → 0.26) and 𝐾 = 𝑇 /4
+
+18 Late Entry in Looped Language Models Preprint (a) Speedup scales with recurrence depth T    
+
+> 0×
+> 2×
+> 4×
+> 6×
+> 8×
+> 10×
+> 12×
+> 8 (36L) 16 (68L) 32 (132L) 64 (260L)
+> K=T/4 (τ=∞) K=T/4 (τ=∞)
+> K=T/4 (τ=0) K=T/4 (τ=0)
+> K=T/2 (τ=∞) K=T/2 (τ=∞)
+> K=T/2 (τ=0) K=T/2 (τ=0)
+> K=T block K=T block
+> test-time recurrence depth T (Huginn-3.5B)
+> decode speedup vs. T-pass sequential
+
+(b) Wake rollbacks drop 21.5× as T deepens         
+
+> 0
+> 3
+> 6
+> 9
+> 12
+> 8 (36L) 16 (68L) 32 (132L) 64 (260L)
+> 12.5 12.5
+> 6.3 6.3
+> 2.2 2.2
+> 0.58 0.58
+> 5.6 5.6
+> 1.8 1.8
+> 0.48 0.48 0.26 0.26
+> K = T/4: 12.5 → 0.58 (21.5× drop) K = T/4: 12.5 → 0.58 (21.5× drop)
+> K = T/2: 5.6 → 0.26 (21.5× drop) K = T/2: 5.6 → 0.26 (21.5× drop)
+> test-time recurrence depth T (Huginn-3.5B)
+> τ = 0 rollbacks per 100 emitted tokens
+> Exact Wake (τ = 0, greedy-exact) Lossy Late Entry (τ = ∞) Full-depth block (K = T)
+
+Figure 11. Intra-model recurrence depth scaling on Huginn-3.5B across 𝑇 ∈ { 8, 16 , 32 , 64 } (36 → 260 effective Transformer layers/token, identical checkpoint and engine, full GSM8K 𝑛 = 1,319). (a) Decode speedup vs. 𝑇 : while full-depth 𝐾 = 𝑇 block speedup plateaus near 3 .3×, 𝜏 = 0 greedy-exact Wake scales from 1 .96 × (𝑇 = 8) to 8.42 ×
+
+(𝑇 = 64, +153% over 𝐾 = 64 block) and 𝜏 = ∞ late entry reaches 10.57 ×. (b) Wake rollback collapse: 𝜏 = 0 rollbacks per 100 emitted tokens fall 21.5 × across 𝑇 = 8 → 64 at both 𝐾 = 𝑇 /4 (12 .5 → 0.58) and 𝐾 = 𝑇 /2 (5 .6 → 0.26). 
+
+Table 8. Intra-model recurrence depth scaling on Huginn-3.5B across 𝑇 ∈ { 8, 16 , 32 , 64 } on full GSM8K 
+
+(𝑛 = 1,319 , 𝐵 = 8, identical checkpoint and engine). “rb” reports 𝜏 = 0 rollbacks per 100 tokens ( † marks paired sign-test 𝑝 < .05 vs. 𝑇 -pass sequential decoding at the same 𝑇 ). Seq. 𝑇 -Pass 𝐾 =𝑇 Half Depth ( 𝐾 = 𝑇 /2) Quarter Depth ( 𝐾 = 𝑇 /4)
+
+Depth 𝑇 (Eff. Layers) Acc. tok/s Spd. 𝜏 =0 Acc. / rb 𝜏 =0 Spd. 𝜏 =∞ Acc. / Spd. 𝜏 =0 Acc. rb 𝜏 =0 Spd. 𝜏 =∞ Acc. / Spd. 
+
+𝑇 = 8 (36 layers) .267 78.6 2.86 × .265 / 5.56 2.63 × .167 † / 3.78 × .262 12.46 1.96 × .030 † / 4.82 ×
+
+𝑇 = 16 (68 layers) .382 42.1 3.32 × .379 / 1.85 4.21 × .361 / 5.15 × .375 6.25 3.47 × .146 † / 6.56 ×
+
+𝑇 = 32 (132 layers) .391 21.9 3.35 × .396 / 0.48 5.21 × .399 / 5.80 × .392 2.22 6.09 × .353 † / 9.13 ×
+
+𝑇 = 64 (260 layers) .397 11.1 3.34 × .397 / 0.26 5.42 × .394 / 5.97 × .395 0.58 8.42 × .392 / 10.57 ×
+
+(12 .46 → 6.25 → 2.22 → 0.58; Figure 11b). At shallow 𝑇 = 8, 𝐾 = 𝑇 /4 = 2 Core passes is too shallow for unverified readout and 𝜏 = ∞ drops to .030; yet 𝜏 = 0 Wake catches every deviation and restores .262 accuracy 
+
+(+23.2 points ), throttling speed to 1 .96 × when rollback cost exceeds the 𝑇 /𝐾 − 1 threshold derived next in Section 4.7. Once 𝑇 ≥ 16, 𝜏 = 0 greedy-exact Wake surpasses the 𝐾 = 𝑇 ceiling and climbs to 5.42 × (𝐾 = 32) and 8.42 × (𝐾 = 16, +153% over 𝐾 = 64 block, with 𝜏 = 0.25 at 9.17 ×) at 𝑇 = 64, where even non-rollback 
+
+𝜏 = ∞ (𝐾 = 16) retains .392 accuracy ( 𝑝 = .45) at 10.57 × speedup. 
+
+4.7 When Does Late Entry Remain Fast? Roofline and Multi-Request Scaling 
+
+Finally, to explain from first principles why piggybacked wake rows stay nearly free at batch 1 and how throughput scales as concurrent serving load 𝐶 ∈ [ 1, 32 ] saturates GPU compute (full continuous-batching sweeps in Appendix I), we model single-pass GPU latency for 𝑀 active query rows across 𝐶 concurrent requests via an 𝐿 𝑝 Roofline law: 
+
+𝑡 pass (𝑀, 𝐶 ) =
+
+ 𝑡 0 + 𝛼 kv 𝐶 𝑝 +  𝛽 tc 𝑀 𝑝 1/𝑝 
+
+, Θ(𝐾, 𝐵, 𝐶, 𝜏 ) = 𝐶 · ¯𝑐 net (𝐾, 𝐵, 𝜏 )
+
+Í𝐾 𝑗 =1 𝑡 pass 
+
+ 𝑀 𝑗 (𝐾, 𝐵, 𝐶 ), 𝐶  , (3) 
+
+19 Late Entry in Looped Language Models Preprint (a) H100 single-pass roo fl ine & ridge point                 
+
+> 0
+> 5
+> 10
+> 15
+> 20
+> 25
+> 1416 64 256 1k 2k
+> C = 1 wake batch C = 1 wake batch
+> (81→99 rows ≪ M_ridge) (81→99 rows ≪ M_ridge)
+> M_ridge ≈ 348 rows M_ridge ≈ 348 rows
+> active query rows per pass M (log₂ scale)
+> latency per pass (ms, Ouro-2.6B)
+> (b) Zero-shot concurrency law (8.3% MAPE)
+> 0
+> 1k
+> 2k
+> 3k
+> 124816 32
+> K=2, B=4
+> K=2, B=8
+> K=3, B=4
+> K=3, B=8
+> B*: 8→4 crossover
+> (11/12 zero-shot match)
+> active request concurrency C
+> total decode throughput (tokens/s)
+> H100 pass microbench zero-shot Roo fl ine law ( fi t on K = 4 only) measured K = 2 measured K = 3
+
+Figure 12. Physical H100 Roofline and zero-shot multi-request throughput law on Ouro-2.6B ( 𝑇 = 4). (a) Single-pass Roofline: at batch size 𝐶 = 1, appending wake catch-up rows (81 → 99 rows) sits deep inside the HBM weight-streaming plateau well below the hardware ridge point 𝑀 ridge (1) ≈ 348 rows/pass. (b) Zero-shot concurrency prediction: calibrating Equation (3) strictly on full-depth 𝐾 = 4 modes predicts unseen 𝐾 ∈ { 2, 3}
+
+continuous-batching throughput across 𝐶 ∈ [ 1, 32 ] with 8.3% MAPE and selects the optimal block size 𝐵 ∗ (𝐶 ) ∈ { 4, 8}
+
+on 11/12 (91.7%) operating points. 
+
+where 𝑡 0 is single-pass HBM weight-streaming latency, 𝛼 kv 𝐶 is KV-cache read overhead, 𝛽 tc 𝑀 is Tensor-Core compute time, and ¯ 𝑐 net (𝐾, 𝐵, 𝜏 ) is net committed tokens per step after Wake rollbacks. Calibrating 
+
+(𝑡 0 = 3.95 ms , 𝛼 kv = 0.05 ms , 𝛽 tc = 0.0115 ms /row , 𝑝 = 1.15 ) exclusively on full-depth 𝐾 = 4 modes (𝑛 = 18 points, zero 𝐾 < 4 latency fits) locates the 𝐶 = 1 hardware ridge point at 𝑀 ridge (1) = (𝑡 0 + 𝛼 kv )/ 𝛽 tc ≈ 348 rows/pass (Figure 12a). Equation (3) ties together three empirical behaviors observed across Sections 4.1 to 4.6: (1) at 𝐶 = 1, 𝑀 𝑗 ≤ 99 ≪ 348, so wake completion and Wake verification execute inside the weight-streaming floor ( 𝑇 step ≈ 𝐾𝑡 0), making 𝜏 = 0 greedy-exact Wake strictly faster than 𝐾 = 𝑇 block decoding whenever rollback overhead stays below 𝑇 /𝐾 − 1 (explaining both the +22% to +153% gains at 𝑇 ≥ 4 and the graceful throttle at 𝑇 = 8, 𝐾 = 2); (2) candidate drafting (¯ 𝑐 net in the numerator) decouples from pass-budget verification ( Í𝐾 𝑗 =1 𝑡 pass in the denominator), explaining why 𝐾 < 𝑇 Wake multipliers transfer across trained mask-placeholder and parameter-free n-gram drafters (Section 4.5); and (3) across 24 unseen 𝐾 ∈ { 2, 3}
+
+multi-request points ( 𝐶 ∈ { 1, . . . , 32 }; Figure 12b), Equation (3) predicts throughput zero-shot at 8.3% MAPE and identifies the optimal block-size crossover 𝐵 ∗ (𝐶 ) on 11/12 (91.7%) operating points, guiding dynamic 𝐵 = 8 → 4 → 2 profile selection up to 𝐶 = 32 ( 2.31 × decode, 1.67 × end-to-end; Appendix I). 
+
+## 5 Related Work 
+
+Looped and recursive language models iterate a weight-tied layer stack to scale latent reasoning depth at a compact parameter footprint (Dehghani et al., 2019; Bae et al., 2025a;b; Geiping et al., 2025; Zhu et al., 2025). In standard non-recurrent Transformers, SkipDecode (Del Corro et al., 2023) skips bottom layers in favor of upper layers under a monotonically decreasing per-step layer budget so KV caches never require recomputation, while in shared-weight recursive models Relaxed Recursive Transformers (Bae et al., 2025a) introduce cross-request depth-wise batching and Mixture-of-Recursions (Bae et al., 2025b) learns token-level routing across initial passes. Our analysis addresses a distinct regime: because a looped model shares weights across all passes, every token can enter uniformly at the final 𝐾 passes without decaying position 
+
+20 Late Entry in Looped Language Models Preprint 
+
+budgets, while within-sequence pipelined cache completion reconstructs exact 1 → 𝑇 context caches in the background wake. To accelerate autoregressive decoding, speculative and block-decoding methods verify multiple drafted to-kens in parallel using auxiliary drafters, n-gram suffix lookups, or single-pass mask placeholders (Leviathan et al., 2023; Chen et al., 2023; Cai et al., 2024; Fu et al., 2024; Gloeckle et al., 2024; Liu et al., 2026a; Jin et al., 2026). For looped language models specifically, WaveFront (Ha and Kim, 2026), LoopSpec (Cho et al., 2026), DAS (Li et al., 2026), and LoopAhead (Liu et al., 2026c) accelerate drafting via shallow initial passes: DAS and LoopAhead verify candidates synchronously through a full 𝑇 -pass target call, whereas WaveFront and LoopSpec pipeline single-pass shallow guesses diagonally into deeper passes. Crucially, because those methods only speed up proposal generation while still routing every accepted token through shallow-to-deep passes on the verification path, full 𝑇 -pass verification bounds their speedup as recurrence deepens. Late entry paired with Wake verification is complementary and structurally distinct along three axes: (1) our optimistic frontier executes the final 𝐾 < 𝑇 passes over a deep context cache rather than initial passes over shallow caches, cutting mismatch and rollback rates by an order of magnitude (0 .25 to 2.2 rollbacks per 100 tokens at 𝑇 ≥ 16); (2) in-pass block verification filters (1 + 𝐵 )2 candidate branches at depth 𝐾 so only the ≤ 1 + 𝐵 committed tokens enter the 1 → 𝑇 wake, saving 𝑇 − 𝐾 passes on all rejected branches; and (3) a single static CUDA graph sweeps 𝜏 ∈ [ 0, ∞] from greedy-exact ( 𝜏 = 0) to margin-gated (𝜏 > 0) and lossy ( 𝜏 = ∞) decoding while factorizing orthogonally from the choice of candidate drafter. Finally, adaptive early-exit methods halt computation after initial layers or passes when confidence is high (Schuster et al., 2022), while loop-contrastive methods contrast early and late passes to sharpen reasoning accuracy (Yu et al., 2026; Liu et al., 2026b). We show that halting early without cache completion starves a looped language model of coherent pass-aligned (𝐾, 𝑉 ) context depth, whereas optimistic late entry paired with Wake verification preserves full-depth context and exactness while advancing at 𝐾 < 𝑇 serial passes per step. 
+
+## 6 Limitations and Conclusion 
+
+Our study has three main limitations. First, as formalized by our Roofline law in Section 4.7, single-request speedups exploit HBM weight-streaming headroom on an H100 GPU ( 𝑀 𝑗 ≤ 99 ≪ 𝑀 ridge (1) ≈ 348 rows/pass). Under multi-request continuous batching on Ouro-2.6B (Figure 12b; Appendix I), speedup compression across 𝐶 = 1 → 32 stems primarily from (1 + 𝐵 )2 block expansion rather than late entry itself: full-depth 𝐵 = 8 block decoding drops from 3 .90 × to 0 .77 ×, whereas late entry’s incremental gain over same-𝐵 block decoding holds steady (1 .65 × → 1.45 × at 𝐵 = 8 and 1 .84 × → 1.48 × at 𝐵 = 4 for 
+
+𝐾 = 2) because skipping 𝑇 − 𝐾 passes on rejected draft branches cuts total arithmetic work per step (198 vs. 324 row-passes at 𝐵 = 8). Guided by Equation (3) (8 .3% zero-shot MAPE, 11 /12 optimal 𝐵 ∗ (𝐶 ) matches), shrinking 𝐵 = 8 → 4 → 2 with load retains 2 .31 × decode (1 .67 × end-to-end including online prefills) at 
+
+𝐶 = 32 for 𝐾 = 2 (1 .71 × and 1 .47 × for 𝐾 = 3). Second, while Wake verification unifies greedy-exact ( 𝜏 = 0), margin-gated ( 𝜏 > 0), and lossy ( 𝜏 = ∞) decoding inside one engine, Proposition 1 targets greedy decoding (extending Wake rollback to temperature sampling via speculative rejection sampling (Leviathan et al., 2023; Chen et al., 2023) is left to future work), and 𝜏 = 0 speedups depend on optimistic agreement: at shallow recurrence ( 𝑇 = 8, 𝐾 = 2), frequent rollbacks (12 .5 per 100 tokens) preserve full accuracy ( +23 .2points over 𝜏 = ∞) at the cost of falling below 𝐾 = 𝑇 block speed (1 .96 × vs. 2 .86 ×), whereas for 𝑇 ≥ 16 (0 .26 to 2 .2 rollbacks per 100 tokens) 𝜏 = 0 scales up to 8 .42 ×. Third, unlocking late entry on checkpoints not pretrained with pass-skipping requires a one-time Stage-2 SFT pass (7 ,395 steps, ≈ 1.9B tokens on one 8×H100 node, comparable to training lightweight speculative heads such as Medusa or LoopAhead while 
+
+> 21
+
+Late Entry in Looped Language Models Preprint 
+
+adding zero inference parameters; Appendix B), motivating native late-entry exposure during pretraining and per-token adaptive pass scheduling in future work. In conclusion, saving passes from the two ends of a looped language model is fundamentally asymmetric: cached context depth substitutes for token-local early passes across Ouro-1.4B, Ouro-2.6B ( 𝑇 = 4), and middle-recurrent Huginn-3.5B ( 𝑇 ∈ { 8, 16 , 32 , 64 }). Pairing late-pass block verification with pipelined cache completion and zero-extra-pass Wake verification turns this asymmetry into a unified 𝜏 ∈ [ 0, ∞] family that accelerates both greedy-exact 𝑇 -pass decoding (up to 5 .2× at 𝑇 = 4 and 8 .4× at 𝑇 = 64) and controlled lossy decoding (up to 6 .8× and 12 .5×). Engine code, training scripts, and checkpoints are available at https:// github.com/Xalp/LateComer and https://huggingface.co/collections/Xalphinions/late-entry (project page: https://xalp.net/late-entry/ ). 
+
+## References 
+
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski, David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc V. Le, and Charles Sutton. Program synthesis with large language models. arXiv preprint arXiv:2108.07732 , 2021. Sangmin Bae, Adam Fisch, Hrayr Harutyunyan, Ziwei Ji, Seungyeon Kim, and Tal Schuster. Relaxed recursive Trans-formers: Effective parameter sharing with layer-wise LoRA. In International Conference on Learning Representations ,2025a. Sangmin Bae, Yujin Kim, Reza Bayat, Sungnyun Kim, Jiyoun Ha, Tal Schuster, Adam Fisch, Hrayr Harutyunyan, Ziwei Ji, Aaron Courville, and Se-Young Yun. Mixture-of-recursions: Learning dynamic recursive depths for adaptive token-level computation. In Advances in Neural Information Processing Systems , 2025b. Tianle Cai, Yuhong Li, Zhengyang Geng, Hongwu Peng, Jason D. Lee, Deming Chen, and Tri Dao. Medusa: Simple LLM inference acceleration framework with multiple decoding heads. In International Conference on Machine Learning , 2024. Charlie Chen, Sebastian Borgeaud, Geoffrey Irving, Jean-Baptiste Lespiau, Laurent Sifre, and John Jumper. Accelerating large language model decoding with speculative sampling. arXiv preprint arXiv:2302.01318 , 2023. SangLyul Cho, Langqing Cui, Sehoon Kim, Dongsu Han, and Insu Han. LoopSpec: Pipelined self-speculative decoding for looped Transformers. arXiv preprint arXiv:2609.17184 , 2026. Karl Cobbe, Vineet Kosaraju, Mohammad Bavarian, Mark Chen, Heewoo Jun, Łukasz Kaiser, Matthias Plappert, Jerry Tworek, Jacob Hilton, Reiichiro Nakano, Christopher Hesse, and John Schulman. Training verifiers to solve math word problems. arXiv preprint arXiv:2110.14168 , 2021. Mostafa Dehghani, Stephan Gouws, Oriol Vinyals, Jakob Uszkoreit, and Łukasz Kaiser. Universal Transformers. In 
+
+International Conference on Learning Representations , 2019. Luciano Del Corro, Allie Del Giorno, Sahaj Agarwal, Bin Yu, Ahmed Awadallah, and Subhabrata Mukherjee. SkipDe-code: Autoregressive skip decoding with batching and caching for efficient LLM inference. arXiv preprint arXiv:2307.02628 , 2023. Yichao Fu, Peter Bailis, Ion Stoica, and Hao Zhang. Break the sequential dependency of LLM inference using lookahead decoding. In International Conference on Machine Learning , 2024. Leo Gao, Jonathan Tow, Baber Abbasi, Stella Biderman, Sid Black, Anthony DiPofi, Charles Foster, Laurence Golding, Jeffrey Hsu, Alain Le Noac’h, Haonan Li, Kyle McDonell, Niklas Muennighoff, Chris Ociepa, Jason Phang, Laria Reynolds, Hailey Schoelkopf, Aviya Skowron, Lintang Sutawika, Eric Tang, Anish Thite, Ben Wang, Kevin Wang, and Andy Zou. A framework for few-shot language model evaluation. Zenodo, https://doi.org/10.5281/zenodo. 10256836 , 2023. Jonas Geiping, Sean McLeish, Neel Jain, John Kirchenbauer, Siddharth Singh, Brian R. Bartoldson, Bhavya Kailkhura, Abhinav Bhatele, and Tom Goldstein. Scaling up test-time compute with latent reasoning: A recurrent depth approach. In Advances in Neural Information Processing Systems , 2025. 
+
+22 Late Entry in Looped Language Models Preprint 
+
+Fabian Gloeckle, Badr Youbi Idrissi, Baptiste Rozière, David Lopez-Paz, and Gabriel Synnaeve. Better & faster large language models via multi-token prediction. In International Conference on Machine Learning , 2024. Hyeongju Ha and Jae-Joon Kim. WaveFront Decoding: Parallelized self-speculative decoding for looped language models. arXiv preprint arXiv:2609.23033 , 2026. Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric Tang, Dawn Song, and Jacob Steinhardt. Measuring mathematical problem solving with the MATH dataset. In Advances in Neural Information Processing Systems, Datasets and Benchmarks Track , 2021. Ziqi Jin, Lei Wang, Ziwei Luo, and Aixin Sun. MARS: Enabling autoregressive models multi-token generation. In 
+
+Advances in Neural Information Processing Systems , 2026. Yaniv Leviathan, Matan Kalman, and Yossi Matias. Fast inference from Transformers via speculative decoding. In 
+
+International Conference on Machine Learning , 2023. Guanghao Li, Zihan Su, Hao Yu, Jinyang Jiang, Tao Ren, Zehao Li, Feng Lu, Ming Tang, and Chun Yuan. Shallow queries, mature values: Depth-asynchronous self-speculation for looped Transformers. arXiv preprint arXiv:2609.34538 ,2026. Hunter Lightman, Vineet Kosaraju, Yura Burda, Harri Edwards, Bowen Baker, Teddy Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe. Let’s verify step by step. In International Conference on Learning Representations ,2024. Jingyu Liu, Xin Dong, Zhifan Ye, Rishabh Mehta, Yonggan Fu, Vartika Singh, Jan Kautz, Ce Zhang, and Pavlo Molchanov. TiDAR: Think in diffusion, talk in autoregression. In Proceedings of Machine Learning and Systems ,2026a. Weihao Liu, Huangjie Zheng, Tianrong Chen, Rohit Dilip, Richard He Bai, Yizhu Jiao, Yuyang Wang, and Ruixiang Zhang. Decoding looped Transformers better for (almost) free. arXiv preprint arXiv:2610.02185 , 2026b. Zixuan Liu, Nan Xue, Rui Bao, Yuhang Xu, Xiaofeng Cao, Jiangchao Yao, and Zhiyong Chen. LoopAhead: Speculating ahead for faster decoding in looped language models. arXiv preprint arXiv:2610.21594 , 2026c. Tal Schuster, Adam Fisch, Jai Gupta, Mostafa Dehghani, Dara Bahri, Vinh Q. Tran, Yi Tay, and Donald Metzler. Confident adaptive language modeling. In Advances in Neural Information Processing Systems , 2022. Jay Shah, Ganesh Bikshandi, Ying Zhang, Vijay Thakkar, Pradeep Ramani, and Tri Dao. FlashAttention-3: Fast and accurate attention with asynchrony and low-precision. In Advances in Neural Information Processing Systems , 2024. Mirac Suzgun, Nathan Scales, Nathanael Schärli, Sebastian Gehrmann, Yi Tay, Hyung Won Chung, Aakanksha Chowdhery, Quoc V. Le, Ed H. Chi, Denny Zhou, and Jason Wei. Challenging BIG-Bench tasks and whether chain-of-thought can solve them. In Findings of the Association for Computational Linguistics: ACL 2023 , 2023. Team Olmo. Olmo 3. arXiv preprint arXiv:2512.13961 , 2025. Yubo Wang, Xueguang Ma, Ge Zhang, Yuansheng Ni, Abhranil Chandra, Shiguang Guo, Weiming Ren, Aaran Arulraj, Xuan He, Ziyan Jiang, Tianle Li, Max Ku, Kai Wang, Alex Zhuang, Rongqi Fan, Xiang Yue, and Wenhu Chen. MMLU-Pro: A more robust and challenging multi-task language understanding benchmark. In Advances in Neural Information Processing Systems, Datasets and Benchmarks Track , 2024. Byeongho Yu, Junhyuk So, and Eunhyeok Park. LoopCD: Loop-wise contrastive decoding for improving reasoning in looped language models. arXiv preprint arXiv:2609.24196 , 2026. Jeffrey Zhou, Tianjian Lu, Swaroop Mishra, Siddhartha Brahma, Sujoy Basu, Yi Luan, Denny Zhou, and Le Hou. Instruction-following evaluation for large language models. arXiv preprint arXiv:2311.07911 , 2023. Rui-Jie Zhu, Zixuan Wang, Kai Hua, Tianyu Zhang, Ziniu Li, Haoran Que, Boyi Wei, Zixin Wen, Fan Yin, He Xing, Lu Li, Jiajun Shi, Kaijing Ma, Shanda Li, Taylor Kergan, Andrew Smith, Xingwei Qu, Mude Hui, Bohong Wu, Qiyang Min, Hongzhi Huang, Xun Zhou, Wei Ye, Jiaheng Liu, Jian Yang, Yunfeng Shi, Chenghua Lin, Enduo Zhao, Tianle Cai, Ge Zhang, Wenhao Huang, Yoshua Bengio, and Jason Eshraghian. Scaling latent reasoning via looped language models. arXiv preprint arXiv:2510.25741 , 2025. 
+
+23 Late Entry in Looped Language Models Preprint 
+
+## A Fine-Tuning Recipe and Diagnostic Probe Protocol 
+
+Two-stage fine-tuning. We initialize Ouro-2.6B (and Ouro-1.4B for scale replication) from its released pretrained checkpoint (Zhu et al., 2025) and fine-tune on Dolci-Instruct-SFT (Team Olmo, 2025) in two one-epoch stages. Stage 1 performs standard full-depth ( 𝑇 = 4) instruction SFT at sequence length 1 ,024. Stage 2 runs one epoch of MARS-style mask-placeholder block fine-tuning (Jin et al., 2026) using the block structure of Section 3.2: blocks of 16 token positions with mask-placeholder branches, learning rate 10 −5 with 3% linear warmup, global batch size 256 in bf16 , and sequence length 1 ,024 (7 ,395 optimization steps, ≈ 1.9B tokens per stage, adding zero extra parameters at inference). During Stage 2, half of the blocks run all four passes starting from pass 1, while the other half enter directly at pass 𝑇 − 𝐾 + 1 ( 𝐾 ∼ Uniform {1, 2, 3}) from raw token embeddings. Our matched early-exit control branches from the exact same Stage-1 checkpoint with identical data order, seed, and hyperparameters, reversing only the reduced-budget subset so tokens execute the first 𝐾 passes instead of the last 𝐾 .
+
+Ouro stick-breaking readout and teacher-forced probe protocol. When Ouro executes a contiguous pass range {𝑎, . . . , 𝑏 } ⊆ { 1, . . . ,𝑇 }, its learned stick-breaking exit gate emits a scalar gate probability 
+
+𝜆 (𝑘 ) 
+
+> 𝑖
+
+∈ ( 0, 1) at each executed pass 𝑘 , assigning weight 𝑤 (𝑘 ) 
+
+> 𝑖
+
+= 𝜆 (𝑘 )
+
+> 𝑖
+
+Î𝑘 −1 
+
+> 𝑗 =𝑎
+
+(1 − 𝜆 ( 𝑗 ) 
+
+> 𝑖
+
+) to passes 𝑘 < 𝑏 and all remaining mass 𝑤 (𝑏 ) 
+
+> 𝑖
+
+= Î𝑏 −1 
+
+> 𝑗 =𝑎
+
+(1 − 𝜆 ( 𝑗 ) 
+
+> 𝑖
+
+) to pass 𝑏 (so Í𝑏 𝑘 =𝑎 𝑤 (𝑘 ) 
+
+> 𝑖
+
+= 1 without requiring skipped passes): 
+
+𝑝 𝑎 :𝑏 (𝑥 𝑖 +1 | 𝑥 ≤𝑖 ) = softmax 𝑊 out 
+
+> 𝑏
+
+∑︁ 
+
+> 𝑘 =𝑎
+
+𝑤 (𝑘 ) 
+
+> 𝑖
+
+˜ℎ(𝑘 )
+
+> 𝑖
+
+!
+
+. (4) To measure single-step agreement without trajectory drift, we first decode full test prompts greedily at full depth ( 𝑇 = 4, batch size 1) to obtain fixed reference completions (70 ,101 GSM8K token positions on Ouro-2.6B and 78 ,693 on Ouro-1.4B, with the identical procedure on IFEval). We then replay each reference sequence under teacher forcing using Equation (4) and record the fraction of positions whose greedy prediction matches the full-depth arg max. 
+
+## B Training-Stage Ablation 
+
+Table 9 disentangles the effects of instruction tuning, block drafting, and late-entry exposure on Ouro-2.6B. Neither Stage-1 SFT alone ( .699 probe agreement) nor Stage-2 block training without late-entry exposure (.738) enables late entry. Explicit late-entry exposure during Stage 2 lifts probe agreement to .962 and prevents the severe 𝐾 = 2 decoding collapse seen in the unexposed block model ( .636 vs. .839 on GSM8K; 
+
+.529 vs. .699 on IFEval). It also preserves full-depth GSM8K accuracy ( .873 vs. .880 after Stage 1, whereas the unadapted base model scores .729 and generates 243 mean tokens compared with 114 after SFT). 
+
+## C Extended Entry-State and Attention-Geometry Diagnostics 
+
+Table 10 expands the off-the-shelf diagnostics from Table 1. Naively rescaling normalized embeddings (0 .76 norm) to match pass-4 state norms (37 to 51) worsens Ouro-2.6B agreement to .218. Feeding the preceding token’s deep hidden state alone causes severe next-token repetition ( ≤ .039, although combining it with a linear embedding projection reaches .949). Using unembedding vectors likewise repeats the current token ( .01 to .04), while soft probability-weighted embeddings match hard embeddings on over 99% of confident positions. Even when we train two-layer MLP entry adapters while keeping Ouro weights frozen, agreement trails simple 𝐾 -pass truncation by 1 .1, 3 .4, and 2 .9 points at 𝐾 = 1, 2, 3 on Ouro-2.6B (and fails to 
+
+> 24
+
+Late Entry in Looped Language Models Preprint 
+
+Table 9. Training-stage ablation on Ouro-2.6B across full GSM8K ( 𝑛 = 1,319) and strict IFEval ( 𝑛 = 541). The probe column reports teacher-forced agreement at 𝐾 = 1, 𝐷 = 4; the rightmost column reports end-to-end block decoding accuracy at 𝐾 = 2, 𝐵 = 8. Training configuration Full-depth acc. (GSM8K / IFEval) Late-entry probe Late-entry decode ( 𝐾 = 2) None (released base model) .729 / .442 .751 n/a (no drafters) Stage 1 only (full-depth SFT) .880 / .728 .699 n/a (no drafters) Stage 1 + Stage 2, late entry off .820 / .708 .738 .636 / .529 Stage 1 + Stage 2 (our full recipe) .873 / .732 .962 .839 / .699 Table 10. Extended pass-4 entry-state diagnostics on off-the-shelf Ouro-1.4B and Ouro-2.6B (GSM8K teacher-forced agreement with full depth; top five rows run pass 4 only over a four-pass context cache). Input state supplied to pass 4 ( 𝐾 = 1 over four-pass context) Released Ouro-1.4B Released Ouro-2.6B Raw token embedding (unadapted late entry) .552 .751 Normalized and magnitude-rescaled embedding .245 .218 Closed-form linear projection of the embedding .816 .919 Preceding token’s deep hidden state alone .030 .039 True pass-3 hidden state (diagnostic oracle ceiling) .991 .992 
+
+Reference: 1-pass early exit (pass 1 only) .938 .949 
+
+Reference: 2-pass early exit (passes 1 and 2 only) .981 .985 
+
+transfer to IFEval on Ouro-1.4B). On IFEval, closed-form linear maps recover 46% to 51% of the oracle gap (68% to 72% when combined with the predecessor state). 
+
+Attention-entropy, sink-mass, and distance-resolved KV interventions. Complementing Figure 3 in Section 2.2, our fp32 attention-geometry probes across 30 ,736 GSM8K and 53 ,184 IFEval positions show that on unadapted checkpoints (released base, Stage 1 only, and Stage 2 without late-entry exposure), feeding 
+
+𝑒 (𝑥 𝑖 ) directly into pass 4 ( 𝐾 = 1, 𝐷 = 4) produces diffuse attention ( +0.79 to +1.00 nats higher head-mean entropy than a true pass-4 query and −0.10 to −0.16 less attention-sink mass on position 0), landing off-manifold with linear CKA .273 to .365 against true pass-4 hidden states. Stage-2 late-entry exposure matches true pass-4 attention entropy within +0.07 nats on GSM8K ( +0.13 nats on IFEval), restores sink mass within −0.022, and reaches linear CKA .961 (mean cosine similarity .927 to .930). Distance-resolved prefix-depth interventions further show that while adjacent tokens carry the largest per-token marginal effect ( +1.6 agreement points at distance 1), deep caches more than 64 tokens back still account for 14% of the total context-depth gain on GSM8K and 53% (+6.9 points) on longer IFEval generations. 
+
+## D Complete (𝐾, 𝐵 ) Frontier Grid and Verification Threshold Sweep 
+
+Table 11 reports the complete grid of pass budgets 𝐾 ∈ { 1, 2, 3, 4} and block sizes 𝐵 ∈ { 4, 8} on GSM8K and IFEval. Using 𝐵 = 8 improves throughput by 12% to 22% over 𝐵 = 4 on GSM8K while achieving similar throughput and slightly higher accuracy on IFEval. To test whether we could obtain similar speedups without skipping passes, Table 12 keeps full four-pass verification ( 𝐾 = 4, 𝐵 = 8) and relaxes acceptance so any candidate whose full-depth probability exceeds a threshold 𝜃 ∈ { .05 , . 10 , . 20 , . 30 , . 40 } is accepted. Every 
+
+25 Late Entry in Looped Language Models Preprint 
+
+Table 11. Complete (𝐾, 𝐵 ) accuracy-throughput grid on full GSM8K and IFEval test sets (batch size 1, greedy decoding, single H100 GPU). 
+
+GSM8K (𝑛 = 1,319) IFEval (𝑛 = 541) Setting 𝐵 tok/s Speedup Acc. tok/s Speedup Acc. Full-depth sequential n/a 63.4 1.00 × .873 63.1 1.00 × .732 
+
+𝐾 = 4 ( ) 4 210.5 3.32 × .870 137.4 2.18 × .719 8 256.6 4.05 × .867 136.7 2.16 × .739 
+
+𝐾 = 3 ( ) 4 269.7 4.26 × .862 175.0 2.77 × .728 8 322.5 5.09 × .851 178.1 2.82 × .734 
+
+𝐾 = 2 ( ) 4 380.4 6.00 × .846 247.2 3.91 × .697 8 426.7 6.73 × .839 238.6 3.78 × .699 
+
+𝐾 = 1 ( ) 4 539.1 8.51 × .637 385.3 6.10 × .625 8 544.0 8.59 × .629 385.5 6.11 × .645 
+
+Table 12. Relaxed probability-threshold verification at full depth ( 𝐾 = 4, 𝐵 = 8) versus strict greedy ( arg max )late entry. Accepting proposals whose full-depth probability exceeds 𝜃 yields smaller speedups and lower accuracy than reducing 𝐾 under strict arg max verification. 
+
+GSM8K IFEval 
+
+Verification rule Speedup Acc. Speedup Acc. Strict arg max, 𝐾 = 4 4.06 × .867 2.17 × .739 Relaxed 𝜃 = .40, 𝐾 = 4 4.14 × .867 2.19 × .726 Relaxed 𝜃 = .30, 𝐾 = 4 4.30 × .861 2.26 × .730 Relaxed 𝜃 = .20, 𝐾 = 4 4.40 × .841 2.36 × .719 Relaxed 𝜃 = .10, 𝐾 = 4 4.49 × .834 2.56 × .734 Relaxed 𝜃 = .05, 𝐾 = 4 4.53 × .823 2.69 × .728 Strict arg max, 𝐾 = 3 5.09 × .851 2.82 × .734 
+
+Strict arg max, 𝐾 = 2 6.73 × .839 3.78 × .699 
+
+threshold 𝜃 is strictly Pareto-dominated on both benchmarks by strict greedy (arg max) verification under late entry at 𝐾 = 3 and 𝐾 = 2. 
+
+## E Committed-Token Fidelity Audit 
+
+To verify exactness at 𝐾 = 4 and quantify approximation at 𝐾 < 4, we replay all committed sequences through teacher-forced full-depth forward passes (Table 13). At 𝐾 = 4, the token-level discrepancy rate (0 .01% to 0 .41%, with median top-2 logit margins of .03 to .07) lies at or below the sequential bf16 kernel-order floor (0 .25% to 0 .64%), and all 3 ,912 /3,912 dense structural checks match identically. Our early-exit block decoder passes the same audit (0 .03% discrepancy vs. a 0 .23% floor at 𝐾 = 2 on GSM8K; 24 /24 dense checks). At 𝐾 = 3 and 𝐾 = 2 without Wake verification ( 𝜏 = ∞), token discrepancy rises moderately to 1 .0% to 5 .9%; enabling Exact Wake verification ( 𝜏 = 0, Section 3.4) restores the exact 𝐾 = 4 fidelity floor (0 .007% on GSM8K, 0 .09% on MATH500, and 0 .025% on MBPP). 
+
+26 Late Entry in Looped Language Models Preprint 
+
+Table 13. Committed-token fidelity audit at block size 𝐵 = 8. “diff” is the percentage of committed positions whose token differs from a teacher-forced full-depth arg max replay; “margin” reports the median (and 90th percentile) top-2 logit margin at differing positions. Full-depth floor 𝐾 = 4 𝐾 = 3 𝐾 = 2Benchmark diff margin diff margin diff margin diff margin GSM8K 0.27% .04 (.10) 0.01% .06 (.11) 1.12% .11 (.48) 2.08% .22 (.87) IFEval 0.64% .03 (.09) 0.41% .03 (.09) 3.17% .13 (.50) 5.86% .23 (.77) MATH500 0.25% .05 (.11) 0.09% .05 (.12) 1.16% .13 (.53) 2.16% .23 (1.00) MBPP 0.33% .04 (.10) 0.02% .07 (.30) 1.04% .10 (.39) 1.87% .18 (.71) BBH 0.27% .04 (.11) 0.06% .04 (.12) 1.33% .15 (.77) 2.43% .33 (1.41) MMLU-Pro 0.32% .04 (.11) 0.09% .05 (.12) 1.41% .13 (.52) 2.69% .25 (1.07) 
+
+Table 14. Cache-completion policy ablation on full GSM8K ( 𝑛 = 1,319) and IFEval ( 𝑛 = 541). Full-depth sequential references are .873 and .732. 
+
+GSM8K IFEval 
+
+Cache-completion policy Decoding mode 𝐾 = 2 𝐾 = 3 𝐾 = 2 𝐾 = 3Synchronous (repair before next step) Sequential .852 .864 .684 .717 Pipelined (lagged across steps, ours) Sequential .859 .872 .695 .723 Pipelined (lagged across steps, ours) Block ( 𝐵 = 8) .839 .851 .699 .734 
+
+Never (keep provisional cache) Block ( 𝐵 = 8) .798 .848 .688 .721 
+
+## F Cache-Completion Ablations and Error Localization 
+
+Table 14 compares three cache-completion policies on GSM8K and IFEval. Our lagged pipelined completion matches or slightly exceeds synchronous before-next-step repair ( 𝑝 = .28 to .77), confirming that reading provisional KV entries for one or two steps introduces zero measurable degradation. Conversely, omitting cache completion altogether (keeping provisional embedding-derived KV states permanently) drops GSM8K accuracy by 4.1 points at 𝐾 = 2 ( .839 → .798). Where do the remaining token deviations at 𝐾 < 4 occur within a block? Position-resolved audits across 400 GSM8K and 200 IFEval items (Figure 13) show that accepted proposal positions 1 → 8 average only 1.4% deviation on GSM8K at 𝐾 = 2, while remaining discrepancies localize primarily to low-confidence full-rejection steps where all 𝐵 proposals are rejected ( 𝑐 = 0). Exploiting this localization, selectively recomputing only low-confidence ( < .5) 𝑐 = 0 steps (19% of IFEval steps) at full depth raises IFEval 𝐾 = 2accuracy from .699 to .723 (𝑝 = .60 vs. .732 full depth) at 196 tokens/s, interpolating smoothly between 
+
+𝐾 = 2 (239 tokens/s) and 𝐾 = 3 (178 tokens/s). 
+
+## G Reproducibility, Adaptive Controls, and Full-Set Baseline Protocol 
+
+Sequential early-exit reproducibility and adaptive exit control. Independent sequential greedy evaluations of the trained early-exit checkpoint run five days apart reproduce to four decimal places across all eight cells: GSM8K .3290 , . 6732 , . 7938 , . 8165 and IFEval .4510 , . 6026 , . 6858 , . 7116 for 𝐾 = 1, 2, 3, 4. 
+
+27 Late Entry in Looped Language Models Preprint GSM8K  400 docs · B = 8                             
+
+> Bonus token Accepted proposal (position 1 →8)
+> 0%
+> 2%
+> 4%
+> 6%
+> 8%
+> 10%
+> 12%
+> 14%
+> mean 1.4% (K=2)
+> 11.5%
+> 8.0%
+> c=0
+> all rej.
+> 2.4%
+> 1≤c<8
+> part. rej.
+> 0.9%
+> c=8
+> no rej.
+> 12345678
+> in-block proposal position accepted count c
+> c=0 restart is 8.4× proposal rate
+> deviation from full depth
+> IFEval 200 docs · B = 8
+> Bonus token Accepted proposal (position 1 →8)
+> 0%
+> 4%
+> 8%
+> 12%
+> 16%
+> 20%
+> mean 3.8% (K=2)
+> 16.5%
+> 9.8%
+> c=0
+> all rej.
+> 4.0%
+> 1≤c<8
+> part. rej.
+> 0.3%
+> c=8
+> no rej.
+> 12345678
+> in-block proposal position accepted count c
+> c=0 restart is 4.4–5.0× proposal rate
+> deviation from full depth
+> bonus token, K = 2 bonus token, K = 3 accepted proposal, K = 2 accepted proposal, K = 3
+
+Figure 13. Position-resolved deviation audit at 𝐵 = 8 and 𝐾 ∈ { 2, 3} across 400 GSM8K and 200 IFEval examples. Left subpanels group bonus tokens by accepted count 𝑐 (𝑐 = 0 means all 𝐵 = 8 proposals were rejected); right subpanels show deviation rates across accepted in-block positions 1 → 8. 
+
+In addition to fixed-depth early exit in Table 4, we also evaluate the trained early-exit model under a deliberately favored adaptive exit control: each token chooses its exit pass via the model’s learned exit gate with thresholds calibrated directly on the test sets, while skipped passes are still computed so subsequent tokens read an oracle full-depth KV cache. Even under these favorable conditions, adaptive exit improves accuracy by less than 0 .6 points over fixed-depth early exit at matched mean passes per token on both GSM8K and IFEval. 
+
+Gold-answer scorer validation. Running default lm-evaluation-harness extractors on dataset ground-truth answers reveals two bugs: default MATH500 string matching rejects valid equivalent expressions, and default MBPP code extraction strips line 1 of completions (causing 499 /500 ground-truth programs to fail). Symbolic expression equivalence on MATH500 and preserved first-line extraction on MBPP restore 100% accuracy on dataset reference solutions. 
+
+Full-test-set baseline protocol. Table 5 evaluates the full test set of every benchmark (21 ,403 prompts in total) with verified token-level prompt identity across engines: every method decodes identical token-ID inputs at batch size 1 with greedy decoding in bf16 on a single NVIDIA H100 80GB GPU per job, and the two largest benchmarks run as contiguous shards pooled exactly by total decode tokens over total decode seconds. On each task, throughputs are normalized by the fastest measured full-depth sequential decoder among ours, LoopSpec’s, and the LoopAhead reproduction’s (62 .4 to 67 .2 tokens/s; LoopSpec’s engine is fastest on four tasks, ours on MATH500 and MMLU-Pro). LoopSpec uses the fastest of four released configurations selected on a full GSM8K sweep (190 .0 vs. 184 .8, 173 .9, and 119 .5 tokens/s). Because official LoopAhead code is unavailable, we report our validated reproduction taking the fastest of three training arms per benchmark (1 × and 4 × published training budget plus a no-drafter arm), evaluated on the released checkpoint its method requires. 
+
+## H Huginn-3.5B Architecture Adaptation and Extended Sweeps 
+
+Prelude-Core-Coda late-entry formulation and training recipe. Unlike Ouro, which loops its entire Transformer stack and combines pass outputs via a stick-breaking exit gate, Huginn-3.5B ( huginn-0125 ;
+
+28 Late Entry in Looped Language Models Preprint 
+
+Geiping et al., 2025) wraps a recurrent 4-layer Core block Fcore between a 2-layer non-recurrent Prelude 
+
+Fpre and a 2-layer non-recurrent Coda Fcoda . For token 𝑥 𝑖 , Prelude maps the scaled token embedding to a contextualized input anchor 𝑢 𝑖 = Fpre (𝑥 𝑖 ; Cpre  
+
+> <𝑖
+
+). Full-depth inference initializes a latent state 𝑠 (0) 
+
+> 𝑖
+
+from Huginn’s standard truncated Gaussian state initializer (seeded deterministically at test time) and iterates 
+
+𝑘 = 1, . . . ,𝑇 (𝑇 = 32) via a learned linear adapter 𝑊 adap :
+
+𝑠 (𝑘 ) 
+
+> 𝑖
+
+= Fcore 
+
+
+
+𝑊 adap 
+
+h
+
+𝑠 (𝑘 −1) 
+
+> 𝑖
+
+; 𝑢 𝑖 
+
+i
+
+; C (core , 𝑘 )
+
+> <𝑖
+
+
+
+,𝑝 (𝑥 𝑖 +1 | 𝑥 ≤𝑖 ) = softmax 
+
+
+
+𝑊 out Norm 
+
+
+
+Fcoda 
+
+
+
+Norm (𝑠 (𝑇 ) 
+
+> 𝑖
+
+); Ccoda 
+
+> <𝑖
+
+ 
+
+. (5) Under late-entry block decoding with budget 𝐾 < 𝑇 , the active (1 + 𝐵 )2 block executes Prelude once (writing exact Prelude KV states for all committed tokens, so Prelude is never recomputed during catch-up), initializes 𝑠 (𝑇 −𝐾 ) 
+
+> 𝑖
+
+= 𝑠 (0) 
+
+> 𝑖
+
+, runs only the final 𝐾 Core steps 𝑘 = 𝑇 − 𝐾 + 1, . . . ,𝑇 , and reads out through Coda (4 + 4𝐾 serial layer calls vs. 132 at full depth). Across the next ⌈𝐷 bg /𝐾 ⌉ steps (default full-depth 𝐷 bg = 𝑇 , or an optional partial-cache approximation completing only the final 𝐷 bg < 𝑇 Core steps), committed groups advance at 𝐾 steps per call alongside the active block, fusing Coda refresh into the final catch-up call at zero extra serial forward calls. To ensure hardware-matched wall-clock comparisons across sequential decoding, late entry, synchronous repair, and early exit, all Huginn decoders run inside a unified CUDA-graphed paged FlashAttention-3 engine that packs the (1 + 𝐵 )2 active block and all in-flight catch-up stages into a single fixed-shape paged attention call per layer with fused RoPE and RMSNorm kernels. For two-stage adaptation on Dolci-Instruct-SFT, Stage 1 runs one epoch of full-depth ( 𝑇 = 32) SFT and Stage 2 runs one epoch (7 ,406 optimization steps, ≈ 1.9B tokens per stage or < 0.25% of huginn-0125 ’s 800B-token pretraining budget, adding zero extra inference parameters) of MARS block fine-tuning at global batch size 256 in bf16 , sequence length 1 ,024, learning rate 10 −5, and truncated backpropagation through the final 8 recurrent steps matching Geiping et al. (2025): 50% of blocks execute all 32 Core passes, while 50% execute 
+
+𝐾 ∼ Uniform {2, 4, 6, 8, 12 , 16 , 24 } passes (final 𝐾 passes for late entry; initial 𝐾 passes for the matched early-exit control). 
+
+Single-token curves, matched-throughput frontier, and cache-completion lag ablation. Table 15 reports full-set ( 𝑛 = 1,319) single-token sequential GSM8K curves on our adapted checkpoint: running 
+
+𝐾 = 8 final Core passes over a completed 32-pass cache matches full 32-pass accuracy identically ( .396 vs. 
+
+.396, .989 token agreement), beating 8-pass early exit over a 32-pass oracle cache ( .288) by +10.8 points and 8-pass shallow truncation ( .263) by +13.3 points (+27 .7 points at 𝐾 = 4). Table 16 compares our matched late-entry and early-exit Stage-2 checkpoints (7 ,406 steps each) at 𝐵 = 8 across GSM8K ( 𝐾 ∈ { 8, 12 , 16 , 32 },spanning 25% to 100% Core depth in exact correspondence with 𝐾 ∈ { 1, 2, 3, 4} on 𝑇 = 4 Ouro) and IFEval (across all four capability-active benchmarks, intermediate 𝐾 = 12 late entry reaches 6 .44 × at .545 on IFEval, 7.27 × at .395 on GSM8K, 8 .20 × at .281 on BBH, and 9 .75 × at .234 on MBPP). Because paged FlashAttention-3 eliminates multi-segment dispatch overhead, pipelined catch-up adds only 7% to 12% latency at equal 𝐾 
+
+and outperforms trained early exit across all matched-throughput GSM8K operating points in Table 16: 
+
+𝐾 = 12 late entry ( .395 at 157 .8 tokens/s) is both faster and +2.4 points higher than 16-pass early exit ( .372 at 140 .3 tokens/s), 𝐾 = 8 late entry ( .354 at 198 .1 tokens/s) is faster and higher than 12-pass early exit ( .342 at 174 .4 tokens/s), and our two-stage partial-cache 𝐾 = 8 variant ( .369 at 215 .5 tokens/s) beats 8-pass early exit ( .271 at 222 .9 tokens/s) by +9.7 points (𝑝 = 3.4 × 10 −14 ). On IFEval, the two checkpoints do not differ significantly at 𝐾 ∈ { 12 , 16 , 32 } (𝑝 ≥ .30), while above 200 tokens/s late entry retains full-depth accuracy down to 12 .5% Core depth and leads trained early exit by +4.8 points at matched ∼ 225 tokens/s ( 𝐾 = 6 at 
+
+.560, 223 .0 tokens/s vs. 𝐾 = 8 at .512, 226 .6 tokens/s, 𝑝 = .029), +7.0 points at 𝐾 = 6 ( 𝑝 = .0018), and +12.4 points at 𝐾 = 4 ( 𝑝 = 3.0 × 10 −8). Even on the early-exit-trained checkpoint itself (which never saw late entry in Stage 2), Prelude’s normalized anchor 𝑢 𝑖 allows 𝐾 = 8 late entry to beat that checkpoint’s own trained 
+
+> 29
+
+Late Entry in Looped Language Models Preprint 
+
+𝐾 = 8 early exit on GSM8K ( .327 vs. .271 at 193 .9 tokens/s, 𝑝 = 2.2 × 10 −6). Finally, Table 17 characterizes when provisional KV states degrade at 𝑇 = 32 , 𝐾 = 8, 𝐵 = 8 by comparing full-depth completion ( 𝐷 bg = 32, 4 stages, 3-block lag) against partial-cache approximations ( 𝐷 bg ∈ { 24 , 16 }, 3 and 2 stages, which leave early passes 1 → 32 − 𝐷 bg uncomputed in exchange for 2- and 1-block lag). On GSM8K, where each chain-of-thought arithmetic step reads digits emitted in the immediately preceding ∼ 10 tokens, 4-stage full completion trails CUDA-graphed synchronous repair by 3 .3 points ( .354 vs. .387, 𝑝 = .0013), and accuracy varies monotonically with the local lag window ( .387 → .369 → .360 → .354 → .331 across 0 , 1, 2, 3, ∞
+
+block lag). The 2-stage partial-cache approximation (17 → 32, one-block lag ≈ 3.5 tokens) narrows this gap to 1 .9 points ( .369 vs. .387, 𝑝 = .065; +3.7 points over omitting catch-up at 𝑝 = 1.8 × 10 −4) while running 3.66 × faster than synchronous repair (215 .5 vs. 58 .9 tokens/s). By contrast, on IFEval, where structural and formatting constraints depend weakly on local provisional refinements, omitting or lagging cache completion leaves accuracy virtually unchanged ( .553 at no catch-up and two-stage partial vs. .551 sequential full depth), even though early exit still collapses at small 𝐾 because the active token itself requires late Core passes. 
+
+Table 15. Single-token sequential GSM8K evaluation on Huginn-3.5B (𝑛 = 1,319, batched greedy decoding; gaps computed prior to rounding). “Shallow 𝑟 (𝐾 )” runs 𝐾 Core passes on both token and context; “Oracle-cache early” runs initial passes 1 , . . . , 𝐾 over a 32-pass context; “Late entry” runs final passes 32 − 𝐾 + 1, . . . , 32 over a 32-pass context (full depth 𝑇 = 32 scores .396 at 132 serial layers/token, vs. 4 + 4𝐾 serial layers/token at budget 𝐾 ). Core budget Serial layers / tok Shallow 𝑟 (𝐾 ) Oracle-cache early Late entry Token agree. w/ 𝑇 =32 Late vs. 𝑟 (𝐾 ) (𝑝 )                                          
+
+> 𝐾 =420 (6.6 ×).039 .043 .315 .957 +27.7 (8 .7×10 −92 )
+> 𝐾 =836 (3.7 ×).263 .288 .396 .989 +13.3 (9 .8×10 −25 )
+> 𝐾 =12 52 (2.5 ×).350 .368 .393 .995 +4.3 (4 .5×10 −5)
+> 𝐾 =16 68 (1.9 ×).378 .383 .400 .997 +2.2 (.020)
+
+Table 16. Trained early exit versus late entry on Huginn-3.5B ( 𝑇 = 32 ) under matched Stage-2 fine-tuning 
+
+inside the unified CUDA-graphed paged FlashAttention-3 engine at block size 𝐵 = 8 across full GSM8K ( 𝑛 = 1,319) and strict IFEval ( 𝑛 = 541), following Table 4 ( † marks paired sign-test 𝑝 < .05; gaps computed prior to rounding; “𝐾 = 8 (2-stg partial)” completes passes 17 → 32 and is compared against 8-pass early exit at matched ∼ 220 tokens/s). 
+
+Early exit, trained Late entry, trained 
+
+Core passes / token Acc. tok/s Acc. tok/s Gap (pts) Sign-test 𝑝 
+
+GSM8K (1,319 test problems; full-depth sequential: .393 at 21.7 tok/s) 
+
+𝐾 = 8 (4-stg full) .271 223 .354 198 +8.3 † 3.1 × 10 −10 
+
+𝐾 = 8 (2-stg partial) .271 223 .369 215 +9.7 † 3.4 × 10 −14 
+
+𝐾 = 12 .342 174 .395 158 +5.3 † 7.5 × 10 −5
+
+𝐾 = 16 .372 140 .405 127 +3.3 † .015 
+
+𝐾 = 32 (full) .382 73 .397 73 +1.5 .28 
+
+IFEval (541 test prompts; full-depth sequential: .551 at 21.6 tok/s) 
+
+𝐾 = 4 .407 364 .530 268 +12.4 † 3.0 × 10 −8
+
+𝐾 = 6 .490 284 .560 223 +7.0 † .0018 
+
+𝐾 = 8 (4-stg full) .512 227 .542 193 +3.0 .16 
+
+𝐾 = 8 (2-stg partial) .512 227 .553 205 +4.1 .053 
+
+𝐾 = 12 .567 158 .545 139 −2.2 .30 
+
+𝐾 = 16 .549 119 .566 113 +1.7 .48 
+
+𝐾 = 32 (full) .543 62 .551 63 +0.7 .79 
+
+30 Late Entry in Looped Language Models Preprint 
+
+Table 17. Cache-completion lag and depth ablation on Huginn-3.5B at 𝑇 = 32 , 𝐾 = 8, 𝐵 = 8 across full GSM8K ( 𝑛 = 1,319; sequential 𝑇 = 32 is .393 at 21 .7 tokens/s) and strict IFEval ( 𝑛 = 541; sequential 𝑇 = 32 is .551 at 21 .6 tokens/s; gaps prior to rounding). Unlike 4-stage full completion (1 → 32), the 2- and 3-stage policies are partial-cache approximations that omit early passes to shrink the provisional lag window, narrowing the GSM8K gap against synchronous repair from 3 .3 to 1 .9 points while increasing throughput. 
+
+GSM8K (𝑛 =1,319) IFEval (𝑛 =541) Cache-completion policy ( 𝐾 = 8 of 32) Stages (lag) 1+E[𝑐 ] tok/s (speedup) Acc. tok/s (speedup) Acc. Synchronous (blocking 1 → 32, CUDA-graphed) 0 (0 blks) 3.61 58.9 (2.71 ×) .387 n/a n/a 2-stage partial (passes 17 → 32) 2 (1 blk) 3.52 215.5 (9.93 ×) .369 205.0 (9.50 ×) .553 
+
+3-stage partial (passes 9 → 32) 3 (2 blks) 3.52 205.1 (9.45 ×) .360 191.5 (8.88 ×) .538 4-stage full (passes 1 → 32, default) 4 (3 blks) 3.51 198.1 (9.13 ×) .354 193.3 (8.96 ×) .542 Never (keep provisional 8-pass cache) n/a ( ∞) 3.45 231.6 (10.68 ×) .331 228.0 (10.57 ×) .553 
+
+## I Scaling Across Request Concurrency 
+
+How does late-entry block decoding behave when serving 𝐶 > 1 concurrent requests on a single GPU? To characterize the transition from memory-bandwidth-bound to compute-bound execution, we extend our paged FlashAttention-3 (Shah et al., 2024) / CUDA-graph engine on Ouro-2.6B ( 𝑇 = 4) to multi-request continuous batching across active concurrencies 𝐶 ∈ { 1, 2, 4, 8, 16 , 32 } on GSM8K (single NVIDIA H100 80GB GPU, bf16 , max_new = 1,024, dynamic paged KV slot allocation with immediate slot refill upon request completion, and zero token discrepancies between CUDA-graph replay and eager execution across all eleven modes). At every concurrency 𝐶 , we normalize against full-depth ( 𝑇 = 4) continuous-batching autoregressive decoding ( AR , 𝐾 = 4, 𝐵 = 0) at the same 𝐶 , reporting both pure decode throughput and end-to-end serving throughput including online four-pass prefills for newly arriving prompts (Figure 14 and Table 18). (a) Speedup vs. Concurrency C                      
+
+> Decode tok/s divided by continuous-batching AR at the same C
+> 0×
+> 1×
+> 2×
+> 3×
+> 4×
+> 5×
+> 6×
+> 7×
+> 124816 32
+> Concurrent requests C (batch size)
+> Speedup over AR at same C
+> AR parity (1.0×)
+> B=8 (6.42×)
+> B=4 (5.57×)
+> B=2 (2.31×)
+> (b) System Throughput vs. Per-User Speed
+> C = 1 (bottom-right) →C = 32 (top-left) along each curve
+> 0
+> 600
+> 1200
+> 1800
+> 2400
+> 3000
+> 3600
+> 0100 200 300 400
+> Per-request decode speed (tok/s/req)
+> Total system throughput (tok/s)
+> AR C=1
+> AR C=32
+> (1,498 tok/s)
+> K=2, B=2 C=32 (3,466 tok/s · 2.31×)
+> Full-depth AR (K=4, B=0 · lossless) Full block (K=4, B=8 · lossless) Full block (K=4, B=4 · lossless) Late entry K=2, B=8 (lossy) Late entry K=2, B=4 (lossy)
+> Late entry K=2, B=2 (lossy) Late entry K=2, B=0 (1-tok pipe) Late entry K=3, B=8 (lossy) Late entry K=3, B=4 (lossy) Late entry K=3, B=2 (lossy)
+
+Figure 14. Steady-state concurrency scaling on Ouro-2.6B ( 𝑇 = 4, GSM8K, single H100 GPU) across 𝐶 ∈{1, 2, 4, 8, 16 , 32 } concurrent requests. (a) Speedup over continuous-batching AR at the same 𝐶 : fixed large blocks (𝐵 = 8) decay steeply as 𝐶 × 99 rows saturate compute, whereas selecting smaller discrete block profiles with load (𝐵 ∈ { 8, 4, 2}, shaded 𝐾 = 2 profile envelope) sustains 2.31 × at 𝐶 = 32 ( 𝐾 = 2) and 1.71 × (𝐾 = 3). (b) System decode throughput vs. per-request speed (𝐶 = 1 at bottom-right to 𝐶 = 32 at top-left along each curve). 
+
+31 Late Entry in Looped Language Models Preprint 
+
+Figure 14 and Table 18 highlight three scaling behaviors. First, speedup compression at fixed 𝐵 = 8
+
+comes from (1 + 𝐵 )2 block expansion rather than late entry : as concurrency grows from 𝐶 = 1to 𝐶 = 32, lossless 𝐾 = 4, 𝐵 = 8 block decoding collapses 5 .1× (3 .90 × → 0.77 ×), whereas late entry’s multiplicative gain over same-𝐵 full-depth block decoding ( 𝐾 = 2 over 𝐾 = 4, middle block of Table 18) stays nearly invariant at 1.65 × → 1.45 × at 𝐵 = 8 and 1.84 × → 1.48 × at 𝐵 = 4 (1 .30 × → 1.14 × for 𝐾 = 3). Physically, 𝐾 = 4, 𝐵 = 8 runs all four passes across all (1 + 8)2 = 81 candidate rows (324 row-passes/step), whereas 𝐾 = 2, 𝐵 = 8 runs only two passes on the 81 block rows and restricts catch-up passes to the ≤ 9committed tokens (198 row-passes/step, 39% fewer FLOPs per step ), preserving late entry’s advantage over full-depth block decoding even when Tensor Cores saturate. Second, selecting smaller discrete block profiles 𝐵 ∈ { 8, 4, 2} as concurrency rises shifts the crossover substantially (shaded profile envelope in Figure 14a; as in standard multi-bucket serving engines, pre-capturing one CUDA graph per discrete (𝐵, 𝐶 ) bucket shares the same model weights and paged KV pool, allowing 𝑂 (1) per-step profile selection from active batch size 𝐶 without graph recompilation): 𝐵 = 8 is fastest at 𝐶 = 1, 𝐵 = 4 (35 rows/request) takes over across 𝐶 = 2 to 8 (6 .01 × to 4 .33 × at 𝐾 = 2; 4 .22 × to 3 .12 × at 𝐾 = 3), and 𝐵 = 2 (15 rows/request) leads at 𝐶 = 16 to 32, reaching 3,466 tokens/s (2.31 × decode; 108 .3 tokens/s per request, exceeding 𝐶 = 1 sequential AR at 64 .0 tokens/s) at 𝐾 = 2 and 2,561 tokens/s (1.71 ×) at 𝐾 = 3 (vs. 1 .34 × for lossless 𝐾 = 4, 𝐵 = 4), with 1.67 × and 1.47 × end-to-end throughput at 𝐶 = 32 including online four-pass prefills. Third, single-token pipelined late entry ( 𝐵 = 0) uses zero draft branches (3 rows/request/call at 
+
+𝐾 = 2, executing 𝑇 + 𝐾 = 6 total passes per token versus 4 for plain AR ) and sustains a flat 1 .83 × → 1.48 ×
+
+decode speedup across 𝐶 = 1 to 32. 
+
+Table 18. Multi-request continuous-batching throughput and mechanism factorization on Ouro-2.6B (𝑇 = 4, GSM8K, single H100 GPU) across concurrencies 𝐶 ∈ { 1, 2, 4, 8, 16 , 32 }. Top block: total decode tokens/s (and speedup vs. same-𝐶 AR ); middle block: isolated multiplicative gain of late entry over matched-𝐵 full-depth ( 𝐾 = 4) block decoding; bottom block: end-to-end serving throughput including online four-pass slot-refill prefills. Mode Regime (rows/req/call) 𝐶 = 1 𝐶 = 2 𝐶 = 4 𝐶 = 8 𝐶 = 16 𝐶 = 32                                                                                                                                                                                                                                          
+
+> Pure decode throughput (total decode tokens/s and speedup vs. same-𝐶 AR )
+> AR (𝐾 =4, 𝐵 =0) Lossless ref. (1) 64.0 (1.00 ×)121.8 (1.00 ×)233.2 (1.00 ×)455.4 (1.00 ×)848.6 (1.00 ×)1,498.2 (1.00 ×)
+> 𝐾 =4, 𝐵 =8Lossless ref. (81) 249.6 (3.90 ×)446.0 (3.66 ×)732.9 (3.14 ×)921.5 (2.02 ×)1,080.1 (1.27 ×)1,152.4 (0.77 ×)
+> 𝐾 =4, 𝐵 =4Lossless ref. (25) 207.8 (3.25 ×)385.5 (3.17 ×)729.1 (3.13 ×)1,182.7 (2.60 ×)1,698.3 (2.00 ×)2,011.2 (1.34 ×)
+> 𝐾 =3, 𝐵 =8Lossy late (99 /90 /90) 327.0 (5.11 ×)560.1 (4.60 ×)848.0 (3.64 ×)1,048.3 (2.30 ×)1,212.6 (1.43 ×)1,285.8 (0.86 ×)
+> 𝐾 =3, 𝐵 =4Lossy late (35 /30 /30) 270.2 (4.22 ×)514.1 (4.22 ×)913.3 (3.92 ×)1,420.6 (3.12 ×)1,890.0 (2.23 ×)2,294.5 (1.53 ×)
+> 𝐾 =3, 𝐵 =2Lossy late (15 /12 /12) 196.2 (3.06 ×)370.6 (3.04 ×)681.8 (2.92 ×)1,221.7 (2.68 ×)1,875.7 (2.21 ×)2,560.8 (1.71 ×)
+> 𝐾 =3, 𝐵 =0Lossy 1-tok (3 /2/2) 79.6 (1.24 ×)153.0 (1.26 ×)293.6 (1.26 ×)545.7 (1.20 ×)952.3 (1.12 ×)1,548.7 (1.03 ×)
+> 𝐾 =2, 𝐵 =8Lossy late (99) 410.8 (6.42 ×)706.8 (5.80 ×)1,105.7 (4.74 ×)1,400.9 (3.08 ×)1,575.7 (1.86 ×)1,674.5 (1.12 ×)
+> 𝐾 =2, 𝐵 =4Lossy late (35) 382.2 (5.97 ×)732.0 (6.01 ×)1,299.4 (5.57 ×)1,971.0 (4.33 ×)2,573.0 (3.03 ×)2,976.8 (1.99 ×)
+> 𝐾 =2, 𝐵 =2Lossy late (15) 282.8 (4.42 ×)537.1 (4.41 ×)976.6 (4.19 ×)1,722.3 (3.78 ×)2,705.5 (3.19 ×)3,466.0 (2.31 ×)
+> 𝐾 =2, 𝐵 =0Lossy 1-tok (3) 117.5 (1.83 ×)227.3 (1.87 ×)427.4 (1.83 ×)798.5 (1.75 ×)1,371.6 (1.62 ×)2,222.9 (1.48 ×)
+> Isolated late-entry multiplier over same-𝐵 full-depth ( 𝐾 =4) block decoding
+> 𝐾 =2/𝐾 =4 at 𝐵 =8198 vs. 324 row-passes/step 1.65 ×(+65%) 1.58 ×(+58%) 1.51 ×(+51%) 1.52 ×(+52%) 1.46 ×(+46%) 1.45 ×(+45%)
+> 𝐾 =2/𝐾 =4 at 𝐵 =470 vs. 100 row-passes/step 1.84 ×(+84%) 1.90 ×(+90%) 1.78 ×(+78%) 1.67 ×(+67%) 1.52 ×(+52%) 1.48 ×(+48%)
+> 𝐾 =3/𝐾 =4 at 𝐵 =495 vs. 100 row-passes/step 1.30 ×(+30%) 1.33 ×(+33%) 1.25 ×(+25%) 1.20 ×(+20%) 1.11 ×(+11%) 1.14 ×(+14%)
+> End-to-end serving throughput including online 4-pass slot-refill prefills (total e2e tokens/s)
+> AR (𝐾 =4, 𝐵 =0) Lossless ref. 61.5 (1.00 ×)113.2 (1.00 ×)200.3 (1.00 ×)348.6 (1.00 ×)539.6 (1.00 ×)803.5 (1.00 ×)
+> 𝐾 =4, 𝐵 =4Lossless ref. 183.2 (2.98 ×)312.0 (2.76 ×)501.4 (2.50 ×)648.5 (1.86 ×)880.7 (1.63 ×)1,100.0 (1.37 ×)
+> 𝐾 =3, 𝐵 =4Lossy late 229.0 (3.72 ×)388.9 (3.44 ×)573.2 (2.86 ×)711.2 (2.04 ×)946.0 (1.75 ×)1,185.1 (1.47 ×)
+> 𝐾 =2, 𝐵 =4Lossy late 305.8 (4.97 ×)501.8 (4.43 ×)699.0 (3.49 ×)844.1 (2.42 ×)1,080.6 (2.00 ×)1,339.0 (1.67 ×)
+
+32
